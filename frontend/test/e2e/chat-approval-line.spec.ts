@@ -34,8 +34,12 @@ const PARKED = [
     // Present, and load-bearing since #395: `agent` is what makes this a
     // blocked *harness tool call* rather than a native effect the runtime
     // performs itself, and the console now words the confirmation differently
-    // for the two — "the agent is completing the action" only when there is an
-    // agent, "carrying it out now" when there is not.
+    // for the two — "the agent is picking this back up now" only when there is
+    // an agent, "carrying it out now" when there is not.
+    //
+    // The fixture also carries no `batch`, which is what makes the released
+    // arm the one asserted below (#561): an approval the host does not gate
+    // leaves nothing outstanding, so the continuation runs on this decision.
     //
     // The fixture omitted it and so exercised the no-agent arm while the
     // assertion below still named the agent one, which is why this spec went
@@ -118,7 +122,7 @@ test("the line recording a decision is visible in a real channel", async ({ page
   // Back in the channel the operator was last in — the console keeps that
   // across the trip to Approvals, which is the whole of the fix.
   await navigate(page, "Chat", /#\/chat/);
-  await expect(console_(page).getByText(/Approved — the agent is completing the action/)).toBeVisible({
+  await expect(console_(page).getByText(/Approved — the agent is picking this back up now/)).toBeVisible({
     timeout: 30_000,
   });
 });

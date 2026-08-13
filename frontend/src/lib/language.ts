@@ -404,6 +404,62 @@ export function approvalSummary(a: ApprovalSummary): string {
   return action;
 }
 
+/**
+ * What an approve actually bought, said without overclaiming (issue #561).
+ *
+ * Every surface used to answer an approve with *"the agent is completing the
+ * action"*. That is true of one of the two states an approve can leave the
+ * runtime in, and flatly false about the other:
+ *
+ * * **released** — this was the last sign-off the turn was blocked on, so the
+ *   host runs the continuation now (`run_continuation`, `src/company/runtime.rs`).
+ *   The agent has genuinely been asked to pick the work back up.
+ * * **still waiting** — the same turn parked other calls and at least one is
+ *   undecided, so the host banks this verdict and runs *nothing*
+ *   (`still_waiting_report`, same file, issue #469). No work is in flight and
+ *   none will be until the rest are decided. An operator told the action is
+ *   being completed waits for something that was never started.
+ *
+ * The console can tell the two apart with no new wire field. `ApprovalSummary.batch`
+ * *is* the turn key the runtime's continuation queue gates on — stated as a
+ * contract in `src/runtime/types.rs` — and `/approvals` lists exactly the parks
+ * that are still undecided, so the count is derivable client-side. See
+ * {@link outstandingSignOffs}, which is the only caller expected to produce a
+ * non-zero `outstanding`: the conversation's card decides every call its turn
+ * parked in one click, so it always releases.
+ *
+ * **The released arm still names a recovery, and that is deliberate.** Being
+ * asked for is not the same as having run: a continuation queues behind the
+ * per-company serial lock for an unbounded time (`src/runtime/cycle.rs`, issue
+ * #390), and the console cannot see that wait. So the first sentence says what
+ * the host was asked to do, and the second says what to do when it does not —
+ * the recovery the old copy left an operator to guess at. Only when there is an
+ * agent to message: a park with no `agent` is an effect the runtime performs
+ * itself (issue #395), and there is nobody to nudge.
+ *
+ * `subject` is appended where the surface names the thing decided — the
+ * Approvals page files its line into a transcript, where "Approved" alone would
+ * not say what was.
+ */
+export function approvedContinuation(
+  a: ApprovalSummary,
+  outstanding: number,
+  subject?: string,
+): string {
+  const tail = subject ? `: ${subject}` : "";
+  if (outstanding > 0) {
+    const plural = outstanding === 1 ? "" : "s";
+    const verb = outstanding === 1 ? "is" : "are";
+    // Deliberately the same sentence the host files into the operator channel
+    // when it banks a verdict, so the two do not drift into describing one
+    // state two ways.
+    const who = a.agent ? "the agent picks this back up" : "this is carried out";
+    return `Approved — ${who} once the remaining ${outstanding} sign-off${plural} on this step ${verb} decided${tail}`;
+  }
+  if (!a.agent) return `Approved — carrying it out now${tail}`;
+  return `Approved — the agent is picking this back up now${tail}. Send it a message if nothing happens.`;
+}
+
 /** One line of an approval's payload preview: a label and its value. */
 export interface PayloadLine {
   label: string;

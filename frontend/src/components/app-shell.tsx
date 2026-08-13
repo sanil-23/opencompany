@@ -58,6 +58,7 @@ import {
   makeMessage,
 } from "@/lib/chat";
 import { CONNECTION_PROVIDERS } from "@/lib/connections";
+import { approvedContinuation } from "@/lib/language";
 import { defaultDesks, type Desk } from "@/lib/desks";
 import { mergeReadFloors, unreadCount } from "@/lib/unread";
 import { writeLastChannel } from "@/lib/last-channel";
@@ -957,10 +958,19 @@ export function AppShell({
         scope,
       });
       setDecidedApprovals((prev) => ({ ...prev, [approval.id]: { verdict, approval } }));
+      // #561. `outstanding` is 0 by construction on this path and not derived:
+      // one click on the card decides *every* call its turn parked (`decideAll`
+      // in `ApprovalRow`), so the runtime's continuation gate is released by the
+      // last of them. The Approvals page is the surface that can leave sign-offs
+      // outstanding, and it counts them.
+      //
+      // Keyed on the batch so a card covering three calls raises one
+      // confirmation rather than three copies of the same sentence — three
+      // toasts would read as three separate continuations, which is the same
+      // kind of overclaim as the wording this replaces.
       toast.success(
-        verdict === "approve"
-          ? "Approved — the agent is completing the action."
-          : "Declined — recorded.",
+        verdict === "approve" ? approvedContinuation(approval, 0) : "Declined — recorded.",
+        { id: `approval-decision:${approval.batch ?? approval.id}` },
       );
       // A decline ends the thread's story, and silence would read as a stall.
       // An approve needs no line: the continuation lands as a real reply, which

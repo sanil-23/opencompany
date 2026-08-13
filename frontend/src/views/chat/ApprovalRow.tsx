@@ -51,16 +51,22 @@ import {
   approvalIcon,
 } from "@/components/approval-card";
 import { Button } from "@/components/ui/button";
-import { approvalAction, payloadLines } from "@/lib/language";
+import { approvalAction, approvedContinuation, payloadLines } from "@/lib/language";
 import { cn } from "@/lib/utils";
 
 /** What the card says once a verdict has been witnessed. */
-function settledLabel(verdict: Verdict): string {
+function settledLabel(approval: ApprovalSummary, verdict: Verdict): string {
   // Mirrors the wording the Approvals page files into the transcript, and for
   // the same reason: approving is not "done", it hands the agent a single-use
   // grant and re-dispatches it. A decline IS terminal.
+  //
+  // `outstanding` is 0 and not derived (#561): this label renders only once
+  // every call the card covers is decided, and the card covers exactly the calls
+  // one turn parked — so reaching it *is* the runtime's continuation gate
+  // opening. The partial state has its own sentence in `partialLabel`, which
+  // already declines to claim anything is running.
   return verdict === "approve"
-    ? "Approved — the agent is completing the action"
+    ? approvedContinuation(approval, 0)
     : "Declined — recorded, and nothing will run";
 }
 
@@ -281,7 +287,7 @@ export function ApprovalRow({
                   : // A single-item card says what it always said. `pending` is
                     // empty here, so the lead's verdict is present — the `??`
                     // only satisfies the type, it is not a reachable state.
-                    settledLabel(decided[lead.id] ?? "deny")
+                    settledLabel(lead, decided[lead.id] ?? "deny")
                 : busy
                   ? awaiting("approve")
                     ? "Waiting for the agent…"

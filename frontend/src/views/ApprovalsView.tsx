@@ -22,7 +22,14 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import type { CompanyFeed } from "@/hooks/use-company";
-import { approvalSummary, grantHeadline, timeAgo, toolAction } from "@/lib/language";
+import { outstandingSignOffs } from "@/lib/approval-continuation";
+import {
+  approvalSummary,
+  approvedContinuation,
+  grantHeadline,
+  timeAgo,
+  toolAction,
+} from "@/lib/language";
 import { startVisiblePolling } from "@/lib/visible-poll";
 import { isRecord, parseNodeMessages } from "@/views/workflows/run-output";
 
@@ -152,14 +159,20 @@ export function ApprovalsView({ client, company, feed, onResolved, onGoToConvers
       // cold-recipient report — and naming an agent there is the same shape of
       // small lie the wording above exists to remove. The work is still in
       // flight either way, so both halves say so; only the actor changes.
+      //
+      // …and only say the work has started when it has (#561). This page is
+      // itemised — one row per gated call — so approving one row of a turn that
+      // parked three banks the verdict and starts nothing, and it is exactly
+      // here that "the agent is completing the action" was a false claim an
+      // operator could wait on indefinitely. `outstandingSignOffs` is what the
+      // sentence branches on; see `approvedContinuation` for both halves.
+      const outstanding = outstandingSignOffs(a, approvals, inFlight);
       const line =
         verdict !== "approve"
           ? `Declined: ${approvalSummary(a)}`
           : scope.kind === "tool"
             ? `Approved — ${toolAction(a.kind).toLowerCase()} won't ask again until this permission expires. Take it back under Standing permissions.`
-            : a.agent
-              ? `Approved — the agent is completing the action: ${approvalSummary(a)}`
-              : `Approved — carrying it out now: ${approvalSummary(a)}`;
+            : approvedContinuation(a, outstanding, approvalSummary(a));
       onResolved(line);
       toast.success(line);
       // The agent's reply arrives as a journaled `AgentReply` on its own thread,
