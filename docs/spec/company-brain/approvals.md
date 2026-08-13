@@ -290,6 +290,38 @@ Absent means "the host did not say which turn this came from", and folding two
 unknowns together would invent a batch out of a shared silence. Each is shown
 alone, exactly as before this existed.
 
+### What the confirmation may claim (issue #561)
+
+Approving does not start work in every case, so the sentence an operator gets
+back must say which case they are in. There are two, and the console can tell
+them apart from the same `batch` key:
+
+- **Released** — this was the last sign-off the turn was blocked on, so the host
+  runs the continuation now. The agent has been asked to pick the work back up.
+- **Still waiting** — the turn parked other calls and at least one is undecided,
+  so the host banks the verdict and runs nothing (`still_waiting_report`). The
+  confirmation must not claim anything is under way, and must say what is still
+  outstanding, because deciding the rest is the operator's way out.
+
+The console counts the second case itself rather than waiting for a wire field:
+`/approvals` answers with exactly the undecided parks, so the rows sharing this
+one's `batch` *are* the outstanding set. All three surfaces route through
+`approvedContinuation` in `frontend/src/lib/language.ts`; only the Approvals page
+produces a non-zero count, because the chat card decides every call its turn
+parked in one click and so releases by construction.
+
+Even the released half stops at "asked for". A continuation queues behind the
+per-company serial lock for an unbounded time (issue #390) and the console
+cannot see that wait, so the sentence names the recovery — send the agent a
+message — rather than promising an outcome it does not control. Before this,
+every approve answered *"the agent is completing the action"*, which was
+measured on staging claiming completion over four minutes in which the step trace
+still read `Awaiting approval · didn't run`.
+
+This is the console half only. The turn still dead-ends and approval still costs
+a re-dispatch; that mechanism is the open headline of #561 and lives in
+openhuman's turn loop, not here.
+
 ## Delegation levels (standing rules)
 
 Prosumers adjust the fence in plain language, which compiles to policy:
