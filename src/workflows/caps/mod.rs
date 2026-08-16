@@ -373,6 +373,23 @@ pub async fn build_capabilities(
         // already-settled ticket for a downstream `gate`; real overlap belongs
         // in the later concurrency adoption phase.
         tasks: None,
+        // New in this tinyflows bump: an optional surface an `approval` node
+        // uses to *push* a review request at a person.
+        //
+        // Unwired, and this one is a weaker statement than the `None`s above.
+        // Those fail their node at run time because no capability exists; with
+        // no `ApprovalProvider` an `approval` node still works — it pauses the
+        // run and waits for the host to settle it through `engine::resume`,
+        // which is exactly the shape OC's own approval gate already has. So the
+        // node is functional and merely has no push channel.
+        //
+        // Wiring it to OC's approval queue is worth doing and is deliberately
+        // not done in a pin bump: it means deciding how a workflow-authored
+        // review maps onto the company's approval records — who may settle one,
+        // what the card shows, how it interacts with the `requires_approval`
+        // gate in `workflows::gate` — and that decision belongs with the PR
+        // that makes it, not with the bump that first made the field exist.
+        approvals: None,
     })
 }
 
