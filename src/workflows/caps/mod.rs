@@ -381,7 +381,9 @@ pub async fn build_capabilities(
         // no `ApprovalProvider` an `approval` node still works — it pauses the
         // run and waits for the host to settle it through `engine::resume`,
         // which is exactly the shape OC's own approval gate already has. So the
-        // node is functional and merely has no push channel.
+        // node is functional and merely has no push channel. Nothing can author
+        // one here yet in any case: `approval` is absent from
+        // `WORKFLOW_NODE_KINDS`, so no company manifest parses into one.
         //
         // Wiring it to OC's approval queue is worth doing and is deliberately
         // not done in a pin bump: it means deciding how a workflow-authored
