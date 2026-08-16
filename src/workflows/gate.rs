@@ -389,6 +389,19 @@ fn call_of(node: &tinyflows::model::Node) -> Option<(String, Value, Option<Strin
         | NodeKind::Code
         | NodeKind::Memory
         | NodeKind::Shell
+        // The human-review step, new in this tinyflows bump. It reaches a
+        // *person*, not the outside world, so there is no outward call to
+        // classify here — and gating it would be circular: parking an approval
+        // to ask whether an approval may be requested.
+        //
+        // Deliberately not confused with the `requires_approval` flag this
+        // module implements. That gates a node which would otherwise run; this
+        // node *is* the review, and its verdict (who decided, their comment,
+        // any edit) is data the graph branches on through its `approved` /
+        // `rejected` ports. OC injects no `ApprovalProvider` (see `caps`), so
+        // such a node falls back to pausing the run for the host to settle —
+        // the same shape as the parked approvals this file already produces.
+        | NodeKind::Approval
         // A child graph is resolved and run *inside* the engine
         // (`run_sub_workflow`), so its nodes never pass this function at all —
         // this arm is not what excludes them. The module docs give the reason
