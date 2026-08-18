@@ -301,6 +301,44 @@ pub const COMPOSIO_EXECUTE: &str = "composio_execute";
 /// silently stopped reaching the catalogue lookup it claimed to cover.
 pub(crate) const COMPOSIO_ACTION_KEY: &str = "tool";
 
+/// The git tool, classified by the operation it was handed rather than by this
+/// name (issue #877).
+///
+/// `status`, `log`, `diff` and `show` are reads of the agent's own workspace;
+/// classifying the NAME charged every one of them the interruption a `commit`
+/// or a `reset` deserves.
+pub const GIT_OPERATIONS: &str = "git_operations";
+
+/// The argument key [`GIT_OPERATIONS`] carries its sub-command under.
+///
+/// A required parameter of the vendored tool's schema, so a call that omits it
+/// could not have run anyway; a call this cannot read stays gated.
+pub(crate) const GIT_OPERATION_KEY: &str = "operation";
+
+/// The git operations that are provably reads of the agent's own workspace.
+///
+/// This is upstream's `GitOperationsTool::is_read_only` set, mirrored rather
+/// than called: that method and its `requires_write_access` sibling are private
+/// inherent methods, and the one PUBLIC hook that reaches them —
+/// `Tool::external_effect_with_args` — ANDs the operation test with
+/// `self.security.gate_decision(CommandClass::Write) == GateDecision::Prompt`,
+/// i.e. with OpenHuman's own desktop tier. Calling it here would import that
+/// tier into a gate that answers the tier question one layer up, and under a
+/// policy whose gate_decision is not `Prompt` it returns `false` for a genuine
+/// write — failing OPEN, the one direction this module must never fail.
+///
+/// So the list is local and the vendored judgement is the ORACLE that guards
+/// it: `git_read_operations_match_the_vendored_classifier` drives the public
+/// hook with `AutonomyLevel::Supervised` (where `gate_decision(Write)` IS
+/// `Prompt`, reducing the conjunction to the operation test alone) and fails if
+/// upstream ever reclassifies one of these. A second list that can drift is the
+/// thing #877 warns against; a second list that CANNOT drift silently is not.
+///
+/// Membership is affirmative-only. `push`, `pull`, `fetch`, `merge`, `rebase`
+/// and `clone` appear in NEITHER of upstream's two lists, so they are
+/// unclassified — and unclassified gates.
+const GIT_READ_OPERATIONS: &[&str] = &["status", "diff", "log", "show", "branch", "rev-parse"];
+
 /// The shell tool, classified by the command it was handed rather than by this
 /// name (issue #875).
 pub const SHELL: &str = "shell";
@@ -779,6 +817,11 @@ pub fn consequence_of(tool: &str, args: &serde_json::Value) -> Consequence {
     if name == SHELL {
         return shell_consequence(args);
     }
+    // Issue #877: the fourth. `git_operations` carries `status` and `commit`
+    // under one name, so the name charged a read what a write costs.
+    if name == GIT_OPERATIONS {
+        return git_operations_consequence(args);
+    }
     match DECLARED.iter().find(|d| d.tool == name) {
         Some(found) => Consequence {
             group: found.group,
@@ -1158,6 +1201,44 @@ fn web_fetch_consequence(args: &serde_json::Value) -> Consequence {
 /// any argument names an absolute path, a `~` home-dir reference, or a `..`
 /// traversal segment — the three ways a token can point outside the working
 /// directory without resolving anything against the real workspace root.
+/// The consequence of one `git_operations` call (issue #877).
+///
+/// Shaped exactly like [`shell_consequence`]: the gated verdict is built FIRST
+/// and every path that cannot prove a read returns it. Only affirmative
+/// membership of [`GIT_READ_OPERATIONS`] downgrades.
+///
+/// Unlike `shell` this needs no `#[cfg(feature = "openhuman")]` stub, and that
+/// difference is deliberate rather than an oversight: `shell` DELEGATES to a
+/// vendored classifier, so a build without it linked has nothing to ask and
+/// must gate. This function asks a local list, so it is present and answers
+/// identically in every build. The vendored dependency here is confined to the
+/// oracle test, which is feature-gated for exactly that reason.
+fn git_operations_consequence(args: &serde_json::Value) -> Consequence {
+    let gated = Consequence {
+        group: EffectGroup::Other,
+        reach: Reach::Consequence,
+        standing: Standing::PerCall,
+    };
+    let Some(operation) = args.get(GIT_OPERATION_KEY).and_then(|v| v.as_str()) else {
+        // Absent, or present but not a string. The tool's own schema requires
+        // it, so this is a call that could not have run. Gate it rather than
+        // guess.
+        return gated;
+    };
+    let operation = operation.trim().to_ascii_lowercase();
+    if GIT_READ_OPERATIONS.contains(&operation.as_str()) {
+        // A read of the agent's own workspace changes nothing, reaches nobody
+        // and is billed for nothing — the shape `glob` and `grep` have carried
+        // since #462, and `shell`'s reads since #875.
+        return Consequence {
+            group: EffectGroup::Other,
+            reach: Reach::Nothing,
+            standing: Standing::PerCall,
+        };
+    }
+    gated
+}
+
 fn shell_consequence(args: &serde_json::Value) -> Consequence {
     let gated = Consequence {
         group: EffectGroup::Other,
