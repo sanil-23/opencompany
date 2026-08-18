@@ -730,6 +730,133 @@ fn reject_undeliverable_channel_destinations(
     Ok(())
 }
 
+/// Refuses to **arm** a schedule whose report has nowhere to land (issue #1046).
+///
+/// The sibling of the stage-less refusal in
+/// [`set_company_workflow_enabled`](crate::company::set_company_workflow_enabled)
+/// (issue #976): that one covers a graph with nothing to *run*, this one a graph
+/// with nowhere to *deliver*. Same principle behind both — saving promises
+/// nothing, arming a schedule promises that something happens — and the same
+/// failure without it: the workflow fires every N minutes, burns a metered agent
+/// turn, and produces nothing anyone receives.
+///
+/// # Why this lives here and not beside the #976 guard
+///
+/// `set_company_workflow_enabled` takes a store and an event log, not a runtime.
+/// Runnability is a property of the **graph**, so it could be answered there from
+/// the parsed file alone. Deliverability is a property of the **runtime** — which
+/// channels this instance wired, whether this company has a mailbox — and that is
+/// reachable only from the server layer, where [`ScopedCompany`] carries the
+/// runtime. So this sits next to
+/// [`reject_undeliverable_channel_destinations`], which needs the same handle for
+/// the same reason, rather than being threaded into a core function that would
+/// have to grow a dependency to ask the question.
+///
+/// # What counts as undeliverable, and what deliberately does not
+///
+/// Refused only for reasons that are **structural at arm time** — conditions an
+/// operator cannot resolve without changing how the instance is deployed:
+///
+/// * **`owner` with no mailbox.** This is the trap in #1046, and it closes
+///   because of a fallback: `owner` with no mailbox falls back to the `operator`
+///   channel, and `operator` is precisely the target delivery refuses by name
+///   (issue #981). So on a company in this shape `owner` is not a working
+///   destination at all — while being the default the editor offers.
+/// * **`email` with no mailbox.** `NoMailboxConfigured` — there is nothing to
+///   send *from*, whatever the address says.
+/// * **`channel` naming something outside
+///   [`deliverable_channel_ids`](crate::company::CompanyRuntime::deliverable_channel_ids).**
+///   Already refused at save by [`reject_undeliverable_channel_destinations`],
+///   but a graph saved before that gate existed still holds one, and a desk can
+///   be deleted after a graph names it.
+///
+/// **Not refused: `owner` on a company that has a mailbox but no admin address.**
+/// Delivery fails there too (`OwnerFellBackNoAdminAddress`), and it is
+/// deliberately left alone: an admin can be added or an invite can gain an
+/// address at any moment, so that answer changes between arm and fire. Refusing
+/// on it would block a legitimate arm on a company that is one invite away from
+/// working — and a guard that blocks a legitimate arm is worse than the silence
+/// it replaces. The mailbox itself is different in kind: it comes from the
+/// deployment's own configuration and cannot appear under a running process.
+///
+/// # Any deliverable output is enough
+///
+/// The refusal needs **every** `output` node to be undeliverable. A graph that
+/// mails the owner *and* posts to a desk still delivers when the mailbox is
+/// missing, and refusing it would be wrong.
+///
+/// A graph with **no** `output` node at all is left alone: it promises no report,
+/// and it may still do real work — publish an artifact, write a workspace note,
+/// open a card. "Runs and delivers nothing" is #976's territory, not this one.
+///
+/// Manual runs are untouched by construction: this is reached only from the arm
+/// path. The issue is explicit that a hand-run is survivable because the banner
+/// and the history row both say "1 report not delivered" — an operator is
+/// watching. Nobody is watching a schedule.
+fn reject_undeliverable_schedule(
+    company: &ScopedCompany,
+    file: &crate::company::WorkflowFile,
+) -> Result<(), ApiError> {
+    if file.trigger_schedule().is_none() {
+        return Ok(());
+    }
+    let outputs: Vec<_> = file
+        .nodes
+        .iter()
+        .filter(|node| node.kind == crate::company::WorkflowNodeKind::Output)
+        .collect();
+    if outputs.is_empty() {
+        return Ok(());
+    }
+    let has_mailbox = company.runtime.mail().is_some();
+    let deliverable = company.runtime.deliverable_channel_ids();
+
+    let mut why: Option<String> = None;
+    for node in &outputs {
+        let Some(destination) = &node.destination else {
+            // No destination named. `parse_workflow` has its own, more specific
+            // thing to say about that; reporting the wrong problem first is
+            // worse than reporting it second.
+            return Ok(());
+        };
+        let reason = match destination.kind.trim() {
+            "owner" if !has_mailbox => format!(
+                "node `{}` reports to the company owner, but no mailbox is configured — the                  report falls back to the operator channel, which is not a delivery surface",
+                node.id
+            ),
+            "email" if !has_mailbox => format!(
+                "node `{}` emails a named address, but no mailbox is configured, so there is                  nothing to send from",
+                node.id
+            ),
+            "channel" => {
+                let target = destination.target.as_deref().map(str::trim).unwrap_or("");
+                if target.is_empty() || deliverable.iter().any(|id| id == target) {
+                    return Ok(());
+                }
+                let live: Vec<&str> = deliverable.iter().map(String::as_str).collect();
+                format!(
+                    "node `{}`: {}",
+                    node.id,
+                    crate::runtime::undeliverable_channel_message(target, &live)
+                )
+            }
+            // Deliverable, or a kind this check does not judge — either way this
+            // graph has somewhere for a report to land.
+            _ => return Ok(()),
+        };
+        // Keep the first reason: with several undeliverable outputs, naming one
+        // concretely beats listing all of them abstractly.
+        why.get_or_insert(reason);
+    }
+
+    match why {
+        Some(reason) => Err(ApiError(OpenCompanyError::InvalidRequest(format!(
+            "This schedule has nowhere to send its report, so every run would produce nothing              anyone receives: {reason}. Fix the destination, or configure a mailbox, then switch              it on. Running it by hand still works — the result is on screen."
+        )))),
+        None => Ok(()),
+    }
+}
+
 /// `POST …/workflows` — authors a new workflow graph (issues #69, #112, #168):
 /// the console's form creator, or any direct API caller, posts the graph shape
 /// and it is persisted on the company record.
@@ -989,6 +1116,30 @@ async fn set_workflow_enabled(
             "workflow {wid}"
         ))));
     }
+    // Issue #1046: arming is where the promise is made, so it is where the
+    // promise is checked — the same rule the stage-less refusal (#976) applies
+    // one property over. Only on the way ON: switching a workflow OFF must never
+    // be refused, or a guard meant to stop a useless schedule becomes a way to
+    // trap one armed.
+    //
+    // Read before the write rather than after, so a refused arm leaves the record
+    // exactly as it was.
+    if body.enabled {
+        let (overlays, _, globals_disable) = workflow_state(&company).await?;
+        // A body that no longer parses is not this guard's problem: the toggle
+        // deliberately still works for one (a graph the host cannot read is
+        // exactly the kind an operator most wants to stop), so an unreadable
+        // graph falls through to the same behaviour it had before.
+        if let Ok(Some(file)) = load_workflow_with_globals(
+            company.runtime.source_dir(),
+            &overlays,
+            &globals_disable,
+            &wid,
+        ) {
+            reject_undeliverable_schedule(&company, &file)?;
+        }
+    }
+
     set_company_workflow_enabled(
         company.id(),
         company.runtime.source_dir(),
@@ -4641,6 +4792,176 @@ mod tests {
                 ],
                 "edges": [ { "from": "start", "to": "done", "label": "ok" } ]
             })
+        }
+
+        /// A scheduled graph whose only output goes to `owner`, on a test
+        /// runtime with no mailbox — the #1046 shape exactly.
+        fn scheduled_owner_report_body() -> serde_json::Value {
+            serde_json::json!({
+                "id": "qa_probe_wf",
+                "name": "QA probe wf",
+                "description": "QA test workflow",
+                "nodes": [
+                    { "id": "start", "kind": "trigger", "name": "Start", "schedule": "*/5 * * * *" },
+                    { "id": "done", "kind": "output", "name": "Report",
+                      "destination": { "kind": "owner" } }
+                ],
+                "edges": [ { "from": "start", "to": "done", "label": "ok" } ]
+            })
+        }
+
+        async fn arm(state: &AppState, wid: &str) -> axum::response::Response {
+            router(state.clone())
+                .oneshot(request(
+                    "PUT",
+                    &format!("/api/v1/company/workflows/{wid}/enabled"),
+                    Some(serde_json::json!({ "enabled": true })),
+                ))
+                .await
+                .unwrap()
+        }
+
+        /// The headline: a schedule whose report has nowhere to land is refused
+        /// at arm, with the reason.
+        ///
+        /// The trap this closes is a fallback, not a typo — `owner` with no
+        /// mailbox falls back to the `operator` channel, which is exactly the
+        /// target delivery refuses by name (#981). So `owner` is not a working
+        /// destination on this company at all, while being the default the
+        /// editor offers.
+        #[tokio::test]
+        async fn arming_a_schedule_with_nowhere_to_deliver_is_refused() {
+            let home_dir = home();
+            let home = home_dir.path().to_path_buf();
+            let (state, _store, _id) = hosted_state(&home).await;
+
+            let created = router(state.clone())
+                .oneshot(request(
+                    "POST",
+                    "/api/v1/company/workflows",
+                    Some(scheduled_owner_report_body()),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(
+                created.status(),
+                StatusCode::OK,
+                "saving a stub mid-authoring stays legitimate — only arming is guarded"
+            );
+            // #276 lands a scheduled graph disarmed, so arming is a real request.
+            assert_eq!(
+                json_body(created).await["enabled"],
+                serde_json::json!(false)
+            );
+
+            let armed = arm(&state, "qa_probe_wf").await;
+            assert_eq!(armed.status(), StatusCode::BAD_REQUEST);
+            let message = json_body(armed).await["error"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string();
+            assert!(
+                message.contains("nowhere to send its report"),
+                "the operator is told what is wrong: {message}"
+            );
+            assert!(
+                message.contains("no mailbox is configured"),
+                "...and why, concretely: {message}"
+            );
+            assert!(
+                message.contains("by hand still works"),
+                "...and that a manual run is still available: {message}"
+            );
+        }
+
+        /// The refusal must not trap a workflow **armed**. Pausing is never
+        /// guarded — an operator must always be able to stop a thing, which is
+        /// the same call the unparseable-body case makes one layer down.
+        #[tokio::test]
+        async fn an_undeliverable_schedule_can_still_be_switched_off() {
+            let home_dir = home();
+            let home = home_dir.path().to_path_buf();
+            let (state, _store, _id) = hosted_state(&home).await;
+
+            router(state.clone())
+                .oneshot(request(
+                    "POST",
+                    "/api/v1/company/workflows",
+                    Some(scheduled_owner_report_body()),
+                ))
+                .await
+                .unwrap();
+
+            let paused = router(state.clone())
+                .oneshot(request(
+                    "PUT",
+                    "/api/v1/company/workflows/qa_probe_wf/enabled",
+                    Some(serde_json::json!({ "enabled": false })),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(
+                paused.status(),
+                StatusCode::OK,
+                "switching off must never be refused"
+            );
+        }
+
+        /// A **manual** graph with the same undeliverable destination arms
+        /// normally. The issue is explicit that a hand-run is survivable: the
+        /// banner and the history row both say "1 report not delivered", and an
+        /// operator is watching. Only the unattended case is guarded.
+        #[tokio::test]
+        async fn an_unscheduled_graph_with_the_same_destination_still_arms() {
+            let home_dir = home();
+            let home = home_dir.path().to_path_buf();
+            let (state, _store, _id) = hosted_state(&home).await;
+
+            let mut body = scheduled_owner_report_body();
+            body["id"] = serde_json::json!("manual_probe");
+            body["name"] = serde_json::json!("Manual probe");
+            body["nodes"][0].as_object_mut().unwrap().remove("schedule");
+
+            let created = router(state.clone())
+                .oneshot(request("POST", "/api/v1/company/workflows", Some(body)))
+                .await
+                .unwrap();
+            assert_eq!(created.status(), StatusCode::OK);
+
+            let armed = arm(&state, "manual_probe").await;
+            assert_eq!(
+                armed.status(),
+                StatusCode::OK,
+                "a manual run has a real reader, so it is not this guard's business"
+            );
+        }
+
+        /// A scheduled graph with **no** output node arms normally. It promises
+        /// no report, and it may still publish an artifact or open a card —
+        /// "runs and delivers nothing" is #976's territory, not this guard's.
+        #[tokio::test]
+        async fn a_scheduled_graph_with_no_output_node_still_arms() {
+            let home_dir = home();
+            let home = home_dir.path().to_path_buf();
+            let (state, _store, _id) = hosted_state(&home).await;
+
+            let body = serde_json::json!({
+                "id": "no_output_wf",
+                "name": "No output",
+                "nodes": [
+                    { "id": "start", "kind": "trigger", "name": "Start", "schedule": "*/5 * * * *" },
+                    { "id": "work", "kind": "transform", "name": "Work",
+                      "config": { "set": { "count": "=items | length" } } }
+                ],
+                "edges": [ { "from": "start", "to": "work" } ]
+            });
+            let created = router(state.clone())
+                .oneshot(request("POST", "/api/v1/company/workflows", Some(body)))
+                .await
+                .unwrap();
+            assert_eq!(created.status(), StatusCode::OK);
+
+            assert_eq!(arm(&state, "no_output_wf").await.status(), StatusCode::OK);
         }
 
         /// `PUT …/workflows/{wid}/enabled` round-trips through the API and shows
