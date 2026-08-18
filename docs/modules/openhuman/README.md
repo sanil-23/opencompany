@@ -55,6 +55,45 @@ runtime override > manifest `[inference]` > managed env default — on every tur
 so a provider switch or key rotation reaches agents on the next turn with no
 rebuild at all.
 
+## The per-turn step budget (issue #926)
+
+An agent turn is bounded by openhuman's `AgentConfig::max_tool_iterations` — the
+number of **model calls** one turn may make, defaulting to 10. It is not a
+deadline and not a sub-agent budget, and it is not the step count the console
+shows: a console "step" is one tool call or one coalesced thinking run
+(`harness::steps::fold_steps`), so a turn stopped at 10 model calls routinely
+renders as ~20 steps. `harness::workflow_build` is the one place OpenCompany
+overrides the cap (`set_max_tool_iterations(7)`); everything else inherits the
+default.
+
+**Hitting the cap is invisible in the reply, by construction.** openhuman does
+not error. It asks the model for a resumable checkpoint with tools disabled
+(`MAX_ITER_CHECKPOINT_INSTRUCTION`) and returns that prose through the same
+`Ok(String)` a finished turn returns. The instruction asks for "Done so far" and
+"Next steps" and never asks the model to mention the limit, so a capped turn
+typically ends on a confident plan — indistinguishable from an agent that
+finished and described what it would do. Only openhuman's deterministic
+*fallback* checkpoint (used when the model's wrap-up call fails or comes back
+empty) names the cap.
+
+So the fact is carried out of band. `Agent::last_turn_hit_cap()` is read in
+`CompanyAgent::run_with_steer` while the agent lock is still held — the same
+place and for the same reason as `last_turn_usage` — and becomes
+`TurnOutcome::exhausted_budget: Option<ExhaustedStepBudget>`. The cap it quotes
+comes off the agent that enforced it, never a constant on this side, because
+callers may override it per agent.
+
+`harness::brain` renders it as **its own operator bubble**, not appended to the
+reply: the reply is the agent's answer and this is the system saying the agent
+was cut off. The wording deliberately mirrors
+`DrainedRequests::overflow_notice` (issue #561) — same "Heads up:" opening, same
+habit of quoting the limit that actually applied, same closing move of telling
+the operator the one thing they can do. Two systems reporting silently-dropped
+work in two different voices is how one of them stops being believed.
+
+The cap itself is **not** raised. Raising it moves the cliff and keeps the
+silence, which is the failure this fixes.
+
 ## Approval parking
 
 openhuman resolves a `ToolPolicyDecision::RequireApproval` **inline**: it blocks

@@ -199,7 +199,14 @@ pub fn fold(turn: AcpTurn) -> TurnOutcome {
         }
     }
 
-    TurnOutcome { reply, steps }
+    TurnOutcome {
+        reply,
+        steps,
+        // ACP turns run on the external agent's own loop, which reports no cap
+        // to us. Claiming one would be inventing a limit this turn was never
+        // held to.
+        exhausted_budget: None,
+    }
 }
 
 #[async_trait]

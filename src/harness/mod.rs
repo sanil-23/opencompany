@@ -621,6 +621,76 @@ pub struct TurnOutcome {
     /// The scrubbed, folded processing steps (empty for a memory-served or
     /// tool-less turn — the zero-steps tell).
     pub steps: Vec<TurnStep>,
+    /// Set when this turn stopped because it ran out of model calls rather than
+    /// because the agent was finished (issue #926). `None` on every ordinary
+    /// turn, and on turns that never entered the tool loop at all.
+    pub exhausted_budget: Option<ExhaustedStepBudget>,
+}
+
+/// A turn that stopped at its per-turn model-call cap, carrying the cap it was
+/// stopped against.
+///
+/// # Why this is a type and not a `bool`
+///
+/// Same reason [`DrainedRequests`](crate::harness::policy::DrainedRequests)
+/// carries its `cap` (issue #561): the notice quotes a number, and a caller
+/// holding a bare `true` would have to find that number somewhere else. The
+/// somewhere-else available here is a hard-coded copy of openhuman's default or
+/// the round figure off a step timeline, and either one hands the operator a
+/// confidently-worded, wrong sentence about a limit this turn was not held to.
+/// The cap is read from the agent that enforced it and travels with the fact it
+/// explains.
+///
+/// The field is private for exactly that reason — the only honest value is the
+/// one [`CompanyAgent::run_with_steer`] already had in hand.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExhaustedStepBudget {
+    cap: usize,
+}
+
+impl ExhaustedStepBudget {
+    /// Records a turn that stopped at `cap` model calls.
+    pub fn new(cap: usize) -> Self {
+        Self { cap }
+    }
+
+    /// The cap this turn was stopped against.
+    pub fn cap(&self) -> usize {
+        self.cap
+    }
+
+    /// The operator-facing sentence.
+    ///
+    /// Deliberately shaped like
+    /// [`DrainedRequests::overflow_notice`](crate::harness::policy::DrainedRequests::overflow_notice):
+    /// the same "Heads up:" opening, the same habit of quoting the limit that
+    /// actually applied, and the same closing move of telling the operator the
+    /// one thing they can do about it. Two systems telling an operator "your
+    /// work was silently cut short" in two different voices is how one of them
+    /// stops being believed.
+    ///
+    /// What it must NOT say is that the agent finished, or that it is asking a
+    /// question. The reply this notice accompanies is openhuman's cap
+    /// checkpoint — a done/next summary the model writes with tools disabled
+    /// once the loop has already stopped — and read alone it is indistinguishable
+    /// from an agent that chose to stop and describe its plan. That confusion is
+    /// the whole of #926.
+    /// # Wording
+    ///
+    /// It says "anything the reply describes as next steps" rather than "the
+    /// plan above", because a turn can be relayed: the reply the operator ends
+    /// up reading is not always produced by the turn that ran out of steps. The
+    /// sentence has to stay true either way, so it makes a claim about
+    /// outstanding work rather than about which bubble sits above it.
+    pub fn notice(&self) -> String {
+        let cap = self.cap;
+        format!(
+            "Heads up: this turn stopped because it ran out of steps, not because the work was \
+             finished. One turn may make at most {cap} model calls, and this one used all {cap} — \
+             so anything the reply describes as a next step is still outstanding, not done. Send \
+             the agent another message to carry on from here."
+        )
+    }
 }
 
 impl CompanyAgent {
@@ -777,6 +847,27 @@ impl CompanyAgent {
             )
             .await;
 
+        // Issue #926: did this turn stop because it was finished, or because it
+        // ran out of model calls? Read here, in the same lock scope as
+        // `read_turn_usage` above and for the same reason — both are per-turn
+        // state on the agent that the next turn overwrites.
+        //
+        // `last_turn_hit_cap` exists upstream precisely because `turn()` returns
+        // only a `String`: on a cap hit that string is openhuman's checkpoint
+        // summary (a done/next digest written with tools disabled), which is
+        // shaped exactly like an agent finishing with a plan. There is no other
+        // signal in the reply to tell the two apart, so a caller that does not
+        // ask this question cannot answer it later.
+        //
+        // The cap comes off the same agent rather than a constant here: the
+        // number in the notice must be the number that stopped this turn, and
+        // openhuman lets a caller override the cap per agent
+        // (`set_max_tool_iterations`), so a copy kept on this side would be
+        // right only until someone used that.
+        let exhausted_budget = agent
+            .last_turn_hit_cap()
+            .then(|| ExhaustedStepBudget::new(agent.agent_config().max_tool_iterations));
+
         // Detach the sink (drops the only remaining `Sender`, closing the
         // channel), release the agent lock, then drain + fold. A `Hard` error
         // still runs this cleanup before propagating, so the collector never
@@ -787,7 +878,14 @@ impl CompanyAgent {
         let steps = steps::fold_steps(events);
 
         let reply = reply?;
-        Ok((TurnOutcome { reply, steps }, usages))
+        Ok((
+            TurnOutcome {
+                reply,
+                steps,
+                exhausted_budget,
+            },
+            usages,
+        ))
     }
 
     /// Classify one `agent.turn` result for the retry wrapper.
@@ -1878,6 +1976,9 @@ impl HarnessPool {
                             return Some(TurnOutcome {
                                 reply: TOTAL_BUDGET_EXHAUSTED_NOTICE.to_string(),
                                 steps: Vec::new(),
+                                // Refused before any model call, so no step
+                                // budget was spent, let alone exhausted.
+                                exhausted_budget: None,
                             });
                         }
                     }
@@ -2121,6 +2222,9 @@ impl HarnessPool {
                                 return Ok(TurnOutcome {
                                     reply: agent_budget_exhausted_notice(agent_id, cap),
                                     steps: Vec::new(),
+                                    // A spend refusal, not a step-budget one:
+                                    // this turn never entered the tool loop.
+                                    exhausted_budget: None,
                                 });
                             }
                         }

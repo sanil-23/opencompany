@@ -2540,6 +2540,7 @@ impl HarnessBrain {
                                 &confinement,
                             )
                             .await?;
+                        let exhausted = outcome.exhausted_budget.clone();
                         channel_responses.push(OutboundMessage {
                             message_id: None,
                             // No card, by construction: a confined turn has no
@@ -2551,6 +2552,28 @@ impl HarnessBrain {
                             reply_to: None,
                             steps: outcome.steps,
                         });
+                        // Issue #926: the copilot path runs its turn directly
+                        // rather than through the delegation seam, so it needs
+                        // the same notice explicitly. A confined turn hitting
+                        // the cap is if anything more confusing — the workflow
+                        // copilot's checkpoint reads like a finished design.
+                        if let Some(exhausted) = exhausted {
+                            tracing::warn!(
+                                company = %self.record().id,
+                                workflow = %workflow_id,
+                                cap = exhausted.cap(),
+                                "[harness::brain] confined copilot turn stopped at its model-call \
+                                 cap with work outstanding; telling the operator"
+                            );
+                            channel_responses.push(OutboundMessage {
+                                message_id: None,
+                                task_id: None,
+                                channel: "operator".to_string(),
+                                text: exhausted.notice(),
+                                steps: Vec::new(),
+                                reply_to: None,
+                            });
+                        }
                         continue;
                     }
                     // Route to the addressed desk's lead, else the orchestrator.
@@ -2709,6 +2732,38 @@ impl HarnessBrain {
                         reply_to: None,
                         steps: operator_steps,
                     });
+                    // Issue #926: a turn that ran out of model calls comes back
+                    // as openhuman's cap checkpoint — a done/next digest that
+                    // reads exactly like an agent finishing with a plan. Say
+                    // which one it was.
+                    //
+                    // Its own bubble, for the reason the approvals overflow
+                    // above already gives: the reply is the agent's answer, and
+                    // this is the system saying the agent was cut off. Appending
+                    // it would put a sentence the agent did not write inside the
+                    // agent's own words, and this bubble is the one that must be
+                    // believed.
+                    //
+                    // Pushed AFTER the reply so it reads in the order it
+                    // happened, and no `cap` argument: the notice carries the
+                    // limit the turn was actually stopped against.
+                    if let Some(exhausted) = &turn.exhausted_budget {
+                        tracing::warn!(
+                            company = %self.record().id,
+                            responder = %responder,
+                            cap = exhausted.cap(),
+                            "[harness::brain] turn stopped at its model-call cap with work \
+                             outstanding; telling the operator"
+                        );
+                        channel_responses.push(OutboundMessage {
+                            message_id: None,
+                            task_id: None,
+                            channel: "operator".to_string(),
+                            text: exhausted.notice(),
+                            steps: Vec::new(),
+                            reply_to: None,
+                        });
+                    }
                     channel_responses.extend(turn.bubbles);
                 }
                 CompanyEvent::TaskDispatched { task_id, run_id } => {

@@ -939,3 +939,119 @@ async fn a_supervised_turn_reads_its_own_workspace_without_asking() {
         "both reads must have run and fed a result back"
     );
 }
+
+/// A turn that runs out of model calls must come back **saying so** (issue #926).
+///
+/// This is the one test that exercises the whole chain the fix depends on:
+/// openhuman's tool loop actually reaching its cap, `Agent::last_turn_hit_cap`
+/// recording it, and `CompanyAgent::run_with_steer` reading it back out while it
+/// still holds the lock. Nothing here is scripted around — the script simply
+/// never stops asking for tools, which is exactly what the #926 repro did.
+///
+/// Why it needs the real harness rather than a unit test: on a cap hit openhuman
+/// returns its checkpoint text through the *same* `Ok(String)` a finished turn
+/// returns. There is no error, no marker in the reply, and no distinguishing
+/// shape — so a test that stubs the agent cannot tell the two apart either, and
+/// would pass against a build that reports every turn as exhausted.
+#[tokio::test]
+async fn a_turn_that_runs_out_of_model_calls_reports_the_cap_it_hit() {
+    // More tool calls than any cap this agent could be built with, so the loop
+    // is stopped by the budget rather than by the script running dry. Running
+    // off the end would emit `Turn::Say("done")` — a clean finish, and the
+    // silent pass this test exists to prevent.
+    //
+    // The two calls ALTERNATE, and that is load-bearing. Repeating one call
+    // verbatim trips openhuman's no-progress breaker after three identical
+    // batches ("the run is stuck repeating one action"), which halts with its
+    // own root-cause summary and deliberately reports `hit_cap = false`. That
+    // is a different, already-well-reported failure; a script that trips it
+    // would test the breaker and never reach the cap this test is about.
+    // Alternating two distinct successful calls never produces three identical
+    // batches in a row, so the budget is the only thing left to stop the loop.
+    let script_turns: Vec<Turn> = (0..40)
+        .map(|i| {
+            if i % 2 == 0 {
+                Turn::Call {
+                    tool: "workspace_list",
+                    args: json!({}),
+                }
+            } else {
+                Turn::Call {
+                    tool: "workspace_read",
+                    args: json!({ "path": "Standards/Engineering standards.md" }),
+                }
+            }
+        })
+        .collect();
+    let (base_url, _script) = spawn_script(script_turns).await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let (pool, deps, record, _store) = harness(base_url, "\"workspace\"", dir.path()).await;
+
+    let outcome = pool
+        .run(
+            &record.id,
+            "ceo",
+            "Write a short feature spec for adding CSV export to the usage page.",
+            &deps,
+            None,
+        )
+        .await
+        .expect("a capped turn still returns a reply, which is the whole problem");
+
+    let exhausted = outcome
+        .exhausted_budget
+        .expect("the turn was stopped by its budget and must say so");
+
+    // The cap is read off the agent that enforced it, so it matches the loop's
+    // own accounting rather than a number this side kept a copy of.
+    assert!(
+        exhausted.cap() > 0,
+        "a cap of zero would mean no model call was ever allowed: {}",
+        exhausted.cap()
+    );
+    let notice = exhausted.notice();
+    assert!(
+        notice.contains(&exhausted.cap().to_string()),
+        "the operator is told WHICH limit stopped the turn: {notice}"
+    );
+    // The point of the whole issue: the reply alone reads like a finished plan,
+    // so the fact has to arrive somewhere the reply is not.
+    assert!(
+        notice.contains("ran out of steps"),
+        "the notice must say the turn was cut short, not merely mention a limit: {notice}"
+    );
+}
+
+/// The counterpart, and the one that keeps the notice believable: a turn that
+/// finished because it was done reports no exhausted budget. Without this, a
+/// build that set the flag unconditionally would pass the test above.
+#[tokio::test]
+async fn a_turn_that_finishes_on_its_own_reports_no_exhausted_budget() {
+    let (base_url, _script) = spawn_script(vec![
+        Turn::Call {
+            tool: "workspace_list",
+            args: json!({}),
+        },
+        Turn::Say("Here is the spec."),
+    ])
+    .await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let (pool, deps, record, _store) = harness(base_url, "\"workspace\"", dir.path()).await;
+
+    let outcome = pool
+        .run(&record.id, "ceo", "Write the spec.", &deps, None)
+        .await
+        .expect("turn runs");
+
+    assert!(
+        outcome.reply.contains("Here is the spec."),
+        "the turn really did finish on its own: {}",
+        outcome.reply
+    );
+    assert!(
+        outcome.exhausted_budget.is_none(),
+        "an ordinary turn must stay quiet, or the notice stops being read"
+    );
+}

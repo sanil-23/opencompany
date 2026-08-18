@@ -387,6 +387,9 @@ pub(crate) struct OperatorTurn {
     /// on. The resulting claim is incomplete but never wrong, and the bubble's
     /// step timeline still shows every `spawn_task` the turn made.
     pub(crate) spawned_task: Option<String>,
+    /// Set when a turn behind this reply stopped at its per-turn model-call cap
+    /// (issue #926), carrying the cap it stopped against.
+    pub(crate) exhausted_budget: Option<crate::harness::ExhaustedStepBudget>,
 }
 
 /// What a **dispatched card's** turn handed off (issue #204).
@@ -916,6 +919,9 @@ impl<'a> DelegationRunner<'a> {
         // case the relay turn's reply replaces it (below).
         let mut operator_steps = outcome.steps;
         let mut operator_reply = outcome.reply;
+        // Issue #926: whether a turn ran out of model calls travels with the
+        // reply, because that is the only place the operator can be told.
+        let mut operator_exhausted_budget = outcome.exhausted_budget;
         // Settle the direct-answer card from the turn that just ran. Done before
         // the delegation drain because a direct responder queues nothing — it
         // has no delegation tools — so there is no relay turn coming that could
@@ -1030,6 +1036,13 @@ impl<'a> DelegationRunner<'a> {
             }
             operator_reply = relay.reply;
             operator_steps.extend(relay.steps);
+            // The relay's reply is what the operator now reads, so its cap is
+            // the one to quote. `or` rather than a straight replacement: if the
+            // relay finished cleanly but the responder's own turn was cut
+            // short, work is still outstanding and dropping that would restore
+            // exactly the silence #926 is about. The notice is worded to hold
+            // in both cases — see `ExhaustedStepBudget::notice`.
+            operator_exhausted_budget = relay.exhausted_budget.or(operator_exhausted_budget);
         }
         // Drained after the relay, not before it: a relay turn carries the same
         // inline `create_workflow` tool, so draining at the responder's turn
@@ -1053,6 +1066,7 @@ impl<'a> DelegationRunner<'a> {
             steps: operator_steps,
             bubbles,
             spawned_task,
+            exhausted_budget: operator_exhausted_budget,
         })
     }
 
@@ -2870,12 +2884,27 @@ one-off, so a card for it has been opened and the workflow builder owns authorin
         /// the call would be wiped by the pre-turn clear, and one that staged
         /// after would skip the boundary the drain reads.
         authors: Vec<TaskOutputWorkflow>,
+        /// The per-turn model-call cap this turn ran out of, when it did
+        /// (issue #926). `None` — the default — is a turn that finished
+        /// because it was done, which is every other turn in this file.
+        exhausted_cap: Option<usize>,
     }
 
     impl Turn {
         fn reply(reply: &str) -> Self {
             Self {
                 reply: reply.to_string(),
+                ..Self::default()
+            }
+        }
+
+        /// A turn that produced `reply` and then ran out of model calls at
+        /// `cap` (issue #926) — openhuman's cap checkpoint, which is prose
+        /// about what is left to do and carries no other tell.
+        fn exhausted(reply: &str, cap: usize) -> Self {
+            Self {
+                reply: reply.to_string(),
+                exhausted_cap: Some(cap),
                 ..Self::default()
             }
         }
@@ -3105,6 +3134,9 @@ one-off, so a card for it has been opened and the workflow builder owns authorin
             TurnOutcome {
                 reply: turn.reply,
                 steps: Vec::new(),
+                exhausted_budget: turn
+                    .exhausted_cap
+                    .map(crate::harness::ExhaustedStepBudget::new),
             }
         }
     }
@@ -3575,6 +3607,108 @@ members = ["brand_strategist", "seo_specialist", "copywriter"]
             .expect("operator message handled");
         assert!(fx.cards().await.is_empty(), "a question is not work");
         assert!(turn.spawned_task.is_none());
+    }
+
+    // ── a turn that ran out of steps (issue #926) ───────────────────────────
+
+    /// The reply an exhausted turn carries is openhuman's cap checkpoint: prose
+    /// about what is still to do, indistinguishable from an agent that finished
+    /// and described its plan. If the fact travels no further than the harness,
+    /// nothing downstream can tell the operator — which is the whole bug.
+    #[tokio::test]
+    async fn a_turn_that_ran_out_of_steps_carries_the_fact_to_the_caller() {
+        let fx = Fixture::new();
+        let turns = ScriptedTurns::new(
+            &fx,
+            vec![Turn::exhausted(
+                "Next steps: write the spec, publish it.",
+                10,
+            )],
+        );
+        let turn = fx
+            .runner(&turns)
+            .handle_operator_message("chief", "write a feature spec", None)
+            .await
+            .expect("operator message handled");
+
+        let exhausted = turn
+            .exhausted_budget
+            .expect("the turn ran out of steps and the caller must be able to know");
+        assert_eq!(exhausted.cap(), 10);
+    }
+
+    /// The ordinary turn stays quiet. A notice on every reply would train the
+    /// operator to skip the one that matters.
+    #[tokio::test]
+    async fn a_turn_that_finished_normally_reports_no_exhausted_budget() {
+        let fx = Fixture::new();
+        let turns = ScriptedTurns::new(&fx, vec![Turn::reply("here is the spec")]);
+        let turn = fx
+            .runner(&turns)
+            .handle_operator_message("chief", "write a feature spec", None)
+            .await
+            .expect("operator message handled");
+
+        assert!(turn.exhausted_budget.is_none());
+    }
+
+    /// The cap reported is the one the turn was actually stopped against, not a
+    /// constant this side had lying around. Same guarantee
+    /// `the_notice_quotes_the_cap_the_drain_was_taken_against` gives for the
+    /// approvals overflow (#561), and for the same reason: the sentence quotes a
+    /// number, so the number has to be the real one.
+    #[tokio::test]
+    async fn the_cap_reported_is_the_one_the_turn_was_stopped_against() {
+        let fx = Fixture::new();
+        // Deliberately not openhuman's default of 10 — a fixed fallback would
+        // pass this test at 10 and lie at every other cap.
+        let turns = ScriptedTurns::new(&fx, vec![Turn::exhausted("mid-plan", 37)]);
+        let turn = fx
+            .runner(&turns)
+            .handle_operator_message("chief", "do the thing", None)
+            .await
+            .expect("operator message handled");
+
+        let exhausted = turn.exhausted_budget.expect("the turn ran out of steps");
+        assert_eq!(exhausted.cap(), 37);
+        assert!(
+            exhausted.notice().contains("37"),
+            "the operator is told WHICH limit stopped the turn: {}",
+            exhausted.notice()
+        );
+    }
+
+    /// A relay replaces the operator-facing reply, so a responder turn that ran
+    /// out of steps behind a cleanly-finished relay must not have its fact
+    /// dropped on the floor — work is still outstanding either way, and losing
+    /// it here restores exactly the silence this issue is about.
+    #[tokio::test]
+    async fn a_relay_that_finished_does_not_erase_an_exhausted_responder_turn() {
+        let fx = Fixture::new();
+        let turns = ScriptedTurns::new(
+            &fx,
+            vec![
+                // The responder queues a hand-off and runs out of steps doing it.
+                Turn {
+                    exhausted_cap: Some(10),
+                    ..Turn::queueing("asking", vec![handoff("what's the status of the build?")])
+                },
+                // The desk answers cleanly.
+                Turn::reply("engineering says it's green"),
+                // ...and so does the relay, whose reply the operator reads.
+                Turn::reply("it's green"),
+            ],
+        );
+        let turn = fx
+            .runner(&turns)
+            .handle_operator_message("chief", "is the build ok?", None)
+            .await
+            .expect("operator message handled");
+
+        let exhausted = turn
+            .exhausted_budget
+            .expect("the responder ran out of steps; the relay finishing does not undo that");
+        assert_eq!(exhausted.cap(), 10);
     }
 
     /// A hand-off made from inside a **dispatched card** must not open a second
