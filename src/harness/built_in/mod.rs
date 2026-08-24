@@ -167,6 +167,7 @@ pub mod workspace_tools;
 #[cfg(test)]
 mod workspace_turn_test;
 
+use crate::harness::run_trace::RunTraceSink;
 pub use brain::HarnessBrain;
 
 use std::collections::{HashMap, HashSet};
@@ -402,6 +403,17 @@ pub struct HarnessDeps {
     /// every node produced. `None` (the default build, and every unwired test)
     /// degrades the persist to a no-op, exactly like [`Self::events`].
     pub run_output_store: Option<Arc<dyn crate::ports::run_output::WorkflowRunOutputStore>>,
+    /// Where a workflow `agent` node's turn is recorded as a first-class
+    /// attempt.
+    ///
+    /// A node's turn has neither a card nor a conversation, so before this it
+    /// minted no row at all and nothing could ask what its agent did. `None`
+    /// (the default build, and every unwired test) leaves each node behaving
+    /// exactly as it did then — the node still runs, it is simply not recorded.
+    pub workflow_runs: Option<Arc<dyn crate::ports::RunStore>>,
+    /// The unredacted companion of those attempts' steps — reasoning text and
+    /// raw tool I/O. `None` keeps only the scrubbed skeleton.
+    pub deep_trace: Option<Arc<dyn crate::ports::deep_trace::DeepTraceStore>>,
     /// Issue #274's per-workflow snapshot ring, so the orchestrator's
     /// `update_workflow` / `delete_workflow` tools (issue #661, M7) write
     /// through the same undo-and-cascade path the console's `PUT`/`DELETE`
@@ -821,6 +833,13 @@ impl CompanyAgent {
                     sink.record(&event).await;
                 }
                 events.push(event);
+            }
+            // A turn that *ends* mid-thought has no closing `TextDelta` or tool
+            // call, so the reasoning tail below the interim flush threshold
+            // would otherwise sit in the trace unpersisted — exactly the
+            // failed/interrupted turns worth diagnosing. Flush on drain.
+            if let Some(sink) = &run_sink {
+                sink.flush().await;
             }
             events
         });
@@ -2095,7 +2114,12 @@ impl HarnessPool {
         agent_id: &str,
         message: &str,
         deps: &HarnessDeps,
+        run_sink: Option<Arc<RunTraceSink>>,
     ) -> crate::Result<TurnOutcome> {
+        // `LiveStream::Off` stays: the frames must not reach the console
+        // timeline. The sink is a different channel — a durable per-attempt
+        // trace keyed on its own run id, which cannot misattribute to a chat
+        // thread because it names none.
         self.run_inner(
             company,
             agent_id,
@@ -2103,7 +2127,7 @@ impl HarnessPool {
             deps,
             None,
             LiveStream::Off,
-            None,
+            run_sink,
         )
         .await
     }
@@ -3132,6 +3156,9 @@ pub(crate) fn build_roster(
             // Issue #1124: the per-server read-only MCP declaration, so a
             // server-declared read-only bridge call does not park under `auto`.
             .with_mcp_reads(mcp_reads.clone());
+        if let Some(workspace) = deps.workspace.as_ref() {
+            agent_policy = agent_policy.with_workspace(workspace.clone(), company.id.clone());
+        }
         // Issue #304: give the policy something to measure `budget_usd_daily`
         // against. Only wired when the host has a meter — without one the cap
         // arm stays inert and warns once, rather than parking every priced call
@@ -3205,6 +3232,9 @@ pub(crate) fn build_roster(
             // Issue #1124: the same per-server read-only MCP declaration the
             // manifest agents get — an overlay teammate calls the same servers.
             .with_mcp_reads(mcp_reads.clone());
+        if let Some(workspace) = deps.workspace.as_ref() {
+            agent_policy = agent_policy.with_workspace(workspace.clone(), company.id.clone());
+        }
         if let Some(meter) = deps.meter.as_ref() {
             agent_policy = agent_policy.with_spend(meter.clone(), company.id.clone());
         }
@@ -3262,10 +3292,11 @@ fn overlay_agent_to_manifest(overlay: &OverlayAgent) -> ManifestAgent {
         name: Some(overlay.name.clone()),
         description: overlay.description.clone(),
         tier: None,
-        // An operator- or orchestrator-added teammate runs on the company's
-        // default harness. There is no console field to name one, and inventing
-        // a binding here would put a teammate on a harness nobody chose.
-        harness: None,
+        // Carried straight through — issue #1245's harness-picker follow-up
+        // gave overlay teammates the same `harness` binding a manifest agent
+        // has. `None` still means "the default harness", exactly as before
+        // this field existed.
+        harness: overlay.harness.clone(),
         // Issue #661 / L5: carry the overlay's own per-teammate grant. An empty
         // list here is unchanged behaviour — `agent_effective_grants` reads it as
         // the standard company-wide grant, exactly as the hardcoded empty did.
@@ -3289,6 +3320,12 @@ fn overlay_agent_to_manifest(overlay: &OverlayAgent) -> ManifestAgent {
         classes: Vec::new(),
         ledgers: None,
         can_declare_ledgers: true,
+        // Issue #1245's per-agent follow-up: carried straight through, exactly
+        // like `tools`/`description` above. Meaningful only when the default
+        // harness this teammate lands on (see `harness: None` above) turns out
+        // to be an `acp` one — a `built_in` engine simply has no lever that
+        // reads it, the same as it ignores `AcpHarness::model`.
+        model: overlay.model.clone(),
     }
 }
 
@@ -3342,6 +3379,8 @@ pub(crate) fn workflow_wiring_deps(
         workflow_refs: workflow_refs::WorkflowRefQueue::default(),
         run_outputs: orchestrator::RunOutputCache::default(),
         run_output_store: None,
+        workflow_runs: None,
+        deep_trace: None,
         workflow_revisions: None,
         approval_requests: policy::ApprovalRequestQueue::default(),
         secrets: None,
@@ -3477,6 +3516,8 @@ mod tests {
             role: "Researcher".into(),
             description: None,
             tools: vec!["docs.*".into(), "payment.send".into()],
+            model: None,
+            harness: None,
         };
         let manifest = overlay_agent_to_manifest(&scoped);
         assert_eq!(
@@ -3497,6 +3538,8 @@ mod tests {
             role: "Generalist".into(),
             description: None,
             tools: Vec::new(),
+            model: None,
+            harness: None,
         };
         let manifest = overlay_agent_to_manifest(&standard);
         assert!(manifest.tools.is_empty());
@@ -3519,6 +3562,8 @@ mod tests {
             role: "Content Writer".into(),
             description: None,
             tools: Vec::new(),
+            model: None,
+            harness: None,
         };
 
         let manifest = overlay_agent_to_manifest(&overlay);
@@ -3544,6 +3589,8 @@ mod tests {
                 role: "r".into(),
                 description: None,
                 tools,
+                model: None,
+                harness: None,
             }]
         };
         let standard = one(Vec::new());
@@ -3923,6 +3970,8 @@ description = "Builds the product."
                 workflow_refs: crate::harness::workflow_refs::WorkflowRefQueue::default(),
                 run_outputs: crate::harness::orchestrator::RunOutputCache::default(),
                 run_output_store: None,
+                workflow_runs: None,
+                deep_trace: None,
                 workflow_revisions: None,
                 approval_requests: ApprovalRequestQueue::default(),
                 secrets: None,
@@ -4136,6 +4185,8 @@ description = "Builds the product."
             workflow_refs: crate::harness::workflow_refs::WorkflowRefQueue::default(),
             run_outputs: crate::harness::orchestrator::RunOutputCache::default(),
             run_output_store: None,
+            workflow_runs: None,
+            deep_trace: None,
             workflow_revisions: None,
             approval_requests: ApprovalRequestQueue::default(),
             secrets: None,
@@ -4187,6 +4238,8 @@ description = "Builds the product."
             role: "Growth Lead".into(),
             description: Some("Owns acquisition experiments.".into()),
             tools: Vec::new(),
+            model: None,
+            harness: None,
         });
 
         let roster = build_roster(&rec, &fx.deps, &[], &HashMap::new()).expect("roster builds");
@@ -4254,6 +4307,8 @@ description = "Builds the product."
             role: "Shadow CEO".into(),
             description: None,
             tools: Vec::new(),
+            model: None,
+            harness: None,
         });
 
         let roster = build_roster(&rec, &fx.deps, &[], &HashMap::new()).expect("roster builds");
@@ -4378,6 +4433,8 @@ description = "Builds the product."
             role: "Designer".into(),
             description: None,
             tools: Vec::new(),
+            model: None,
+            harness: None,
         });
         pool.ensure(&rec, &fx.deps).await.expect("second ensure");
 
@@ -4902,6 +4959,8 @@ description = "Builds the product."
             workflow_refs: crate::harness::workflow_refs::WorkflowRefQueue::default(),
             run_outputs: crate::harness::orchestrator::RunOutputCache::default(),
             run_output_store: None,
+            workflow_runs: None,
+            deep_trace: None,
             workflow_revisions: None,
             approval_requests: ApprovalRequestQueue::default(),
             secrets: None,
@@ -5088,6 +5147,8 @@ description = "Builds the product."
             workflow_refs: crate::harness::workflow_refs::WorkflowRefQueue::default(),
             run_outputs: crate::harness::orchestrator::RunOutputCache::default(),
             run_output_store: None,
+            workflow_runs: None,
+            deep_trace: None,
             workflow_revisions: None,
             approval_requests: ApprovalRequestQueue::default(),
             secrets: Some(secrets.clone()),
@@ -5582,6 +5643,8 @@ description = "Builds the product."
             workflow_refs: crate::harness::workflow_refs::WorkflowRefQueue::default(),
             run_outputs: crate::harness::orchestrator::RunOutputCache::default(),
             run_output_store: None,
+            workflow_runs: None,
+            deep_trace: None,
             workflow_revisions: None,
             approval_requests: ApprovalRequestQueue::default(),
             secrets: None,
@@ -5628,6 +5691,8 @@ description = "Builds the product."
             role: "Growth Lead".into(),
             description: None,
             tools: Vec::new(),
+            model: None,
+            harness: None,
         });
         live_store.save(&updated).await.unwrap();
 
@@ -5765,6 +5830,8 @@ description = "Sets direction."
             workflow_refs: crate::harness::workflow_refs::WorkflowRefQueue::default(),
             run_outputs: crate::harness::orchestrator::RunOutputCache::default(),
             run_output_store: None,
+            workflow_runs: None,
+            deep_trace: None,
             workflow_revisions: None,
             approval_requests: ApprovalRequestQueue::default(),
             secrets: None,
@@ -5923,6 +5990,8 @@ description = "Sets direction."
             workflow_refs: crate::harness::workflow_refs::WorkflowRefQueue::default(),
             run_outputs: crate::harness::orchestrator::RunOutputCache::default(),
             run_output_store: None,
+            workflow_runs: None,
+            deep_trace: None,
             workflow_revisions: None,
             approval_requests: ApprovalRequestQueue::default(),
             secrets: None,
@@ -6613,6 +6682,8 @@ description = "Builds the product."
             role: "Growth Lead".into(),
             description: None,
             tools: Vec::new(),
+            model: None,
+            harness: None,
         });
         let live_store = Arc::new(LiveStore::default());
         live_store.save(&rec).await.unwrap();
@@ -6840,6 +6911,7 @@ budget_usd_daily = 0.0
             classes: Vec::new(),
             ledgers: None,
             can_declare_ledgers: true,
+            model: None,
         };
         let policy = ApprovalPolicy::new(&Policy::default(), None);
         let grants: Vec<String> = grants.iter().map(|g| g.to_string()).collect();
@@ -6961,6 +7033,7 @@ budget_usd_daily = 0.0
             classes: Vec::new(),
             ledgers: None,
             can_declare_ledgers: true,
+            model: None,
         };
         let agent = build::build_agent(
             &CompanyId::new("acme"),

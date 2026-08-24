@@ -327,6 +327,8 @@ async fn harness(
         // The #1695 attribution test passes one, so a searched-then-written
         // note can be read back with its footer.
         workspace,
+        workflow_runs: None,
+        deep_trace: None,
     };
 
     let record = CompanyRecord {
