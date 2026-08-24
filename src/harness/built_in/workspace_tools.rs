@@ -4091,7 +4091,7 @@ mod tests {
 
         let near_limit = format!(
             "Grounded in https://exa.ai/docs. {}",
-            "x".repeat(MAX_WRITE_BYTES - 60)
+            "x".repeat(MAX_WRITE_BYTES - 40)
         );
         // The assertions keep this honest: the body alone must fit while the
         // attributed body must not, so the write below really is the boundary
