@@ -375,11 +375,8 @@ pub fn build_agent(
     // `search_provenance`), resolved here because the publish tool below is
     // wired before the search tool further down and both share the one record.
     //
-    // `Some` under exactly the condition the managed `web_search` tool is wired
-    // under: an explicit `search` grant, no company-owned provider, and a
-    // managed backend. A BYO belt deliberately gets none — those calls run on
-    // the company's own provider account, so managed-surface attribution would
-    // be wrong.
+    // A BYO belt deliberately gets none — those calls run on the company's own
+    // provider account, so managed-surface attribution would be wrong.
     // Deliberately NOT gated on this agent's own `search` grant. The record is
     // company-scoped, so the question a writing tool asks is "did this company's
     // managed search return the URL this document cites" — and on a roster where
