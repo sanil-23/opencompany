@@ -500,6 +500,25 @@ mod tests {
         assert!(p.cited_in("see (https://exa.ai)"));
     }
 
+    /// A multi-byte character immediately before the scheme (a curly quote, an
+    /// em dash, a full-width colon) must not break the boundary walk: the old
+    /// byte offset plus one landed inside the character and sliced
+    /// `&lower[start..sep]` at a non-boundary, panicking the tool call. The
+    /// whole turn is the failure mode, not a missed footer.
+    #[test]
+    fn a_non_ascii_character_before_the_url_does_not_panic() {
+        let p = provenance_with(&["https://exa.ai/docs"]);
+        for prose in [
+            "Per “https://exa.ai/docs”, the API is POST.",
+            "Source—https://exa.ai/docs",
+            "来源：https://exa.ai/docs",
+            "Документ: https://exa.ai/docs.",
+        ] {
+            let out = p.attributed(prose).expect("footer expected");
+            assert!(carries_attribution(&out), "{prose}");
+        }
+    }
+
     #[test]
     fn the_window_is_bounded_and_dedupes() {
         let p = SearchProvenance::new();
