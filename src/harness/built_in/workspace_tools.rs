@@ -2046,10 +2046,7 @@ impl Tool for WorkspaceCreateTool {
         let content = args
             .get("content")
             .and_then(Value::as_str)
-            .filter(|c| !c.is_empty())
-            // Attribution before the size check, so the limit is enforced on
-            // the body that is actually stored.
-            .map(|c| self.workspace.attributed(c));
+            .filter(|c| !c.is_empty());
         if kind == NodeKind::Folder && content.is_some() {
             return Ok(ToolResult::error(
                 "Refused: a folder has no body. Create the folder first, then create the note \
@@ -2057,16 +2054,38 @@ impl Tool for WorkspaceCreateTool {
                     .to_string(),
             ));
         }
-        if let Some(content) = &content
-            && content.len() > MAX_WRITE_BYTES
+        // A body oversized on its own is refused outright, attribution or not —
+        // a note larger than the read limit could not be read back or revised
+        // afterwards.
+        if let Some(body) = content
+            && body.len() > MAX_WRITE_BYTES
         {
             return Ok(ToolResult::error(format!(
                 "Refused: the body is {} bytes, over the {MAX_WRITE_BYTES}-byte limit for a \
                  workspace note. Create it smaller — a note larger than the read limit could not \
                  be read back or revised afterwards.",
-                content.len()
+                body.len()
             )));
         }
+        // Attribution before the store, so the limit is enforced on the body
+        // that is actually stored. A cited body within the footer's length of
+        // the cap crosses it once footered; the note the agent wrote was valid,
+        // so it is created exactly as written rather than refused — the same
+        // fallback `workspace_write` and the publish path use.
+        let content = content.map(|body| {
+            let attributed = self.workspace.attributed(body);
+            if attributed.len() > MAX_WRITE_BYTES {
+                tracing::debug!(
+                    bytes = body.len(),
+                    cap = MAX_WRITE_BYTES,
+                    "workspace attribution skipped: the footer would push this note past the \
+                     write cap"
+                );
+                std::borrow::Cow::Borrowed(body)
+            } else {
+                attributed
+            }
+        });
 
         // Validate the path BEFORE anything resolves, the same order the other
         // tools use — a traversal-shaped argument is refused on its shape, not
