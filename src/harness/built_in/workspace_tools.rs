@@ -4087,7 +4087,8 @@ mod tests {
 
         let (_dir, store) = seeded("acme").await;
         let id = CompanyId::new("acme");
-        let workspace = ws(store.clone(), id.clone()).with_search_provenance(Some(provenance.clone()));
+        let workspace =
+            ws(store.clone(), id.clone()).with_search_provenance(Some(provenance.clone()));
 
         let near_limit = format!(
             "Grounded in https://exa.ai/docs. {}",
@@ -4097,7 +4098,10 @@ mod tests {
         // attributed body must not, so the write below really is the boundary
         // case and not either side of it.
         let attributed = provenance.attributed(&near_limit).unwrap();
-        assert!(near_limit.len() <= MAX_WRITE_BYTES, "body must fit on its own");
+        assert!(
+            near_limit.len() <= MAX_WRITE_BYTES,
+            "body must fit on its own"
+        );
         assert!(
             attributed.len() > MAX_WRITE_BYTES,
             "the footer must be what pushes it over"
