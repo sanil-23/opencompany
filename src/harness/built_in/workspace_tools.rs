@@ -4073,6 +4073,96 @@ mod tests {
         assert!(body.trim_end().ends_with(ATTRIBUTION_FOOTER), "{body}");
     }
 
+    /// A cited body within the footer's length of the cap crosses it once
+    /// footered. The note the agent wrote was valid, so it is stored exactly as
+    /// written rather than refused — the same fallback the publish path uses.
+    /// A body oversized on its own is still refused outright, and one with room
+    /// for the footer still gets it.
+    #[tokio::test]
+    async fn a_near_limit_cited_note_is_stored_without_the_footer_rather_than_refused() {
+        use crate::harness::search_provenance::{ATTRIBUTION_FOOTER, SearchProvenance};
+
+        let provenance = SearchProvenance::new();
+        provenance.record(["https://exa.ai/docs"]);
+
+        let (_dir, store) = seeded("acme").await;
+        let id = CompanyId::new("acme");
+        let workspace = ws(store.clone(), id.clone()).with_search_provenance(Some(provenance.clone()));
+
+        let near_limit = format!(
+            "Grounded in https://exa.ai/docs. {}",
+            "x".repeat(MAX_WRITE_BYTES - 60)
+        );
+        // The assertions keep this honest: the body alone must fit while the
+        // attributed body must not, so the write below really is the boundary
+        // case and not either side of it.
+        let attributed = provenance.attributed(&near_limit).unwrap();
+        assert!(near_limit.len() <= MAX_WRITE_BYTES, "body must fit on its own");
+        assert!(
+            attributed.len() > MAX_WRITE_BYTES,
+            "the footer must be what pushes it over"
+        );
+
+        let result = WorkspaceWriteTool::new(workspace.clone())
+            .execute(json!({
+                "id": "n-eng",
+                "content": near_limit,
+                "expected_updated_at": 2_000,
+            }))
+            .await
+            .unwrap();
+        assert!(!result.is_error, "{}", text(&result));
+        let (_, body) = store.read(&id, "n-eng").await.unwrap().unwrap();
+        assert_eq!(body, near_limit, "stored as written, without the footer");
+        assert!(!body.trim_end().ends_with(ATTRIBUTION_FOOTER), "{body}");
+
+        // The same boundary through `workspace_create`.
+        let result = WorkspaceCreateTool::new(workspace.clone())
+            .execute(json!({
+                "path": format!("{AGENTS_ROOT}/{TEST_AGENT}/edge.md"),
+                "kind": "file",
+                "content": near_limit,
+            }))
+            .await
+            .unwrap();
+        assert!(!result.is_error, "{}", text(&result));
+        let index = PathIndex::build_for_agent(store.tree(&id).await.unwrap());
+        let entry = &index
+            .lookup(&format!("{AGENTS_ROOT}/{TEST_AGENT}/edge.md"))
+            .unwrap()[0];
+        let (_, body) = store.read(&id, &entry.node.id).await.unwrap().unwrap();
+        assert_eq!(body, near_limit, "created as written, without the footer");
+
+        // A body with room for the footer still earns it.
+        let with_room = format!(
+            "Grounded in https://exa.ai/docs. {}",
+            "y".repeat(MAX_WRITE_BYTES - 300)
+        );
+        assert!(provenance.attributed(&with_room).unwrap().len() <= MAX_WRITE_BYTES);
+        let result = WorkspaceWriteTool::new(workspace.clone())
+            .execute(json!({
+                "id": "n-readme",
+                "content": with_room,
+                "expected_updated_at": 2_000,
+            }))
+            .await
+            .unwrap();
+        assert!(!result.is_error, "{}", text(&result));
+        let (_, body) = store.read(&id, "n-readme").await.unwrap().unwrap();
+        assert!(body.trim_end().ends_with(ATTRIBUTION_FOOTER), "{body}");
+
+        // A body oversized on its own is refused outright, attribution or not.
+        let result = WorkspaceWriteTool::new(workspace)
+            .execute(json!({
+                "id": "n-eng",
+                "content": "z".repeat(MAX_WRITE_BYTES + 1),
+                "expected_updated_at": 2_000,
+            }))
+            .await
+            .unwrap();
+        assert!(result.is_error, "{}", text(&result));
+    }
+
     /// Models stringify numbers constantly. `"2000"` must land exactly as
     /// `2000` does — the old `as_u64`-only read rejected it with "is required",
     /// which reads as "you forgot the argument" for an argument the agent did
