@@ -88,6 +88,18 @@ impl SearchProvenance {
         }
     }
 
+    /// Whether nothing has been recorded yet — a company that has not searched
+    /// in this process.
+    ///
+    /// Load-bearing for [`attributed`](Self::attributed): an empty record is
+    /// *no evidence either way*, not evidence of forgery, and the record is
+    /// in-process like the daily ledger. After a restart it is empty while
+    /// documents attributed before it are not, so stripping on an empty record
+    /// would erase true attributions every time the host came back up.
+    pub fn is_empty(&self) -> bool {
+        self.urls.lock().expect("search provenance lock").is_empty()
+    }
+
     /// Whether `content` cites at least one recorded result URL.
     pub fn cited_in(&self, content: &str) -> bool {
         let tracked = self.urls.lock().expect("search provenance lock");
@@ -108,13 +120,14 @@ impl SearchProvenance {
                 "{body}\n\n{ATTRIBUTION_BLOCK}\n",
                 body = content.trim_end()
             )),
-            // NOT earned but stamped anyway — a body the model wrote the footer
-            // into itself, or a revision that dropped its last citation while
-            // keeping the old footer. The claim is the host's to make, not the
-            // model's, so it is removed rather than trusted: an attribution
-            // that survives without evidence is exactly the false stamp this
-            // module exists to prevent.
-            (false, true) => Some(without_attribution(content)),
+            // Stamped without citing anything this company's search returned.
+            // The claim is the host's to make, not the model's, so it is
+            // removed rather than trusted — but only when there is something to
+            // contradict it. On an empty record (a host that has not searched
+            // since it started) we know nothing, and erasing a footer earned
+            // before the last restart would be the worse error of the two.
+            (false, true) if !self.is_empty() => Some(without_attribution(content)),
+            (false, true) => None,
             (false, false) => None,
         }
     }
@@ -127,7 +140,14 @@ impl SearchProvenance {
 /// [`SearchProvenance::attributed`] puts it, and matching anywhere would let a
 /// passing mention of the phrase suppress a footer the document has earned.
 pub fn carries_attribution(content: &str) -> bool {
-    content.trim_end().ends_with(ATTRIBUTION_BLOCK)
+    let trimmed = content.trim_end();
+    // The block must also START a line. `Note---\n*Powered by Exa*` ends with
+    // the same characters but contains no horizontal rule, and treating it as a
+    // footer would suppress the real one on a document that earned it.
+    match trimmed.strip_suffix(ATTRIBUTION_BLOCK) {
+        Some(before) => before.is_empty() || before.ends_with('\n'),
+        None => false,
+    }
 }
 
 /// A URL in the shape worth remembering: scheme-qualified, with the trailing
@@ -152,6 +172,9 @@ fn normalize_url(url: &str) -> Option<String> {
 /// `content` with a trailing attribution block removed, and the body's own
 /// trailing whitespace left as it was found.
 fn without_attribution(content: &str) -> String {
+    if !carries_attribution(content) {
+        return content.to_string();
+    }
     let trimmed = content.trim_end();
     match trimmed.strip_suffix(ATTRIBUTION_BLOCK) {
         Some(body) => body.trim_end().to_string(),
@@ -174,35 +197,46 @@ fn continues_url(next: char) -> bool {
         )
 }
 
-/// Whether `content` cites `url` itself, rather than merely opening with it.
+/// Whether `content` cites `url` itself, rather than merely containing it.
 ///
-/// A plain substring check would let a recorded `https://exa.ai/docs` claim
-/// credit for a cited `https://exa.ai/docs-archive`, or a recorded
-/// `https://exa.ai` for `https://exa.ai.evil.example` — neither of which the
-/// search returned. So a match counts only where the next character cannot be
-/// continuing the same URL ([`continues_url`]).
+/// Both edges are checked. A plain substring search would credit a recorded
+/// `https://exa.ai/docs` for a cited `https://exa.ai/docs-archive` (trailing
+/// edge) and, worse, for a cited
+/// `https://tracker.test/?next=https://exa.ai/docs` (leading edge) — a wrapper
+/// URL the search never returned, carrying the recorded one as a parameter. So
+/// a match counts only where neither neighbour can be part of the same URL.
 ///
 /// **Exact URLs only.** A deeper path under a recorded result
 /// (`…/docs/reference` for a recorded `…/docs`) does *not* count: the search
 /// returned the one page, and crediting a different page because it shares a
 /// prefix is the false stamp this module refuses. The single exception is the
-/// same URL written with a trailing slash, which is the same page.
+/// same URL written with a trailing slash — and only when the recorded URL is
+/// bare, since `…?next=x` and `…?next=x/` are different query values.
 fn cites(content: &str, url: &str) -> bool {
+    // A trailing slash is the same page only for a URL with no query or
+    // fragment; anywhere else the slash is part of a value.
+    let slash_is_equivalent = !url.contains('?') && !url.contains('#');
     let mut from = 0;
     while let Some(at) = content[from..].find(url) {
-        let end = from + at + url.len();
+        let start = from + at;
+        let end = start + url.len();
+        // Leading edge: anything a URL could be built from means this match is
+        // inside a longer URL or token, not a citation of its own.
+        let opens = content[..start]
+            .chars()
+            .next_back()
+            .is_none_or(|prev| !continues_url(prev) && prev != '/' && prev != '.');
         let mut rest = content[end..].chars();
-        let terminated = match rest.next() {
+        let closes = match rest.next() {
             None => true,
-            // `…/docs/` — the recorded page with a trailing slash, provided
-            // nothing follows it. `…/docs/reference` is a different page.
-            Some('/') => !rest.next().is_some_and(continues_url),
+            Some('/') if slash_is_equivalent => !rest.next().is_some_and(continues_url),
+            Some('/') => false,
             // A `.` that begins a longer hostname (`exa.ai.evil.example`)
             // continues the URL; one that ends a sentence does not.
             Some('.') => !rest.next().is_some_and(continues_url),
             Some(next) => !continues_url(next),
         };
-        if terminated {
+        if opens && closes {
             return true;
         }
         from = end;
@@ -271,6 +305,90 @@ mod tests {
             .expect("mention must not suppress the footer");
         assert!(out.trim_end().ends_with(ATTRIBUTION_BLOCK), "{out}");
         assert_eq!(out.matches(ATTRIBUTION_BLOCK).count(), 1, "{out}");
+    }
+
+    /// A wrapper URL carrying a recorded one as a parameter was never returned
+    /// by the search, so it earns nothing — the leading edge matters as much as
+    /// the trailing one.
+    #[test]
+    fn a_recorded_url_embedded_in_a_larger_one_earns_nothing() {
+        let p = provenance_with(&["https://exa.ai/docs"]);
+        for wrapper in [
+            "https://tracker.test/?next=https://exa.ai/docs",
+            "https://proxy.test/https://exa.ai/docs",
+            "https://cache.test/x.https://exa.ai/docs",
+        ] {
+            assert!(!p.cited_in(&format!("go via {wrapper} today")), "{wrapper}");
+        }
+        // The genuine citation still matches in ordinary prose shapes.
+        for prose in [
+            "see https://exa.ai/docs",
+            "see (https://exa.ai/docs)",
+            "see [docs](https://exa.ai/docs).",
+            "https://exa.ai/docs",
+        ] {
+            assert!(p.cited_in(prose), "{prose}");
+        }
+    }
+
+    /// A trailing slash is the same page only when the recorded URL is bare:
+    /// `…?next=x` and `…?next=x/` are different query values.
+    #[test]
+    fn the_trailing_slash_equivalence_is_for_paths_only() {
+        let bare = provenance_with(&["https://example.test/path"]);
+        assert!(bare.cited_in("at https://example.test/path/ now"));
+
+        let query = provenance_with(&["https://example.test/path?next=x"]);
+        assert!(query.cited_in("at https://example.test/path?next=x now"));
+        assert!(!query.cited_in("at https://example.test/path?next=x/ now"));
+
+        let fragment = provenance_with(&["https://example.test/path#top"]);
+        assert!(!fragment.cited_in("at https://example.test/path#top/ now"));
+    }
+
+    /// `Note---` is not a horizontal rule, so a body ending that way has not
+    /// been attributed and must still earn its footer.
+    #[test]
+    fn the_block_must_begin_its_own_line() {
+        let p = provenance_with(&["https://exa.ai/docs"]);
+        let sneaky = format!("Cites https://exa.ai/docs.\nNote{ATTRIBUTION_BLOCK}\n");
+        assert!(!carries_attribution(&sneaky));
+        let out = p.attributed(&sneaky).expect("must still be attributed");
+        assert!(carries_attribution(&out), "{out}");
+    }
+
+    /// An empty record is no evidence either way. The record is in-process, so
+    /// after a restart it is empty while documents attributed before it are
+    /// not — stripping then would erase true attributions on every restart.
+    #[test]
+    fn a_cold_record_never_strips_an_existing_footer() {
+        let cold = SearchProvenance::new();
+        let attributed = format!("From https://exa.ai/docs.\n\n{ATTRIBUTION_BLOCK}\n");
+        assert!(cold.attributed(&attributed).is_none());
+
+        // Once the company has searched something else, an uncited footer is
+        // contradicted and removed.
+        let warm = provenance_with(&["https://other.test/page"]);
+        assert_eq!(
+            warm.attributed(&attributed).as_deref(),
+            Some("From https://exa.ai/docs.")
+        );
+    }
+
+    /// The record is company-scoped, so a teammate who did not run the search
+    /// still verifies a colleague's citation rather than stripping it.
+    #[test]
+    fn one_record_serves_every_agent_of_the_company() {
+        let shared = SearchProvenance::new();
+        // The researcher searches…
+        shared.record(["https://exa.ai/docs"]);
+        // …and a different agent, holding the same handle, writes the note.
+        let note = shared
+            .attributed("Per https://exa.ai/docs, the API is POST.")
+            .expect("a teammate's citation is still evidence");
+        assert!(carries_attribution(&note));
+        // Re-writing it later keeps the footer rather than stripping it.
+        assert!(shared.attributed(&note).is_none());
     }
 
     /// The public line and the block that carries it must not drift apart.
@@ -354,12 +472,11 @@ mod tests {
         let cleaned = p.attributed(&revised).expect("no longer earned");
         assert!(!cleaned.contains(ATTRIBUTION_FOOTER), "{cleaned}");
 
-        // With nothing recorded at all, a forged footer still does not stand.
+        // With nothing recorded at all we know nothing, so the footer stands —
+        // see `a_cold_record_never_strips_an_existing_footer` for why erasing
+        // it there would be the worse error.
         let empty = SearchProvenance::new();
-        assert_eq!(
-            empty.attributed(&forged).as_deref(),
-            Some("I wrote this myself.")
-        );
+        assert!(empty.attributed(&forged).is_none());
     }
 
     #[test]

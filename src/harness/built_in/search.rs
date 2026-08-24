@@ -229,9 +229,23 @@ pub struct SearchBackend {
     /// The shared day counter. Private so a caller cannot hand two companies
     /// two independent ledgers by accident.
     calls: SearchCallLedger,
+    /// The company's shared record of returned result URLs (issue #1695).
+    ///
+    /// Company-scoped for the reason [`SearchCallLedger`] is: one company, one
+    /// record. Attribution asks "did **this company's** managed search return
+    /// the URL this document cites", so a per-agent record would let one
+    /// teammate strip the footer another teammate's document legitimately
+    /// earned, simply because the searching agent was not the writing one.
+    provenance: Arc<crate::harness::search_provenance::SearchProvenance>,
 }
 
 impl SearchBackend {
+    /// The company's shared provenance record, for the writing tools that
+    /// attribute documents citing what this backend returned.
+    pub fn provenance(&self) -> Arc<crate::harness::search_provenance::SearchProvenance> {
+        Arc::clone(&self.provenance)
+    }
+
     /// A backend over the managed `credential`, capped at `daily_call_cap`
     /// searches per company per UTC day, with a fresh ledger.
     pub fn new(backend_url: String, credential: Credential, daily_call_cap: u32) -> Self {
@@ -240,6 +254,7 @@ impl SearchBackend {
             credential,
             daily_call_cap,
             calls: SearchCallLedger::default(),
+            provenance: crate::harness::search_provenance::SearchProvenance::new(),
         }
     }
 
@@ -298,19 +313,13 @@ pub struct SearchMetering {
 /// credential resolved — granted-but-uncredentialed wires nothing and warns,
 /// media's shape exactly.
 ///
-/// `provenance` is this agent's [`SearchProvenance`]: every result URL the
-/// tool renders is recorded there, so the workspace write tools sharing the
-/// same handle can attribute the notes that cite them. Callers with no
-/// attribution surface (workflow node belts) pass a fresh handle nobody reads.
-pub fn search_tools(
-    backend: &SearchBackend,
-    metering: SearchMetering,
-    provenance: Arc<crate::harness::search_provenance::SearchProvenance>,
-) -> Vec<Box<dyn Tool>> {
+/// Every result URL the tool renders is recorded on the backend's shared
+/// [`SearchProvenance`](crate::harness::search_provenance::SearchProvenance),
+/// so the company's writing tools can attribute the documents that cite them.
+pub fn search_tools(backend: &SearchBackend, metering: SearchMetering) -> Vec<Box<dyn Tool>> {
     vec![Box::new(WebSearchTool {
         backend: backend.clone(),
         metering,
-        provenance,
     })]
 }
 
@@ -322,9 +331,6 @@ pub fn search_tools(
 struct WebSearchTool {
     backend: SearchBackend,
     metering: SearchMetering,
-    /// Where the rendered result URLs are recorded for workspace attribution —
-    /// see [`search_provenance`](crate::harness::search_provenance).
-    provenance: Arc<crate::harness::search_provenance::SearchProvenance>,
 }
 
 impl WebSearchTool {
@@ -523,7 +529,7 @@ impl Tool for WebSearchTool {
         // Exactly the URLs the agent is about to see — the same
         // `take(max_results)` slice `render_results` shows — so a workspace
         // note citing one of them can be attributed to this search.
-        self.provenance.record(
+        self.backend.provenance.record(
             response
                 .results
                 .iter()
@@ -1047,7 +1053,6 @@ mod tests {
                 agent: "ceo".into(),
                 meter: None,
             },
-            crate::harness::search_provenance::SearchProvenance::new(),
         );
         let names: Vec<&str> = tools.iter().map(|tool| tool.name()).collect();
         assert_eq!(names, vec![WEB_SEARCH_TOOL]);

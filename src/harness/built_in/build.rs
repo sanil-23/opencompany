@@ -381,9 +381,9 @@ pub fn build_agent(
     // the company's own provider account, so managed-surface attribution would
     // be wrong.
     let search_provenance = (crate::company::grants_search_explicit(grants)
-        && deps.tenant_search.is_none()
-        && deps.search.is_some())
-    .then(crate::harness::search_provenance::SearchProvenance::new);
+        && deps.tenant_search.is_none())
+    .then(|| deps.search.as_ref().map(|backend| backend.provenance()))
+    .flatten();
 
     let publishing = wants_files && deps.artifacts.is_some();
     if publishing {
@@ -669,12 +669,6 @@ pub fn build_agent(
                 tools.extend(byo);
             }
             (None, Some(backend)) => {
-                // Resolved above, and `Some` under exactly this arm's
-                // condition; the fallback is unreachable and merely avoids an
-                // unwrap on an invariant the compiler cannot see.
-                let provenance = search_provenance
-                    .clone()
-                    .unwrap_or_else(crate::harness::search_provenance::SearchProvenance::new);
                 tools.extend(crate::harness::search::search_tools(
                     backend,
                     crate::harness::search::SearchMetering {
@@ -682,7 +676,6 @@ pub fn build_agent(
                         agent: manifest_agent.id.clone(),
                         meter: deps.meter.clone(),
                     },
-                    provenance,
                 ));
             }
             (None, None) => tracing::warn!(
