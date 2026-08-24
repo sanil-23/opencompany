@@ -221,9 +221,17 @@ fn cited_urls(content: &str) -> Vec<String> {
     while let Some(at) = lower[from..].find("://") {
         let sep = from + at;
         // Walk back over the scheme; anything but http/https is skipped whole.
+        // Walk characters, not bytes: `rfind`'s byte offset points at the start
+        // of the character that ends the scheme, so adding 1 lands inside a
+        // multi-byte one whenever a cited URL follows non-ASCII punctuation
+        // (a curly quote, an em dash, a full-width colon). Advancing by the
+        // matched character's own width keeps `start` a boundary, so the slice
+        // below cannot panic.
         let start = content[..sep]
-            .rfind(|c: char| !c.is_ascii_alphabetic())
-            .map(|i| i + 1)
+            .char_indices()
+            .rev()
+            .find(|(_, c)| !c.is_ascii_alphabetic())
+            .map(|(i, c)| i + c.len_utf8())
             .unwrap_or(0);
         if !matches!(&lower[start..sep], "http" | "https") {
             from = sep + 3;
