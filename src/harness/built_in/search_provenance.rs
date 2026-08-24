@@ -7,9 +7,13 @@
 //! model's memory. This module closes that gap with an attribution footer —
 //! but only on **evidence**, never on a timer:
 //!
-//! * [`SearchProvenance`] is one per-agent record of the result URLs the
-//!   managed search tool actually returned to that agent. The search tool
-//!   [`record`](SearchProvenance::record)s exactly the results it rendered.
+//! * [`SearchProvenance`] is one **per-company** record of the result URLs the
+//!   managed search tool returned, held on
+//!   [`SearchBackend`](crate::harness::search::SearchBackend) beside the daily
+//!   call ledger. Company-scoped because the question is whether *this
+//!   company's* search returned the cited URL, not whether the writing agent
+//!   personally ran it — a per-agent record let one teammate strip the footer
+//!   another teammate's document had legitimately earned.
 //! * A workspace note gets the footer **iff its body cites at least one of
 //!   those URLs**. The agent roster is cached across turns
 //!   ([`HarnessPool`](super::HarnessPool)), so any "searched recently" flag
@@ -27,6 +31,19 @@
 //! sources without citing a single returned URL gets no footer. The failure
 //! mode this module refuses is the opposite one — a footer on a document that
 //! never touched a search result.
+//!
+//! Matching parses candidate URLs out of the body and compares them whole
+//! ([`cited_urls`]), rather than searching for each recorded URL and judging
+//! its neighbours. Every character that ends a URL in prose (`,`, `;`, `!`,
+//! `'`) is also legal inside one, so a boundary allowlist must either credit
+//! `…/a$rev` for a recorded `…/a` or refuse an ordinary "see …/a, and".
+//!
+//! Attribution is **additive**: the host appends its own claim and never
+//! removes text a model or an operator wrote. The record is in-process and
+//! bounded, so a missing URL is not proof a footer was unearned — a restart or
+//! an eviction would otherwise delete true credits on a schedule. Policing a
+//! supplied footer needs durable per-document evidence, which belongs in the
+//! storage ports rather than in a heuristic over the body.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -88,48 +105,37 @@ impl SearchProvenance {
         }
     }
 
-    /// Whether nothing has been recorded yet — a company that has not searched
-    /// in this process.
-    ///
-    /// Load-bearing for [`attributed`](Self::attributed): an empty record is
-    /// *no evidence either way*, not evidence of forgery, and the record is
-    /// in-process like the daily ledger. After a restart it is empty while
-    /// documents attributed before it are not, so stripping on an empty record
-    /// would erase true attributions every time the host came back up.
-    pub fn is_empty(&self) -> bool {
-        self.urls.lock().expect("search provenance lock").is_empty()
-    }
-
     /// Whether `content` cites at least one recorded result URL.
     pub fn cited_in(&self, content: &str) -> bool {
         let tracked = self.urls.lock().expect("search provenance lock");
-        tracked.iter().any(|url| cites(content, url))
+        cited_urls(content)
+            .iter()
+            .any(|candidate| tracked.contains(candidate))
     }
 
     /// `content` with the attribution footer appended, when it has earned one:
-    /// it cites a recorded URL and does not already carry the footer.
-    /// `None` means "store the body as given" — either the evidence is absent
-    /// or the footer is already there.
+    /// it cites a recorded URL and does not already carry the footer. `None`
+    /// means "store the body exactly as given".
+    ///
+    /// **Additive only.** An earlier revision removed a footer that cited
+    /// nothing recorded, on the reasoning that the claim is the host's to make
+    /// rather than the model's. That cannot be done safely from this record:
+    /// it is in-process like the daily ledger and bounded at
+    /// [`MAX_TRACKED_URLS`], so a restart or an eviction leaves a genuinely
+    /// attributed document looking unearned, and the strip would delete a true
+    /// credit. The two errors are not symmetric — an over-stamped draft is
+    /// cosmetic, while erasing real attributions happens on every restart — so
+    /// the host adds its own claim and never removes text somebody else wrote.
+    /// Policing a supplied footer needs durable per-document evidence, which is
+    /// a storage-port change rather than a heuristic over the body.
     pub fn attributed(&self, content: &str) -> Option<String> {
-        let carries = carries_attribution(content);
-        match (self.cited_in(content), carries) {
-            // Earned and already stamped: store exactly as given.
-            (true, true) => None,
-            // Earned: stamp it.
-            (true, false) => Some(format!(
-                "{body}\n\n{ATTRIBUTION_BLOCK}\n",
-                body = content.trim_end()
-            )),
-            // Stamped without citing anything this company's search returned.
-            // The claim is the host's to make, not the model's, so it is
-            // removed rather than trusted — but only when there is something to
-            // contradict it. On an empty record (a host that has not searched
-            // since it started) we know nothing, and erasing a footer earned
-            // before the last restart would be the worse error of the two.
-            (false, true) if !self.is_empty() => Some(without_attribution(content)),
-            (false, true) => None,
-            (false, false) => None,
+        if carries_attribution(content) || !self.cited_in(content) {
+            return None;
         }
+        Some(format!(
+            "{body}\n\n{ATTRIBUTION_BLOCK}\n",
+            body = content.trim_end()
+        ))
     }
 }
 
@@ -169,79 +175,77 @@ fn normalize_url(url: &str) -> Option<String> {
     Some(normalized.to_string())
 }
 
-/// `content` with a trailing attribution block removed, and the body's own
-/// trailing whitespace left as it was found.
-fn without_attribution(content: &str) -> String {
-    if !carries_attribution(content) {
-        return content.to_string();
-    }
-    let trimmed = content.trim_end();
-    match trimmed.strip_suffix(ATTRIBUTION_BLOCK) {
-        Some(body) => body.trim_end().to_string(),
-        None => content.to_string(),
-    }
-}
+/// Characters RFC 3986 permits in a URI after the scheme, beside alphanumerics.
+const URL_CHARS: &str = "-._~:/?#[]@!$&'()*+,;=%";
 
-/// Whether `next` could be *continuing* a URL that the recorded one is only a
-/// prefix of.
+/// Trailing characters that end a sentence rather than a URL.
 ///
-/// Everything RFC 3986 allows inside a host, port, path, query or fragment and
-/// that prose does not normally place immediately after a URL. Deliberately
-/// excludes the characters that terminate a URL in real writing — whitespace,
-/// `)`, `]`, `>`, quotes, `,`, `;`, `!` — so an ordinary citation still matches.
-fn continues_url(next: char) -> bool {
-    next.is_ascii_alphanumeric()
-        || matches!(
-            next,
-            '-' | '_' | '~' | '%' | '+' | '=' | '&' | '#' | '?' | ':' | '@'
-        )
-}
-
-/// Whether `content` cites `url` itself, rather than merely containing it.
-///
-/// Both edges are checked. A plain substring search would credit a recorded
-/// `https://exa.ai/docs` for a cited `https://exa.ai/docs-archive` (trailing
-/// edge) and, worse, for a cited
-/// `https://tracker.test/?next=https://exa.ai/docs` (leading edge) — a wrapper
-/// URL the search never returned, carrying the recorded one as a parameter. So
-/// a match counts only where neither neighbour can be part of the same URL.
-///
-/// **Exact URLs only.** A deeper path under a recorded result
-/// (`…/docs/reference` for a recorded `…/docs`) does *not* count: the search
-/// returned the one page, and crediting a different page because it shares a
-/// prefix is the false stamp this module refuses. The single exception is the
-/// same URL written with a trailing slash — and only when the recorded URL is
-/// bare, since `…?next=x` and `…?next=x/` are different query values.
-fn cites(content: &str, url: &str) -> bool {
-    // A trailing slash is the same page only for a URL with no query or
-    // fragment; anywhere else the slash is part of a value.
-    let slash_is_equivalent = !url.contains('?') && !url.contains('#');
-    let mut from = 0;
-    while let Some(at) = content[from..].find(url) {
-        let start = from + at;
-        let end = start + url.len();
-        // Leading edge: anything a URL could be built from means this match is
-        // inside a longer URL or token, not a citation of its own.
-        let opens = content[..start]
-            .chars()
-            .next_back()
-            .is_none_or(|prev| !continues_url(prev) && prev != '/' && prev != '.');
-        let mut rest = content[end..].chars();
-        let closes = match rest.next() {
-            None => true,
-            Some('/') if slash_is_equivalent => !rest.next().is_some_and(continues_url),
-            Some('/') => false,
-            // A `.` that begins a longer hostname (`exa.ai.evil.example`)
-            // continues the URL; one that ends a sentence does not.
-            Some('.') => !rest.next().is_some_and(continues_url),
-            Some(next) => !continues_url(next),
+/// `)` and `]` are URL-legal, so they are dropped only when unbalanced — which
+/// is what makes `[docs](https://exa.ai/docs)` and `(https://exa.ai/docs)` read
+/// correctly without truncating a URL that genuinely contains a bracket.
+fn trim_trailing_punctuation(url: &str) -> &str {
+    let mut url = url;
+    loop {
+        let last = match url.chars().next_back() {
+            Some(c) => c,
+            None => return url,
         };
-        if opens && closes {
-            return true;
+        let drop = match last {
+            '.' | ',' | ';' | ':' | '!' | '?' | '\'' | '"' => true,
+            ')' => url.matches(')').count() > url.matches('(').count(),
+            ']' => url.matches(']').count() > url.matches('[').count(),
+            _ => false,
+        };
+        if !drop {
+            return url;
         }
-        from = end;
+        url = &url[..url.len() - last.len_utf8()];
     }
-    false
+}
+
+/// Every absolute `http`/`https` URL written in `content`, normalized.
+///
+/// Candidates are **parsed out and compared whole**, rather than searching the
+/// text for each recorded URL and inspecting its neighbours. Boundary-guessing
+/// cannot get this right: every character a heuristic must treat as "ends the
+/// URL" (`,`, `;`, `!`, `'`, `*`, `$`) is also legal *inside* one, so any
+/// allowlist either credits `…/a$rev` for a recorded `…/a` or refuses an
+/// ordinary "see …/a, and". Reading the URL out and comparing it for equality
+/// has no such tension, and it makes a wrapper like
+/// `https://tracker.test/?next=https://exa.ai/docs` one candidate — the
+/// wrapper, which was never returned — instead of two.
+fn cited_urls(content: &str) -> Vec<String> {
+    let lower = content.to_ascii_lowercase();
+    let mut found = Vec::new();
+    let mut from = 0;
+    while let Some(at) = lower[from..].find("://") {
+        let sep = from + at;
+        // Walk back over the scheme; anything but http/https is skipped whole.
+        let start = content[..sep]
+            .rfind(|c: char| !c.is_ascii_alphabetic())
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        if !matches!(&lower[start..sep], "http" | "https") {
+            from = sep + 3;
+            continue;
+        }
+        // Walk forward over everything a URI may contain.
+        let mut end = sep + 3;
+        for (offset, c) in content[sep + 3..].char_indices() {
+            if c.is_ascii_alphanumeric() || URL_CHARS.contains(c) {
+                end = sep + 3 + offset + c.len_utf8();
+            } else {
+                break;
+            }
+        }
+        if let Some(url) = normalize_url(trim_trailing_punctuation(&content[start..end])) {
+            found.push(url);
+        }
+        // Continue past the whole candidate, so a URL carried inside another as
+        // a parameter is never counted as a citation of its own.
+        from = end.max(sep + 3);
+    }
+    found
 }
 
 #[cfg(test)]
@@ -307,6 +311,50 @@ mod tests {
         assert_eq!(out.matches(ATTRIBUTION_BLOCK).count(), 1, "{out}");
     }
 
+    /// Attribution is additive: the host appends its own claim and never
+    /// deletes text somebody else wrote. Policing a supplied footer would mean
+    /// deleting a true credit every time the in-process record resets or
+    /// evicts, which is the worse of the two errors.
+    #[test]
+    fn a_supplied_footer_is_left_in_place_rather_than_deleted() {
+        let p = provenance_with(&["https://exa.ai/docs"]);
+        let forged = format!("I wrote this myself.\n\n{ATTRIBUTION_BLOCK}\n");
+        assert!(p.attributed(&forged).is_none(), "nothing is ever removed");
+
+        // Including after a reset or an eviction, which is the case that made
+        // stripping unsound: the citation is intact, the record simply no
+        // longer holds the URL.
+        let reset = provenance_with(&["https://unrelated.test/page"]);
+        let genuine = format!("From https://exa.ai/docs.\n\n{ATTRIBUTION_BLOCK}\n");
+        assert!(reset.attributed(&genuine).is_none(), "{genuine}");
+        assert!(SearchProvenance::new().attributed(&genuine).is_none());
+    }
+
+    /// Every sub-delimiter is legal inside a path, so a longer URL that merely
+    /// begins with a recorded one earns nothing — the case a character
+    /// allowlist could not express, since the same characters end URLs in prose.
+    #[test]
+    fn a_sub_delimiter_suffix_is_a_different_url() {
+        let p = provenance_with(&["https://example.test/a"]);
+        for suffix in [
+            "$rev", "!v2", "'x", "*star", ",list", ";p=1", "+plus", "=eq",
+        ] {
+            let cited = format!("https://example.test/a{suffix}");
+            assert!(!p.cited_in(&format!("see {cited} here")), "{cited}");
+        }
+        // …while the same characters as sentence punctuation still terminate a
+        // genuine citation.
+        for prose in [
+            "see https://example.test/a, then",
+            "see https://example.test/a; then",
+            "see https://example.test/a! Really",
+            "quoted 'https://example.test/a'",
+            "see https://example.test/a.",
+        ] {
+            assert!(p.cited_in(prose), "{prose}");
+        }
+    }
+
     /// A wrapper URL carrying a recorded one as a parameter was never returned
     /// by the search, so it earns nothing — the leading edge matters as much as
     /// the trailing one.
@@ -355,24 +403,6 @@ mod tests {
         assert!(!carries_attribution(&sneaky));
         let out = p.attributed(&sneaky).expect("must still be attributed");
         assert!(carries_attribution(&out), "{out}");
-    }
-
-    /// An empty record is no evidence either way. The record is in-process, so
-    /// after a restart it is empty while documents attributed before it are
-    /// not — stripping then would erase true attributions on every restart.
-    #[test]
-    fn a_cold_record_never_strips_an_existing_footer() {
-        let cold = SearchProvenance::new();
-        let attributed = format!("From https://exa.ai/docs.\n\n{ATTRIBUTION_BLOCK}\n");
-        assert!(cold.attributed(&attributed).is_none());
-
-        // Once the company has searched something else, an uncited footer is
-        // contradicted and removed.
-        let warm = provenance_with(&["https://other.test/page"]);
-        assert_eq!(
-            warm.attributed(&attributed).as_deref(),
-            Some("From https://exa.ai/docs.")
-        );
     }
 
     /// The record is company-scoped, so a teammate who did not run the search
@@ -450,33 +480,6 @@ mod tests {
             normalize_url("https://example.test/a#frag/").as_deref(),
             Some("https://example.test/a#frag/")
         );
-    }
-
-    /// The footer is the host's claim, not the model's. A body that arrives
-    /// already stamped but cites nothing recorded has it removed — otherwise a
-    /// model could mint the provenance claim by typing it, and a revision that
-    /// drops its last citation would keep an attribution it no longer earns.
-    #[test]
-    fn an_unearned_footer_is_stripped_rather_than_trusted() {
-        let p = provenance_with(&["https://exa.ai/docs"]);
-        let forged = format!("I wrote this myself.\n\n{ATTRIBUTION_BLOCK}\n");
-        let cleaned = p
-            .attributed(&forged)
-            .expect("an unearned footer is removed");
-        assert_eq!(cleaned, "I wrote this myself.");
-
-        // A revision that drops the citation loses the footer with it.
-        let earned = p.attributed("From https://exa.ai/docs.").expect("footer");
-        assert!(earned.contains(ATTRIBUTION_FOOTER));
-        let revised = earned.replace("https://exa.ai/docs", "our own notes");
-        let cleaned = p.attributed(&revised).expect("no longer earned");
-        assert!(!cleaned.contains(ATTRIBUTION_FOOTER), "{cleaned}");
-
-        // With nothing recorded at all we know nothing, so the footer stands —
-        // see `a_cold_record_never_strips_an_existing_footer` for why erasing
-        // it there would be the worse error.
-        let empty = SearchProvenance::new();
-        assert!(empty.attributed(&forged).is_none());
     }
 
     #[test]
