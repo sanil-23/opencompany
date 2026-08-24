@@ -836,6 +836,15 @@ pub struct PublishArtifactTool {
     /// publisher's identity is known for certain.
     agent: String,
     queue: PendingPublishQueue,
+    /// This agent's managed-search provenance, when managed search is wired
+    /// (see [`search_provenance`](crate::harness::search_provenance)).
+    ///
+    /// A deliverable is the copy most likely to leave the company, so a
+    /// published document grounded in searched sources carries the same
+    /// attribution the shared note tree gets. `None` — the default, and every
+    /// construction site but the agent builder's — publishes every body
+    /// verbatim.
+    search_provenance: Option<Arc<crate::harness::search_provenance::SearchProvenance>>,
 }
 
 impl PublishArtifactTool {
@@ -849,7 +858,26 @@ impl PublishArtifactTool {
             workspace: workspace.into(),
             agent: agent.into(),
             queue,
+            search_provenance: None,
         }
+    }
+
+    /// Wire this agent's managed-search provenance, so a published deliverable
+    /// citing a searched result carries the attribution footer.
+    ///
+    /// A builder rather than a fourth parameter for the reason
+    /// [`CompanyWorkspace::with_search_provenance`] is one: attribution is
+    /// irrelevant to every construction site that is not the agent builder, and
+    /// widening the constructor would make them all pass a `None` that means
+    /// nothing to them.
+    ///
+    /// [`CompanyWorkspace::with_search_provenance`]: crate::harness::workspace_tools::CompanyWorkspace::with_search_provenance
+    pub fn with_search_provenance(
+        mut self,
+        provenance: Option<Arc<crate::harness::search_provenance::SearchProvenance>>,
+    ) -> Self {
+        self.search_provenance = provenance;
+        self
     }
 }
 
@@ -950,6 +978,21 @@ impl Tool for PublishArtifactTool {
                     "Could not read `{source}`: {err}"
                 )));
             }
+        };
+        // Attribution (issue #1695), applied to the captured body *before* the
+        // kind is forced and before anything is staged, so the version on the
+        // artifact chain and the workspace node the same publish creates are
+        // the one body that was actually published.
+        //
+        // Prose only, and deliberately: a `Bytes` payload is an image, an
+        // export or an archive, and appending a Markdown footer to those bytes
+        // would corrupt the file rather than credit it.
+        let payload = match (&payload, self.search_provenance.as_ref()) {
+            (PublishPayload::Text(text), Some(provenance)) => match provenance.attributed(text) {
+                Some(attributed) => PublishPayload::Text(attributed),
+                None => payload,
+            },
+            _ => payload,
         };
         let kind = payload.forced_kind(inferred);
 

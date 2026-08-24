@@ -1242,3 +1242,87 @@ fn clearing_the_queue_empties_both_buckets() {
         "an abandoned turn's refusal must not survive into the turn that replaces it"
     );
 }
+
+// ── Search attribution (issue #1695) ───────────────────────────────────────
+
+/// A published deliverable citing a URL the managed `web_search` tool returned
+/// carries the attribution footer — the deliverable is the copy most likely to
+/// leave the company, so it is attributed exactly as the shared note tree is.
+#[tokio::test]
+async fn a_published_deliverable_citing_a_searched_result_is_attributed() {
+    use crate::harness::search_provenance::{ATTRIBUTION_FOOTER, SearchProvenance};
+
+    let provenance = SearchProvenance::new();
+    provenance.record(["https://competitor.test/pricing"]);
+
+    let body = b"# Pricing\nTheir team plan is $29, per https://competitor.test/pricing.";
+    let dir = workspace(&[("brief.md", body)]);
+    let (queue, _claim) = claimed(PublishDestination::Task);
+    let tool = PublishArtifactTool::new(dir.path(), "maya", queue.clone())
+        .with_search_provenance(Some(provenance));
+
+    let result = run(&tool, json!({ "path": "brief.md" })).await;
+    assert!(!result.is_error, "{}", text_of(&result));
+
+    let staged = queue.drain();
+    let PublishPayload::Text(published) = &staged[0].payload else {
+        panic!("expected prose, got {:?}", staged[0].payload);
+    };
+    assert!(
+        published.starts_with(std::str::from_utf8(body).unwrap()),
+        "{published}"
+    );
+    assert!(
+        published.trim_end().ends_with(ATTRIBUTION_FOOTER),
+        "{published}"
+    );
+}
+
+/// The three cases that must NOT be attributed: prose citing nothing recorded,
+/// a belt with no managed search wired at all, and — the one that would corrupt
+/// a file rather than merely mislabel it — a binary payload.
+#[tokio::test]
+async fn publishing_leaves_unsourced_prose_and_every_binary_payload_alone() {
+    use crate::harness::search_provenance::{ATTRIBUTION_FOOTER, SearchProvenance};
+
+    let provenance = SearchProvenance::new();
+    provenance.record(["https://competitor.test/pricing"]);
+
+    // Prose citing nothing the search returned.
+    let dir = workspace(&[("own.md", b"# Mine\nNo sources at all.")]);
+    let (queue, _claim) = claimed(PublishDestination::Task);
+    let tool = PublishArtifactTool::new(dir.path(), "maya", queue.clone())
+        .with_search_provenance(Some(provenance.clone()));
+    run(&tool, json!({ "path": "own.md" })).await;
+    assert_eq!(
+        queue.drain()[0].payload,
+        PublishPayload::Text("# Mine\nNo sources at all.".to_string())
+    );
+
+    // No provenance wired: verbatim even when the body cites the URL.
+    let cited = "See https://competitor.test/pricing.";
+    let dir = workspace(&[("cited.md", cited.as_bytes())]);
+    let (queue, _claim) = claimed(PublishDestination::Task);
+    let tool = PublishArtifactTool::new(dir.path(), "maya", queue.clone());
+    run(&tool, json!({ "path": "cited.md" })).await;
+    assert_eq!(
+        queue.drain()[0].payload,
+        PublishPayload::Text(cited.to_string())
+    );
+
+    // A binary payload naming the URL in its bytes: appending a Markdown
+    // footer to an image or an export would corrupt the file, so `Bytes` is
+    // never touched however its bytes read.
+    let raw = b"\xff\xd8\xffhttps://competitor.test/pricing\x00binary";
+    let dir = workspace(&[("chart.png", raw)]);
+    let (queue, _claim) = claimed(PublishDestination::Task);
+    let tool = PublishArtifactTool::new(dir.path(), "maya", queue.clone())
+        .with_search_provenance(Some(provenance));
+    run(&tool, json!({ "path": "chart.png" })).await;
+    let staged = queue.drain();
+    let PublishPayload::Bytes { bytes, .. } = &staged[0].payload else {
+        panic!("expected bytes, got {:?}", staged[0].payload);
+    };
+    assert_eq!(bytes, raw, "binary bytes must be published untouched");
+    assert!(!String::from_utf8_lossy(bytes).contains(ATTRIBUTION_FOOTER));
+}

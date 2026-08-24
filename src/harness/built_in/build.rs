@@ -371,13 +371,32 @@ pub fn build_agent(
     // Unlike `media` the grant is the ordinary namespace rule (a bare `*`
     // confers it): publishing spends nothing and reaches nothing outside the
     // company's own board.
+    // This agent's managed-search provenance (issue #1695, see
+    // `search_provenance`), resolved here because the publish tool below is
+    // wired before the search tool further down and both share the one record.
+    //
+    // `Some` under exactly the condition the managed `web_search` tool is wired
+    // under: an explicit `search` grant, no company-owned provider, and a
+    // managed backend. A BYO belt deliberately gets none — those calls run on
+    // the company's own provider account, so managed-surface attribution would
+    // be wrong.
+    let search_provenance = (crate::company::grants_search_explicit(grants)
+        && deps.tenant_search.is_none()
+        && deps.search.is_some())
+    .then(crate::harness::search_provenance::SearchProvenance::new);
+
     let publishing = wants_files && deps.artifacts.is_some();
     if publishing {
-        tools.push(Box::new(crate::harness::publish::PublishArtifactTool::new(
-            workspace.clone(),
-            manifest_agent.id.clone(),
-            deps.pending_publishes.clone(),
-        )));
+        tools.push(Box::new(
+            crate::harness::publish::PublishArtifactTool::new(
+                workspace.clone(),
+                manifest_agent.id.clone(),
+                deps.pending_publishes.clone(),
+            )
+            // A deliverable is the copy most likely to leave the company, so a
+            // published document citing a searched result is attributed too.
+            .with_search_provenance(search_provenance.clone()),
+        ));
     } else if wants_files {
         tracing::warn!(
             company = %company,
@@ -636,16 +655,6 @@ pub fn build_agent(
     // BYO belt carries no daily cap and no usage sample either: the calls are
     // billed by Brave or Exa to the company's own account, and metering a bill
     // this host does not pay would be a number nobody can reconcile.
-    // This agent's search provenance (see `search_provenance`): created
-    // whenever the MANAGED search tool is wired below, and handed to the
-    // workspace write tools further down so a note citing a searched result is
-    // stored with the attribution footer. `None` — no managed search on this
-    // belt — stores every note verbatim, the pre-existing behaviour. The BYO
-    // family deliberately gets none: those calls run on the company's own
-    // provider account, so the managed surface's attribution would be wrong.
-    let mut search_provenance: Option<
-        std::sync::Arc<crate::harness::search_provenance::SearchProvenance>,
-    > = None;
     if crate::company::grants_search_explicit(grants) {
         match (&deps.tenant_search, &deps.search) {
             (Some(tenant), _) => {
@@ -660,8 +669,12 @@ pub fn build_agent(
                 tools.extend(byo);
             }
             (None, Some(backend)) => {
-                let provenance = crate::harness::search_provenance::SearchProvenance::new();
-                search_provenance = Some(provenance.clone());
+                // Resolved above, and `Some` under exactly this arm's
+                // condition; the fallback is unreachable and merely avoids an
+                // unwrap on an invariant the compiler cannot see.
+                let provenance = search_provenance
+                    .clone()
+                    .unwrap_or_else(crate::harness::search_provenance::SearchProvenance::new);
                 tools.extend(crate::harness::search::search_tools(
                     backend,
                     crate::harness::search::SearchMetering {
