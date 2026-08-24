@@ -1717,9 +1717,12 @@ impl Tool for WorkspaceWriteTool {
             ));
         };
         // Attribution first, so the size check, the store and the artifact
-        // mirror all see the one body that is actually kept.
-        let content = self.workspace.attributed(content);
-        let content = content.as_ref();
+        // mirror all see the one body that is actually kept. A cited body
+        // within the footer's length of the cap crosses it once footered; the
+        // note the agent wrote was valid, so it is stored exactly as written
+        // rather than refused — the same fallback the publish path uses for a
+        // deliverable at the edge of its cap. A body oversized on its own is
+        // still refused outright.
         if content.len() > MAX_WRITE_BYTES {
             return Ok(ToolResult::error(format!(
                 "Refused: the new body is {} bytes, over the {MAX_WRITE_BYTES}-byte limit for a \
@@ -1728,6 +1731,17 @@ impl Tool for WorkspaceWriteTool {
                 content.len()
             )));
         }
+        let attributed = self.workspace.attributed(content);
+        let content = if attributed.len() > MAX_WRITE_BYTES {
+            tracing::debug!(
+                bytes = content.len(),
+                cap = MAX_WRITE_BYTES,
+                "workspace attribution skipped: the footer would push this note past the write cap"
+            );
+            content
+        } else {
+            attributed.as_ref()
+        };
 
         // Required, and deliberately not defaulted: without it there is no
         // read-before-write invariant at all under `full` policy mode.
