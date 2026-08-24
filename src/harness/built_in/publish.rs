@@ -987,7 +987,20 @@ impl Tool for PublishArtifactTool {
         // Prose only, and deliberately: a `Bytes` payload is an image, an
         // export or an archive, and appending a Markdown footer to those bytes
         // would corrupt the file rather than credit it.
-        let payload = match (&payload, self.search_provenance.as_ref()) {
+        // Prose the footer can safely live in, and nothing else.
+        //
+        // `capture_body` answers "is this UTF-8 and small", not "is this a
+        // document": `kind_for_extension` maps `.json`, `.csv`, `.yaml`,
+        // `.toml`, `.rs`, `.sql` and friends to `Text` as well. Appending a
+        // Markdown rule and an italic line to any of those does not credit the
+        // file, it corrupts it — an invalid JSON payload or a CSV with a
+        // ragged final row. Markdown is the one kind whose readers render the
+        // block as what it is, so it is the only kind that gets it.
+        let attributable = matches!(inferred, ArtifactKind::Markdown);
+        let payload = match (
+            &payload,
+            self.search_provenance.as_ref().filter(|_| attributable),
+        ) {
             (PublishPayload::Text(text), Some(provenance)) => match provenance.attributed(text) {
                 // `capture_body` classified the file by its size *before* the
                 // footer existed, so a cited document sitting within the footer's

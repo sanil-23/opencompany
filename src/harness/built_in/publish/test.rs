@@ -1377,3 +1377,54 @@ async fn attribution_never_pushes_a_deliverable_past_the_prose_cap() {
     );
     assert!(published.len() <= MAX_ARTIFACT_BODY_BYTES);
 }
+
+/// `capture_body` answers "UTF-8 and small", not "is this a document":
+/// `kind_for_extension` maps `.json`, `.csv`, `.yaml`, `.rs` and friends to
+/// `Text` too. Appending a Markdown footer to those does not credit the file,
+/// it corrupts it — so only Markdown is attributed.
+#[tokio::test]
+async fn structured_text_deliverables_are_never_footered() {
+    use crate::harness::search_provenance::{ATTRIBUTION_FOOTER, SearchProvenance};
+
+    let cite = "https://competitor.test/pricing";
+    let json = format!("{{\"source\": \"{cite}\", \"price\": 29}}");
+    let csv = format!("source,price\n{cite},29\n");
+    let code = format!("// see {cite}\nfn main() {{}}\n");
+
+    for (name, body) in [
+        ("data.json", json.as_str()),
+        ("export.csv", csv.as_str()),
+        ("main.rs", code.as_str()),
+        (
+            "notes.txt",
+            "plain text citing https://competitor.test/pricing",
+        ),
+    ] {
+        let provenance = SearchProvenance::new();
+        provenance.record([cite]);
+        let dir = workspace(&[(name, body.as_bytes())]);
+        let (queue, _claim) = claimed(PublishDestination::Task);
+        let tool = PublishArtifactTool::new(dir.path(), "maya", queue.clone())
+            .with_search_provenance(Some(provenance));
+        run(&tool, json!({ "path": name })).await;
+
+        let staged = queue.drain();
+        assert_eq!(
+            staged[0].payload,
+            PublishPayload::Text(body.to_string()),
+            "`{name}` must publish byte-for-byte as written"
+        );
+        assert!(!format!("{:?}", staged[0].payload).contains(ATTRIBUTION_FOOTER));
+    }
+
+    // An explicit `kind: "file"` on a Markdown source opts out too.
+    let provenance = SearchProvenance::new();
+    provenance.record([cite]);
+    let md = format!("# Brief\nPer {cite}.");
+    let dir = workspace(&[("brief.md", md.as_bytes())]);
+    let (queue, _claim) = claimed(PublishDestination::Task);
+    let tool = PublishArtifactTool::new(dir.path(), "maya", queue.clone())
+        .with_search_provenance(Some(provenance));
+    run(&tool, json!({ "path": "brief.md", "kind": "file" })).await;
+    assert_eq!(queue.drain()[0].payload, PublishPayload::Text(md));
+}

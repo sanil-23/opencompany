@@ -99,13 +99,24 @@ impl SearchProvenance {
     /// `None` means "store the body as given" — either the evidence is absent
     /// or the footer is already there.
     pub fn attributed(&self, content: &str) -> Option<String> {
-        if carries_attribution(content) || !self.cited_in(content) {
-            return None;
+        let carries = carries_attribution(content);
+        match (self.cited_in(content), carries) {
+            // Earned and already stamped: store exactly as given.
+            (true, true) => None,
+            // Earned: stamp it.
+            (true, false) => Some(format!(
+                "{body}\n\n{ATTRIBUTION_BLOCK}\n",
+                body = content.trim_end()
+            )),
+            // NOT earned but stamped anyway — a body the model wrote the footer
+            // into itself, or a revision that dropped its last citation while
+            // keeping the old footer. The claim is the host's to make, not the
+            // model's, so it is removed rather than trusted: an attribution
+            // that survives without evidence is exactly the false stamp this
+            // module exists to prevent.
+            (false, true) => Some(without_attribution(content)),
+            (false, false) => None,
         }
-        Some(format!(
-            "{body}\n\n{ATTRIBUTION_BLOCK}\n",
-            body = content.trim_end()
-        ))
     }
 }
 
@@ -123,37 +134,76 @@ pub fn carries_attribution(content: &str) -> bool {
 /// slash dropped so `…/docs` and `…/docs/` are one entry. Anything else —
 /// empty, relative, or junk the backend should not have sent — is `None`.
 fn normalize_url(url: &str) -> Option<String> {
-    let url = url.trim().trim_end_matches('/');
+    let url = url.trim();
     if url.is_empty() || !url.contains("://") {
         return None;
     }
-    Some(url.to_string())
+    // Only ONE slash, and only a *path* slash. `trim_end_matches` would eat
+    // every trailing slash, and applied to the whole URL it would also eat a
+    // slash that is part of a query or fragment value — turning
+    // `…/path/?next=/` into a URL the backend never returned.
+    let normalized = match url.split_once(['?', '#']) {
+        Some(_) => url,
+        None => url.strip_suffix('/').unwrap_or(url),
+    };
+    Some(normalized.to_string())
 }
 
-/// Whether `content` contains `url` as a citation rather than as a prefix of
-/// some other URL.
+/// `content` with a trailing attribution block removed, and the body's own
+/// trailing whitespace left as it was found.
+fn without_attribution(content: &str) -> String {
+    let trimmed = content.trim_end();
+    match trimmed.strip_suffix(ATTRIBUTION_BLOCK) {
+        Some(body) => body.trim_end().to_string(),
+        None => content.to_string(),
+    }
+}
+
+/// Whether `next` could be *continuing* a URL that the recorded one is only a
+/// prefix of.
 ///
-/// A plain substring check would let a recorded `https://exa.ai` claim credit
-/// for a cited `https://exa.ai.evil.example`. An occurrence counts only when
-/// the character after it cannot be *extending the same URL component*: a
-/// letter or digit extends it outright, and a `.` followed by a letter or
-/// digit is a longer hostname (while `.` followed by anything else is sentence
-/// punctuation). A `/` after the match is a deeper path under the recorded
-/// result and counts — citing a page found *via* the result is still citing
-/// the result.
+/// Everything RFC 3986 allows inside a host, port, path, query or fragment and
+/// that prose does not normally place immediately after a URL. Deliberately
+/// excludes the characters that terminate a URL in real writing — whitespace,
+/// `)`, `]`, `>`, quotes, `,`, `;`, `!` — so an ordinary citation still matches.
+fn continues_url(next: char) -> bool {
+    next.is_ascii_alphanumeric()
+        || matches!(
+            next,
+            '-' | '_' | '~' | '%' | '+' | '=' | '&' | '#' | '?' | ':' | '@'
+        )
+}
+
+/// Whether `content` cites `url` itself, rather than merely opening with it.
+///
+/// A plain substring check would let a recorded `https://exa.ai/docs` claim
+/// credit for a cited `https://exa.ai/docs-archive`, or a recorded
+/// `https://exa.ai` for `https://exa.ai.evil.example` — neither of which the
+/// search returned. So a match counts only where the next character cannot be
+/// continuing the same URL ([`continues_url`]).
+///
+/// **Exact URLs only.** A deeper path under a recorded result
+/// (`…/docs/reference` for a recorded `…/docs`) does *not* count: the search
+/// returned the one page, and crediting a different page because it shares a
+/// prefix is the false stamp this module refuses. The single exception is the
+/// same URL written with a trailing slash, which is the same page.
 fn cites(content: &str, url: &str) -> bool {
     let mut from = 0;
     while let Some(at) = content[from..].find(url) {
         let end = from + at + url.len();
         let mut rest = content[end..].chars();
-        match rest.next() {
-            None => return true,
-            Some(next) if next.is_ascii_alphanumeric() => {}
-            Some('.') => match rest.next() {
-                Some(after_dot) if after_dot.is_ascii_alphanumeric() => {}
-                _ => return true,
-            },
-            Some(_) => return true,
+        let terminated = match rest.next() {
+            None => true,
+            // `…/docs/` — the recorded page with a trailing slash, provided
+            // nothing follows it. `…/docs/reference` is a different page.
+            Some('/') => !rest.next().is_some_and(continues_url),
+            // A `.` that begins a longer hostname (`exa.ai.evil.example`)
+            // continues the URL; one that ends a sentence does not.
+            Some('.') => !rest.next().is_some_and(continues_url),
+            Some(next) => !continues_url(next),
+        };
+        if terminated {
+            return true;
         }
         from = end;
     }
@@ -235,11 +285,81 @@ mod tests {
         ));
     }
 
+    /// The same page written either way is the same citation; a *different*
+    /// page under it is not. Search returned the one URL, and crediting a
+    /// sibling because it shares a prefix is the false stamp this refuses.
     #[test]
-    fn trailing_slash_and_deeper_paths_still_count() {
+    fn the_same_page_counts_and_a_deeper_one_does_not() {
         let p = provenance_with(&["https://exa.ai/docs/"]);
         assert!(p.cited_in("read https://exa.ai/docs today"));
-        assert!(p.cited_in("read https://exa.ai/docs/reference today"));
+        assert!(p.cited_in("read https://exa.ai/docs/ today"));
+        assert!(p.cited_in("see [docs](https://exa.ai/docs)."));
+        assert!(!p.cited_in("read https://exa.ai/docs/reference today"));
+    }
+
+    /// The prefix families that must not earn credit: a longer path segment, a
+    /// longer host, a port, a query and a fragment — none of them were returned.
+    #[test]
+    fn a_url_that_merely_starts_with_a_recorded_one_earns_nothing() {
+        let p = provenance_with(&["https://exa.ai/docs"]);
+        for impostor in [
+            "https://exa.ai/docs-archive",
+            "https://exa.ai/docs_v2",
+            "https://exa.ai/docs%20old",
+            "https://exa.ai/docs?utm=x",
+            "https://exa.ai/docs#frag",
+            "https://exa.ai/docsomething",
+        ] {
+            assert!(!p.cited_in(&format!("cited {impostor} here")), "{impostor}");
+        }
+        let host = provenance_with(&["https://exa.ai"]);
+        assert!(!host.cited_in("https://exa.ai.evil.example/page"));
+        assert!(!host.cited_in("https://exa.ai:8443/page"));
+    }
+
+    /// A query or fragment is part of the URL the backend returned, so
+    /// normalization must not eat a slash out of one.
+    #[test]
+    fn normalization_strips_one_path_slash_and_never_touches_a_query() {
+        let p = provenance_with(&["https://example.test/path/?next=/"]);
+        assert!(p.cited_in("see https://example.test/path/?next=/ now"));
+        // Only one slash, and only from a path.
+        assert_eq!(
+            normalize_url("https://example.test/a//").as_deref(),
+            Some("https://example.test/a/")
+        );
+        assert_eq!(
+            normalize_url("https://example.test/a#frag/").as_deref(),
+            Some("https://example.test/a#frag/")
+        );
+    }
+
+    /// The footer is the host's claim, not the model's. A body that arrives
+    /// already stamped but cites nothing recorded has it removed — otherwise a
+    /// model could mint the provenance claim by typing it, and a revision that
+    /// drops its last citation would keep an attribution it no longer earns.
+    #[test]
+    fn an_unearned_footer_is_stripped_rather_than_trusted() {
+        let p = provenance_with(&["https://exa.ai/docs"]);
+        let forged = format!("I wrote this myself.\n\n{ATTRIBUTION_BLOCK}\n");
+        let cleaned = p
+            .attributed(&forged)
+            .expect("an unearned footer is removed");
+        assert_eq!(cleaned, "I wrote this myself.");
+
+        // A revision that drops the citation loses the footer with it.
+        let earned = p.attributed("From https://exa.ai/docs.").expect("footer");
+        assert!(earned.contains(ATTRIBUTION_FOOTER));
+        let revised = earned.replace("https://exa.ai/docs", "our own notes");
+        let cleaned = p.attributed(&revised).expect("no longer earned");
+        assert!(!cleaned.contains(ATTRIBUTION_FOOTER), "{cleaned}");
+
+        // With nothing recorded at all, a forged footer still does not stand.
+        let empty = SearchProvenance::new();
+        assert_eq!(
+            empty.attributed(&forged).as_deref(),
+            Some("I wrote this myself.")
+        );
     }
 
     #[test]
