@@ -1326,3 +1326,54 @@ async fn publishing_leaves_unsourced_prose_and_every_binary_payload_alone() {
     assert_eq!(bytes, raw, "binary bytes must be published untouched");
     assert!(!String::from_utf8_lossy(bytes).contains(ATTRIBUTION_FOOTER));
 }
+
+/// The boundary `capture_body` cannot see: it classifies by the file's size,
+/// which is measured before the footer exists. A cited document that fits the
+/// prose cap only until the footer is added must go out **as written** — still
+/// prose, still whole, merely unattributed — rather than crossing the cap or
+/// being re-classified as an opaque file over a one-line credit.
+#[tokio::test]
+async fn attribution_never_pushes_a_deliverable_past_the_prose_cap() {
+    use crate::harness::search_provenance::{ATTRIBUTION_FOOTER, SearchProvenance};
+
+    let provenance = SearchProvenance::new();
+    provenance.record(["https://competitor.test/pricing"]);
+
+    // Exactly at the cap, and citing a recorded result: attributing it would
+    // cross the cap, so the body is published verbatim.
+    let cite = "https://competitor.test/pricing";
+    let at_cap = format!("{cite}{}", "x".repeat(MAX_ARTIFACT_BODY_BYTES - cite.len()));
+    assert_eq!(at_cap.len(), MAX_ARTIFACT_BODY_BYTES);
+
+    let dir = workspace(&[("big.md", at_cap.as_bytes())]);
+    let (queue, _claim) = claimed(PublishDestination::Task);
+    let tool = PublishArtifactTool::new(dir.path(), "maya", queue.clone())
+        .with_search_provenance(Some(provenance.clone()));
+    run(&tool, json!({ "path": "big.md" })).await;
+
+    let staged = queue.drain();
+    let PublishPayload::Text(published) = &staged[0].payload else {
+        panic!("the document must stay prose, not become an opaque file");
+    };
+    assert_eq!(published.len(), MAX_ARTIFACT_BODY_BYTES, "cap must hold");
+    assert!(!published.contains(ATTRIBUTION_FOOTER));
+
+    // One byte of headroom short of the footer is still too little; a document
+    // with room to spare is attributed as usual.
+    let roomy = format!("{cite}\n{}", "x".repeat(1024));
+    let dir = workspace(&[("small.md", roomy.as_bytes())]);
+    let (queue, _claim) = claimed(PublishDestination::Task);
+    let tool = PublishArtifactTool::new(dir.path(), "maya", queue.clone())
+        .with_search_provenance(Some(provenance));
+    run(&tool, json!({ "path": "small.md" })).await;
+
+    let staged = queue.drain();
+    let PublishPayload::Text(published) = &staged[0].payload else {
+        panic!("expected prose");
+    };
+    assert!(
+        published.trim_end().ends_with(ATTRIBUTION_FOOTER),
+        "{published}"
+    );
+    assert!(published.len() <= MAX_ARTIFACT_BODY_BYTES);
+}

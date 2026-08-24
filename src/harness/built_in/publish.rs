@@ -989,7 +989,32 @@ impl Tool for PublishArtifactTool {
         // would corrupt the file rather than credit it.
         let payload = match (&payload, self.search_provenance.as_ref()) {
             (PublishPayload::Text(text), Some(provenance)) => match provenance.attributed(text) {
-                Some(attributed) => PublishPayload::Text(attributed),
+                // `capture_body` classified the file by its size *before* the
+                // footer existed, so a cited document sitting within the footer's
+                // length of the cap would cross it here — staged as prose that
+                // the cap says should not be prose.
+                //
+                // The document wins over the credit. Re-classifying it to
+                // `Bytes` would turn a Markdown deliverable into an opaque file
+                // in the console over a one-line credit, and truncating it to
+                // fit would corrupt the thing being published. So attribution is
+                // skipped in that sliver and the body is published exactly as
+                // written — the only case where a cited document goes out
+                // unattributed, and the least harmful of the three.
+                Some(attributed) if attributed.len() <= MAX_ARTIFACT_BODY_BYTES => {
+                    PublishPayload::Text(attributed)
+                }
+                Some(_) => {
+                    tracing::debug!(
+                        agent = %self.agent,
+                        source = %source,
+                        bytes = text.len(),
+                        cap = MAX_ARTIFACT_BODY_BYTES,
+                        "[publish] attribution skipped: the footer would push this \
+                         deliverable past the inline body cap"
+                    );
+                    payload
+                }
                 None => payload,
             },
             _ => payload,

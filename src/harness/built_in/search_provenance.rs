@@ -35,6 +35,16 @@ use std::sync::{Arc, Mutex};
 /// search results.
 pub const ATTRIBUTION_FOOTER: &str = "*Powered by Exa*";
 
+/// The complete terminal block [`SearchProvenance::attributed`] appends: a
+/// horizontal rule and the attribution line.
+///
+/// Detection matches on **this**, anchored to the end of the body, rather than
+/// on [`ATTRIBUTION_FOOTER`] anywhere in it. A document that merely discusses
+/// the footer — a style guide quoting `*Powered by Exa*`, or a brief about this
+/// very feature — would otherwise be read as already attributed and silently
+/// stored without the credit it earned.
+const ATTRIBUTION_BLOCK: &str = "---\n*Powered by Exa*";
+
 /// How many result URLs are retained, oldest evicted first.
 ///
 /// Agents are long-lived (the roster is cached across turns), so the record is
@@ -89,14 +99,24 @@ impl SearchProvenance {
     /// `None` means "store the body as given" — either the evidence is absent
     /// or the footer is already there.
     pub fn attributed(&self, content: &str) -> Option<String> {
-        if content.contains(ATTRIBUTION_FOOTER) || !self.cited_in(content) {
+        if carries_attribution(content) || !self.cited_in(content) {
             return None;
         }
         Some(format!(
-            "{body}\n\n---\n{ATTRIBUTION_FOOTER}\n",
+            "{body}\n\n{ATTRIBUTION_BLOCK}\n",
             body = content.trim_end()
         ))
     }
+}
+
+/// Whether `content` already ends with the attribution block, and so must be
+/// stored as given rather than footered twice.
+///
+/// Anchored to the end after trimming trailing whitespace: that is where
+/// [`SearchProvenance::attributed`] puts it, and matching anywhere would let a
+/// passing mention of the phrase suppress a footer the document has earned.
+pub fn carries_attribution(content: &str) -> bool {
+    content.trim_end().ends_with(ATTRIBUTION_BLOCK)
 }
 
 /// A URL in the shape worth remembering: scheme-qualified, with the trailing
@@ -183,6 +203,36 @@ mod tests {
         let p = provenance_with(&["https://exa.ai/docs"]);
         let doc = format!("From https://exa.ai/docs.\n\n---\n{ATTRIBUTION_FOOTER}\n");
         assert!(p.attributed(&doc).is_none());
+        // Re-attributing what we just produced is the round trip an agent makes
+        // every time it reads a note back and writes it again.
+        let once = p.attributed("Cites https://exa.ai/docs.").expect("footer");
+        assert!(p.attributed(&once).is_none(), "{once}");
+    }
+
+    /// A document that *discusses* the footer has not been attributed by
+    /// discussing it. Matching the phrase anywhere would let a style guide — or
+    /// a brief about this very feature — suppress the credit it earned.
+    #[test]
+    fn a_passing_mention_of_the_phrase_does_not_count_as_attribution() {
+        let p = provenance_with(&["https://exa.ai/docs"]);
+        let doc = "Our notes end with *Powered by Exa*, per https://exa.ai/docs.";
+        let out = p
+            .attributed(doc)
+            .expect("mention must not suppress the footer");
+        assert!(out.trim_end().ends_with(ATTRIBUTION_BLOCK), "{out}");
+        assert_eq!(out.matches(ATTRIBUTION_BLOCK).count(), 1, "{out}");
+    }
+
+    /// The public line and the block that carries it must not drift apart.
+    #[test]
+    fn the_block_is_the_rule_plus_the_public_line() {
+        assert!(ATTRIBUTION_BLOCK.ends_with(ATTRIBUTION_FOOTER));
+        assert!(carries_attribution(&format!(
+            "body\n\n{ATTRIBUTION_BLOCK}\n"
+        )));
+        assert!(!carries_attribution(
+            "body mentioning *Powered by Exa* mid-sentence."
+        ));
     }
 
     #[test]
