@@ -380,10 +380,19 @@ pub fn build_agent(
     // managed backend. A BYO belt deliberately gets none — those calls run on
     // the company's own provider account, so managed-surface attribution would
     // be wrong.
-    let search_provenance = (crate::company::grants_search_explicit(grants)
-        && deps.tenant_search.is_none())
-    .then(|| deps.search.as_ref().map(|backend| backend.provenance()))
-    .flatten();
+    // Deliberately NOT gated on this agent's own `search` grant. The record is
+    // company-scoped, so the question a writing tool asks is "did this company's
+    // managed search return the URL this document cites" — and on a roster where
+    // one agent researches and another writes the shared note, the writer holds
+    // no `search` grant at all. Gating the handle on the writer's grant would
+    // leave exactly that document unattributed while the evidence sat in the
+    // company's record. Registration of `web_search` below stays gated on the
+    // grant; only the evidence handle is independent of it.
+    let search_provenance = deps
+        .tenant_search
+        .is_none()
+        .then(|| deps.search.as_ref().map(|backend| backend.provenance()))
+        .flatten();
 
     let publishing = wants_files && deps.artifacts.is_some();
     if publishing {
@@ -2971,6 +2980,92 @@ mod tests {
         assert!(
             history.contains("checkpoint: after file_write"),
             "{history}"
+        );
+    }
+
+    use crate::company::credentials::Credential as AttributionCredential;
+    use crate::harness::search::SearchBackend as AttributionSearchBackend;
+    use crate::ports::workspace::WorkspaceStore as AttributionWorkspaceStore;
+    use serde_json::json as attribution_json;
+
+    /// Issue #1695: the provenance handle reaches the WRITING tools even when
+    /// the writing agent holds no `search` grant of its own.
+    ///
+    /// The record is company-scoped, so on the ordinary roster — one agent
+    /// researches, another writes the shared note — the writer never has the
+    /// grant. Gating the handle on the writer's grant left exactly that
+    /// document unattributed while the evidence sat in the company's record.
+    #[tokio::test]
+    async fn a_writer_without_the_search_grant_still_attributes_the_companys_results() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store: Arc<dyn AttributionWorkspaceStore> =
+            Arc::new(crate::store::FsOps::new(dir.path()));
+        let mut deps = pin_deps(dir.path().to_path_buf());
+        deps.workspace = Some(store.clone());
+        let backend = AttributionSearchBackend::new(
+            "https://api.example.test".into(),
+            AttributionCredential::from_value("platform-token"),
+            50,
+        );
+        // The researcher's search, recorded on the company's shared backend.
+        backend
+            .provenance()
+            .record(["https://competitor.test/pricing"]);
+        deps.search = Some(backend);
+
+        // The writer: `workspace` only — deliberately NO `search`.
+        let mut writer = manifest_agent("Writer", None);
+        writer.id = "writer".to_string();
+        let agent = build_agent(
+            &CompanyId::new("acme"),
+            "Acme",
+            &writer,
+            ApprovalPolicy::new(&Policy::default(), None),
+            &deps,
+            &["workspace".to_string()],
+            &[],
+            &[],
+            None,
+            false,
+        )
+        .expect("agent builds");
+
+        let names: Vec<&str> = agent.tools().iter().map(|t| t.name()).collect();
+        assert!(
+            !names.contains(&"web_search"),
+            "the writer must NOT get the search tool: {names:?}"
+        );
+
+        let create = agent
+            .tools()
+            .iter()
+            .find(|t| t.name() == "workspace_create")
+            .expect("workspace_create wired");
+        let result = create
+            .execute(attribution_json!({
+                "path": "agents/writer/brief.md",
+                "kind": "file",
+                "content": "Per https://competitor.test/pricing, the team plan is $29.",
+            }))
+            .await
+            .expect("create runs");
+        assert!(!result.is_error, "{}", result.output());
+
+        let company = CompanyId::new("acme");
+        let nodes = store.tree(&company).await.expect("tree");
+        let node = nodes
+            .iter()
+            .find(|n| n.name == "brief.md")
+            .expect("note created");
+        let (_, body) = store
+            .read(&company, &node.id)
+            .await
+            .expect("read")
+            .expect("exists");
+        assert!(
+            body.trim_end()
+                .ends_with(crate::harness::search_provenance::ATTRIBUTION_FOOTER),
+            "a teammate's searched URL must still attribute this note: {body}"
         );
     }
 }
