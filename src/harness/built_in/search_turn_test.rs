@@ -256,6 +256,7 @@ async fn harness(
     mode: &str,
     daily_calls: u32,
     dir: &std::path::Path,
+    workspace: Option<Arc<dyn crate::ports::workspace::WorkspaceStore>>,
 ) -> (HarnessPool, HarnessDeps, CompanyRecord, Arc<RecordingMeter>) {
     let meter = Arc::new(RecordingMeter::default());
     let deps = HarnessDeps {
@@ -320,10 +321,12 @@ async fn harness(
             daily_calls,
         )),
         tenant_search: None,
-        // Issue #237's workspace tools are off in this fixture: the turn under
-        // test exercises the #238 search path only, and an unwired store is the
-        // fail-closed default everywhere but the runtime builder.
-        workspace: None,
+        // Issue #237's workspace tools are off unless a test wires a store —
+        // the #238 search tests exercise the search path only, and an unwired
+        // store is the fail-closed default everywhere but the runtime builder.
+        // The #1695 attribution test passes one, so a searched-then-written
+        // note can be read back with its footer.
+        workspace,
     };
 
     let record = CompanyRecord {
@@ -436,6 +439,7 @@ async fn a_real_supervised_turn_searches_and_meters_exactly_one_priced_call() {
         "supervised",
         50,
         dir.path(),
+        None,
     )
     .await;
 
@@ -546,8 +550,16 @@ async fn a_real_turn_past_the_daily_cap_is_refused_without_reaching_the_backend(
 
     let dir = tempfile::tempdir().unwrap();
     // A cap of one: the second search in the same turn must be refused.
-    let (pool, deps, record, meter) =
-        harness(model_url, search_url, "\"search\"", "full", 1, dir.path()).await;
+    let (pool, deps, record, meter) = harness(
+        model_url,
+        search_url,
+        "\"search\"",
+        "full",
+        1,
+        dir.path(),
+        None,
+    )
+    .await;
 
     pool.run(&record.id, "ceo", "Research the market.", &deps, None)
         .await
@@ -589,7 +601,7 @@ async fn a_wildcard_grant_turn_is_never_offered_the_search_tool() {
 
     let dir = tempfile::tempdir().unwrap();
     let (pool, deps, record, meter) =
-        harness(model_url, search_url, "\"*\"", "full", 50, dir.path()).await;
+        harness(model_url, search_url, "\"*\"", "full", 50, dir.path(), None).await;
 
     pool.run(&record.id, "ceo", "Research the market.", &deps, None)
         .await
@@ -634,6 +646,7 @@ async fn a_read_only_desk_is_denied_the_search_even_when_it_is_wired() {
         "readonly",
         50,
         dir.path(),
+        None,
     )
     .await;
 
@@ -657,4 +670,101 @@ async fn a_read_only_desk_is_denied_the_search_even_when_it_is_wired() {
         0,
         "nothing was spent on search, so no search is metered"
     );
+}
+
+/// Issue #1695, proven through a real turn: an agent that searches and then
+/// files a note **citing a returned URL** stores that note with the
+/// attribution footer — which requires the one thing no unit test can show,
+/// that `build_agent` hands the *same* provenance record to the search tool
+/// and the workspace write tools.
+#[tokio::test]
+async fn a_searched_then_written_note_lands_with_the_attribution_footer() {
+    use crate::harness::search_provenance::ATTRIBUTION_FOOTER;
+
+    let cited = "Competitor charges $29 per seat — see https://competitor.test/pricing.";
+    let uncited = "Reminder to self: ask finance about our own pricing.";
+    let (model_url, script) = spawn_script(vec![
+        Turn::Call {
+            tool: "web_search",
+            args: json!({ "query": "competitor pricing", "max_results": 5 }),
+        },
+        Turn::Call {
+            tool: "workspace_create",
+            args: json!({
+                "path": "agents/ceo/pricing-brief.md",
+                "kind": "file",
+                "content": cited,
+            }),
+        },
+        Turn::Call {
+            tool: "workspace_create",
+            args: json!({
+                "path": "agents/ceo/reminder.md",
+                "kind": "file",
+                "content": uncited,
+            }),
+        },
+        Turn::Say("Filed the brief."),
+    ])
+    .await;
+    let (search_url, _backend) = spawn_search_backend(0.01).await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let workspace: Arc<dyn crate::ports::workspace::WorkspaceStore> =
+        Arc::new(crate::store::FsOps::new(dir.path()));
+    let (pool, deps, record, _meter) = harness(
+        model_url,
+        search_url,
+        "\"search\", \"workspace\"",
+        "full",
+        50,
+        dir.path(),
+        Some(workspace.clone()),
+    )
+    .await;
+
+    let outcome = pool
+        .run(
+            &record.id,
+            "ceo",
+            "Find our competitor's pricing and file a brief.",
+            &deps,
+            None,
+        )
+        .await
+        .expect("turn runs");
+    assert!(
+        outcome.reply.contains("Filed the brief"),
+        "the turn did not complete: {} — tool results: {:?}",
+        outcome.reply,
+        tool_results(&script)
+    );
+
+    let nodes = workspace.tree(&record.id).await.expect("tree reads");
+    let body_of = |name: &str| {
+        let node = nodes
+            .iter()
+            .find(|node| node.name == name)
+            .unwrap_or_else(|| panic!("`{name}` was never created: {nodes:?}"));
+        let workspace = workspace.clone();
+        let id = node.id.clone();
+        let company = record.id.clone();
+        async move {
+            workspace
+                .read(&company, &id)
+                .await
+                .expect("note reads")
+                .expect("note exists")
+                .1
+        }
+    };
+
+    // The note citing a searched result carries the footer…
+    let brief = body_of("pricing-brief.md").await;
+    assert!(brief.starts_with(cited), "{brief}");
+    assert!(brief.trim_end().ends_with(ATTRIBUTION_FOOTER), "{brief}");
+
+    // …and the one written in the same turn citing nothing does not.
+    let reminder = body_of("reminder.md").await;
+    assert_eq!(reminder, uncited);
 }

@@ -297,10 +297,20 @@ pub struct SearchMetering {
 /// company **explicitly** grants `search` (never via `*`) **and** a managed
 /// credential resolved — granted-but-uncredentialed wires nothing and warns,
 /// media's shape exactly.
-pub fn search_tools(backend: &SearchBackend, metering: SearchMetering) -> Vec<Box<dyn Tool>> {
+///
+/// `provenance` is this agent's [`SearchProvenance`]: every result URL the
+/// tool renders is recorded there, so the workspace write tools sharing the
+/// same handle can attribute the notes that cite them. Callers with no
+/// attribution surface (workflow node belts) pass a fresh handle nobody reads.
+pub fn search_tools(
+    backend: &SearchBackend,
+    metering: SearchMetering,
+    provenance: Arc<crate::harness::search_provenance::SearchProvenance>,
+) -> Vec<Box<dyn Tool>> {
     vec![Box::new(WebSearchTool {
         backend: backend.clone(),
         metering,
+        provenance,
     })]
 }
 
@@ -312,6 +322,9 @@ pub fn search_tools(backend: &SearchBackend, metering: SearchMetering) -> Vec<Bo
 struct WebSearchTool {
     backend: SearchBackend,
     metering: SearchMetering,
+    /// Where the rendered result URLs are recorded for workspace attribution —
+    /// see [`search_provenance`](crate::harness::search_provenance).
+    provenance: Arc<crate::harness::search_provenance::SearchProvenance>,
 }
 
 impl WebSearchTool {
@@ -506,6 +519,17 @@ impl Tool for WebSearchTool {
             )
             .await;
         }
+
+        // Exactly the URLs the agent is about to see — the same
+        // `take(max_results)` slice `render_results` shows — so a workspace
+        // note citing one of them can be attributed to this search.
+        self.provenance.record(
+            response
+                .results
+                .iter()
+                .take(max_results)
+                .map(|result| result.url.as_str()),
+        );
 
         Ok(ToolResult::success(render_results(
             &query,
@@ -1023,6 +1047,7 @@ mod tests {
                 agent: "ceo".into(),
                 meter: None,
             },
+            crate::harness::search_provenance::SearchProvenance::new(),
         );
         let names: Vec<&str> = tools.iter().map(|tool| tool.name()).collect();
         assert_eq!(names, vec![WEB_SEARCH_TOOL]);

@@ -370,6 +370,12 @@ pub struct CompanyWorkspace {
     /// construction site but the agent builder's) is unconfined, the behaviour
     /// this module had before per-path write scope existed.
     write_scope: Option<Vec<String>>,
+    /// This agent's managed-search provenance, when managed search is wired
+    /// (see [`search_provenance`](crate::harness::search_provenance)). Held so
+    /// the write tools can footer a note whose body cites a searched result.
+    /// `None` — the default, and every construction site but the agent
+    /// builder's — stores every body verbatim.
+    search_provenance: Option<Arc<crate::harness::search_provenance::SearchProvenance>>,
 }
 
 impl CompanyWorkspace {
@@ -381,6 +387,7 @@ impl CompanyWorkspace {
             agent_id,
             artifacts: None,
             write_scope: None,
+            search_provenance: None,
         }
     }
 
@@ -403,6 +410,32 @@ impl CompanyWorkspace {
     pub fn with_write_scope(mut self, scope: Option<Vec<String>>) -> Self {
         self.write_scope = scope;
         self
+    }
+
+    /// Wire this agent's managed-search provenance, so a note whose body cites
+    /// a searched result is stored with the attribution footer — a builder for
+    /// the same reason the two above are: irrelevant to the read tools.
+    pub fn with_search_provenance(
+        mut self,
+        provenance: Option<Arc<crate::harness::search_provenance::SearchProvenance>>,
+    ) -> Self {
+        self.search_provenance = provenance;
+        self
+    }
+
+    /// `content` as it should be stored: footered when it cites a recorded
+    /// search result ([`SearchProvenance::attributed`]), verbatim otherwise.
+    ///
+    /// [`SearchProvenance::attributed`]: crate::harness::search_provenance::SearchProvenance::attributed
+    fn attributed<'a>(&self, content: &'a str) -> std::borrow::Cow<'a, str> {
+        match self
+            .search_provenance
+            .as_ref()
+            .and_then(|provenance| provenance.attributed(content))
+        {
+            Some(footered) => std::borrow::Cow::Owned(footered),
+            None => std::borrow::Cow::Borrowed(content),
+        }
     }
 
     /// Whether `path` is inside this agent's write scope.
@@ -1627,6 +1660,10 @@ impl Tool for WorkspaceWriteTool {
                     .to_string(),
             ));
         };
+        // Attribution first, so the size check, the store and the artifact
+        // mirror all see the one body that is actually kept.
+        let content = self.workspace.attributed(content);
+        let content = content.as_ref();
         if content.len() > MAX_WRITE_BYTES {
             return Ok(ToolResult::error(format!(
                 "Refused: the new body is {} bytes, over the {MAX_WRITE_BYTES}-byte limit for a \
@@ -1939,7 +1976,10 @@ impl Tool for WorkspaceCreateTool {
         let content = args
             .get("content")
             .and_then(Value::as_str)
-            .filter(|c| !c.is_empty());
+            .filter(|c| !c.is_empty())
+            // Attribution before the size check, so the limit is enforced on
+            // the body that is actually stored.
+            .map(|c| self.workspace.attributed(c));
         if kind == NodeKind::Folder && content.is_some() {
             return Ok(ToolResult::error(
                 "Refused: a folder has no body. Create the folder first, then create the note \
@@ -1947,7 +1987,7 @@ impl Tool for WorkspaceCreateTool {
                     .to_string(),
             ));
         }
-        if let Some(content) = content
+        if let Some(content) = &content
             && content.len() > MAX_WRITE_BYTES
         {
             return Ok(ToolResult::error(format!(
@@ -2140,7 +2180,7 @@ impl Tool for WorkspaceCreateTool {
         match self
             .workspace
             .store
-            .create(&self.workspace.company, &node, content)
+            .create(&self.workspace.company, &node, content.as_deref())
             .await
         {
             // The id and revision go back with the acknowledgement so an
@@ -2160,7 +2200,7 @@ impl Tool for WorkspaceCreateTool {
                     path = echo_path(&normalized),
                     id = node.id,
                     rev = node.updated_at_millis,
-                    bytes = content.map_or(0, str::len),
+                    bytes = content.as_deref().map_or(0, str::len),
                 ),
             })),
             Err(e) => Ok(ToolResult::error(format!(
@@ -2198,10 +2238,12 @@ pub fn workspace_tools(
     agent_id: String,
     can_write: bool,
     write_scope: Option<Vec<String>>,
+    search_provenance: Option<Arc<crate::harness::search_provenance::SearchProvenance>>,
 ) -> Vec<Box<dyn Tool>> {
     let workspace = CompanyWorkspace::new(store, company, agent_id)
         .with_artifacts(artifacts)
-        .with_write_scope(write_scope);
+        .with_write_scope(write_scope)
+        .with_search_provenance(search_provenance);
     let mut tools: Vec<Box<dyn Tool>> = vec![
         Box::new(WorkspaceListTool::new(workspace.clone())),
         Box::new(WorkspaceReadTool::new(workspace.clone())),
@@ -3481,6 +3523,121 @@ mod tests {
 
         let (_, body) = store.read(&id, "n-eng").await.unwrap().unwrap();
         assert_eq!(body, "# Engineering\nShip on Fridays.");
+    }
+
+    // -- search attribution (issue #1695) ------------------------------------
+
+    /// A note whose body cites a URL the managed `web_search` tool returned is
+    /// stored with the attribution footer; one citing nothing is stored
+    /// verbatim; and a workspace with no provenance wired (every belt without
+    /// managed search) stores everything verbatim.
+    #[tokio::test]
+    async fn a_note_citing_a_searched_result_is_stored_with_the_footer() {
+        use crate::harness::search_provenance::{ATTRIBUTION_FOOTER, SearchProvenance};
+
+        let provenance = SearchProvenance::new();
+        provenance.record(["https://exa.ai/docs/reference/search"]);
+
+        let (_dir, store) = seeded("acme").await;
+        let id = CompanyId::new("acme");
+        let workspace =
+            ws(store.clone(), id.clone()).with_search_provenance(Some(provenance.clone()));
+
+        // Cites a recorded result: the stored body carries the footer, and the
+        // reply's byte count is the stored body's, not the argument's.
+        let cited = "# Search API\nPer https://exa.ai/docs/reference/search, use POST.";
+        let result = WorkspaceWriteTool::new(workspace.clone())
+            .execute(json!({
+                "id": "n-eng",
+                "content": cited,
+                "expected_updated_at": 2_000,
+            }))
+            .await
+            .unwrap();
+        assert!(!result.is_error, "{}", text(&result));
+        let (node, body) = store.read(&id, "n-eng").await.unwrap().unwrap();
+        assert!(body.starts_with(cited), "{body}");
+        assert!(body.trim_end().ends_with(ATTRIBUTION_FOOTER), "{body}");
+        assert!(
+            text(&result).contains(&format!("{} bytes", body.len())),
+            "{}",
+            text(&result)
+        );
+
+        // Overwriting the footered body with itself appends nothing twice.
+        let result = WorkspaceWriteTool::new(workspace.clone())
+            .execute(json!({
+                "id": "n-eng",
+                "content": body,
+                "expected_updated_at": node.updated_at_millis,
+            }))
+            .await
+            .unwrap();
+        assert!(!result.is_error, "{}", text(&result));
+        let (node, rewritten) = store.read(&id, "n-eng").await.unwrap().unwrap();
+        assert_eq!(rewritten, body);
+
+        // Cites nothing recorded: stored verbatim, footer gone with the body
+        // that earned it.
+        let uncited = "# Own thoughts\nNo sources here.";
+        let result = WorkspaceWriteTool::new(workspace)
+            .execute(json!({
+                "id": "n-eng",
+                "content": uncited,
+                "expected_updated_at": node.updated_at_millis,
+            }))
+            .await
+            .unwrap();
+        assert!(!result.is_error, "{}", text(&result));
+        let (_, body) = store.read(&id, "n-eng").await.unwrap().unwrap();
+        assert_eq!(body, uncited);
+
+        // No provenance wired: verbatim even when the body cites the URL.
+        let result = WorkspaceCreateTool::new(ws(store.clone(), id.clone()))
+            .execute(json!({
+                "path": format!("{AGENTS_ROOT}/{TEST_AGENT}/unattributed.md"),
+                "kind": "file",
+                "content": cited,
+            }))
+            .await
+            .unwrap();
+        assert!(!result.is_error, "{}", text(&result));
+        let index = PathIndex::build_for_agent(store.tree(&id).await.unwrap());
+        let entry = &index
+            .lookup(&format!("{AGENTS_ROOT}/{TEST_AGENT}/unattributed.md"))
+            .unwrap()[0];
+        let (_, body) = store.read(&id, &entry.node.id).await.unwrap().unwrap();
+        assert_eq!(body, cited);
+    }
+
+    /// `workspace_create` runs the same attribution as `workspace_write`.
+    #[tokio::test]
+    async fn a_created_note_citing_a_searched_result_gets_the_footer() {
+        use crate::harness::search_provenance::{ATTRIBUTION_FOOTER, SearchProvenance};
+
+        let provenance = SearchProvenance::new();
+        provenance.record(["https://exa.ai/docs"]);
+
+        let (_dir, store) = seeded("acme").await;
+        let id = CompanyId::new("acme");
+        let workspace = ws(store.clone(), id.clone()).with_search_provenance(Some(provenance));
+
+        let result = WorkspaceCreateTool::new(workspace)
+            .execute(json!({
+                "path": format!("{AGENTS_ROOT}/{TEST_AGENT}/api-brief.md"),
+                "kind": "file",
+                "content": "Grounded in https://exa.ai/docs.",
+            }))
+            .await
+            .unwrap();
+        assert!(!result.is_error, "{}", text(&result));
+
+        let index = PathIndex::build_for_agent(store.tree(&id).await.unwrap());
+        let entry = &index
+            .lookup(&format!("{AGENTS_ROOT}/{TEST_AGENT}/api-brief.md"))
+            .unwrap()[0];
+        let (_, body) = store.read(&id, &entry.node.id).await.unwrap().unwrap();
+        assert!(body.trim_end().ends_with(ATTRIBUTION_FOOTER), "{body}");
     }
 
     /// Models stringify numbers constantly. `"2000"` must land exactly as
@@ -4956,6 +5113,7 @@ mod tests {
             TEST_AGENT.to_string(),
             false,
             None,
+            None,
         );
         let names: Vec<&str> = read_only.iter().map(|t| t.name()).collect();
         assert_eq!(
@@ -4976,6 +5134,7 @@ mod tests {
             CompanyId::new("acme"),
             TEST_AGENT.to_string(),
             true,
+            None,
             None,
         );
         let names: Vec<&str> = writable.iter().map(|t| t.name()).collect();
@@ -5007,6 +5166,7 @@ mod tests {
             CompanyId::new("acme"),
             TEST_AGENT.to_string(),
             true,
+            None,
             None,
         );
         assert_eq!(tools[0].permission_level(), PermissionLevel::ReadOnly);

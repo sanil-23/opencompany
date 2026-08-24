@@ -388,6 +388,10 @@ impl WorkflowToolInvoker {
                     tools.extend(crate::harness::search::search_tools(
                         backend,
                         search_metering,
+                        // A workflow node belt has no workspace write tools,
+                        // so nothing reads this record — a fresh handle keeps
+                        // the tool contract without wiring attribution here.
+                        crate::harness::search_provenance::SearchProvenance::new(),
                     ));
                 }
                 (None, None) => tracing::warn!(

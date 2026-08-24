@@ -120,6 +120,10 @@ pub mod search;
 /// through OpenHuman's own search tools. Falls back to [`search`]'s metered
 /// managed surface whenever nothing is configured.
 pub mod search_byo;
+/// Evidence-based "Powered by Exa" attribution: records the result URLs the
+/// managed `web_search` tool returned to an agent, so the workspace write
+/// tools can footer exactly the notes that cite them.
+pub mod search_provenance;
 /// End-to-end proof that the #238 `web_search` tool is reachable from a real
 /// turn — the harness, the grant gates, the approval policy, the cap and the
 /// meter are all real; only the model's choices and the search backend's

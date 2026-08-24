@@ -636,6 +636,16 @@ pub fn build_agent(
     // BYO belt carries no daily cap and no usage sample either: the calls are
     // billed by Brave or Exa to the company's own account, and metering a bill
     // this host does not pay would be a number nobody can reconcile.
+    // This agent's search provenance (see `search_provenance`): created
+    // whenever the MANAGED search tool is wired below, and handed to the
+    // workspace write tools further down so a note citing a searched result is
+    // stored with the attribution footer. `None` — no managed search on this
+    // belt — stores every note verbatim, the pre-existing behaviour. The BYO
+    // family deliberately gets none: those calls run on the company's own
+    // provider account, so the managed surface's attribution would be wrong.
+    let mut search_provenance: Option<
+        std::sync::Arc<crate::harness::search_provenance::SearchProvenance>,
+    > = None;
     if crate::company::grants_search_explicit(grants) {
         match (&deps.tenant_search, &deps.search) {
             (Some(tenant), _) => {
@@ -649,14 +659,19 @@ pub fn build_agent(
                 );
                 tools.extend(byo);
             }
-            (None, Some(backend)) => tools.extend(crate::harness::search::search_tools(
-                backend,
-                crate::harness::search::SearchMetering {
-                    company: company.clone(),
-                    agent: manifest_agent.id.clone(),
-                    meter: deps.meter.clone(),
-                },
-            )),
+            (None, Some(backend)) => {
+                let provenance = crate::harness::search_provenance::SearchProvenance::new();
+                search_provenance = Some(provenance.clone());
+                tools.extend(crate::harness::search::search_tools(
+                    backend,
+                    crate::harness::search::SearchMetering {
+                        company: company.clone(),
+                        agent: manifest_agent.id.clone(),
+                        meter: deps.meter.clone(),
+                    },
+                    provenance,
+                ));
+            }
             (None, None) => tracing::warn!(
                 company = %company,
                 agent = %manifest_agent.id,
@@ -723,6 +738,10 @@ pub fn build_agent(
                 manifest_agent.id.clone(),
                 workspace_writes,
                 manifest_agent.write_scope(),
+                // Managed-search attribution (see `search_provenance`): the
+                // same handle the `web_search` tool above records into, so a
+                // note citing a searched result carries the footer.
+                search_provenance.clone(),
             ))
         }
         _ => None,
