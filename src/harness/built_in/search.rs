@@ -1019,7 +1019,8 @@ mod tests {
     /// to stop starts exactly here — an agent handed silence fills it in.
     #[test]
     fn an_empty_result_set_is_reported_as_a_fact() {
-        let rendered = render_results("nothing at all", &[], "Exa", 5, 4);
+        let (rendered, shown) = render_results("nothing at all", &[], "Exa", 5, 4);
+        assert!(shown.is_empty(), "nothing retained from an empty result set");
         assert!(rendered.contains("returned no results"), "{rendered}");
         assert!(rendered.contains("Do NOT invent sources"), "{rendered}");
     }
