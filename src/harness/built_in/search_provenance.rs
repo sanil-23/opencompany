@@ -335,7 +335,7 @@ fn cited_urls(content: &str) -> Vec<String> {
                 None => candidate,
             }
         } else if markdown_emphasis {
-            let delimiter = content.as_bytes()[start - 1] as char;
+            let delimiter = emphasis_delimiter.expect("markdown emphasis has a delimiter");
             let trimmed = trim_trailing_punctuation(candidate);
             trimmed.strip_suffix(delimiter).unwrap_or(trimmed)
         } else {
