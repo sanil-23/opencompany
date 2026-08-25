@@ -614,7 +614,7 @@ mod tests {
         }
     }
 
-    /// The forward walk keeps IRI letters and marks but stops at Unicode
+    /// The forward walk keeps IRI letters and digits but stops at Unicode
     /// whitespace and prose punctuation. A recorded URL followed by a
     /// non-breaking space, an ideographic space, an em dash or an ideographic
     /// comma is still a citation — the separator and everything after it is
