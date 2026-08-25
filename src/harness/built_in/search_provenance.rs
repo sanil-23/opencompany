@@ -203,15 +203,7 @@ fn trim_trailing_punctuation(url: &str) -> &str {
     }
 }
 
-fn trim_trailing_punctuation_with_context(url: &str, autolink: bool) -> &str {
-    if autolink {
-        return url.strip_prefix('<').unwrap_or(url);
-    }
-    trim_trailing_punctuation(url)
-}
-
-///
-/// Candidates are **parsed out and compared whole**, rather than searching the
+/// Every absolute `http`/`https` URL written in `content`, normalized.
 /// text for each recorded URL and inspecting its neighbours. Boundary-guessing
 /// cannot get this right: every character a heuristic must treat as "ends the
 /// URL" (`,`, `;`, `!`, `'`, `*`, `$`) is also legal *inside* one, so any
