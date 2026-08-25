@@ -275,13 +275,14 @@ fn cited_urls(content: &str) -> Vec<String> {
         // would swallow the separator and the following prose into the
         // candidate, so an exact `…/docs` followed by `\u{a0}for` or
         // `—reference` would no longer match and the earned footer would be
-        // lost. (The scheme itself stays ASCII-only, so the walk-back above is
-        // unaffected.)
+        // lost. Symbols such as emoji and combining marks remain valid IRI
+        // code points, so they must not be used as a boundary. (The scheme
+        // itself stays ASCII-only, so the walk-back above is unaffected.)
         let mut end = sep + 3;
         for (offset, c) in content[sep + 3..].char_indices() {
             if c.is_ascii_alphanumeric()
                 || URL_CHARS.contains(c)
-                || (!c.is_ascii() && c.is_alphanumeric())
+                || (!c.is_ascii() && !is_unicode_prose_delimiter(c))
             {
                 end = sep + 3 + offset + c.len_utf8();
             } else {
