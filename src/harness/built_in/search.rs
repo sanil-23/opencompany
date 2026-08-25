@@ -633,16 +633,16 @@ fn fence_nonce() -> String {
 /// Returns the rendered text **and** the exact results retained in it, so the
 /// caller records provenance for precisely the URLs the agent is about to see —
 /// never for an entry the render budget dropped.
-fn render_results(
+fn render_results<'a>(
     query: &str,
-    results: &[SearchResultItem],
+    results: &'a [SearchResultItem],
     provider: &str,
     max_results: usize,
     remaining_today: u32,
-) -> (String, Vec<&SearchResultItem>) {
+) -> (String, Vec<&'a SearchResultItem>) {
     let nonce = fence_nonce();
-    let candidates: Vec<&SearchResultItem> = results.iter().take(max_results).collect();
-    let mut shown: Vec<&SearchResultItem> = Vec::new();
+    let candidates: Vec<&'a SearchResultItem> = results.iter().take(max_results).collect();
+    let mut shown: Vec<&'a SearchResultItem> = Vec::new();
 
     let mut out = format!(
         "Search results for `{query}` — {n} result{plural} via {provider}. \
