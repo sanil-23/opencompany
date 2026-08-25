@@ -915,8 +915,9 @@ mod tests {
             Some("2026-04-20"),
             Some("Plans start at $10 per seat."),
         )];
-        let rendered = render_results("competitor pricing", &results, "Exa", 5, 4);
+        let (rendered, shown) = render_results("competitor pricing", &results, "Exa", 5, 4);
 
+        assert_eq!(shown.len(), 1, "the retained subset must be exactly the rendered entry");
         assert!(rendered.contains("1. Pricing"), "{rendered}");
         assert!(
             rendered.contains("url: https://www.Example.com/pricing?ref=x"),
