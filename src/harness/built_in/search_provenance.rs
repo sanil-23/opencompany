@@ -204,7 +204,11 @@ fn trim_trailing_punctuation(url: &str) -> &str {
     }
 }
 
-/// Every absolute `http`/`https` URL written in `content`, normalized.
+/// Whether a candidate came from Markdown autolink syntax (`<https://…>`).
+fn is_autolink_url(url: &str) -> bool {
+    url.starts_with('<')
+}
+
 ///
 /// Candidates are **parsed out and compared whole**, rather than searching the
 /// text for each recorded URL and inspecting its neighbours. Boundary-guessing
