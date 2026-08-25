@@ -5050,7 +5050,10 @@ description = "Builds the product."
         let deep: Arc<dyn crate::ports::deep_trace::DeepTraceStore> =
             Arc::new(crate::store::FsOps::new(home.path().to_path_buf()));
         let run = runs
-            .create_run(&company, crate::ports::runs::NewRun::for_task("run-1", "t-1", "ceo"))
+            .create_run(
+                &company,
+                crate::ports::runs::NewRun::for_task("run-1", "t-1", "ceo"),
+            )
             .await
             .expect("mint");
         let sink = Arc::new(
