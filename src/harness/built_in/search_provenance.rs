@@ -195,6 +195,11 @@ fn trim_trailing_punctuation(url: &str) -> &str {
         };
         let drop = match last {
             '.' | ',' | ';' | ':' | '!' | '?' | '\'' | '"' => true,
+            // The same sentence-stops in their Unicode forms. A cited IRI
+            // keeps its non-ASCII path characters (see the forward walk in
+            // `cited_urls`), but a full-width full stop or comma after the URL
+            // is prose, exactly as its ASCII counterpart is.
+            '。' | '．' | '，' | '、' | '！' | '？' | '”' | '’' => true,
             ')' => url.matches(')').count() > url.matches('(').count(),
             ']' => url.matches(']').count() > url.matches('[').count(),
             _ => false,
