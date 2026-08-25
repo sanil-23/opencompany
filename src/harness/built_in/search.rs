@@ -535,24 +535,18 @@ impl Tool for WebSearchTool {
             .await;
         }
 
-        // Exactly the URLs the agent is about to see — the same
-        // `take(max_results)` slice `render_results` shows — so a workspace
-        // note citing one of them can be attributed to this search.
-        self.backend.provenance.record(
-            response
-                .results
-                .iter()
-                .take(max_results)
-                .map(|result| result.url.as_str()),
-        );
+        // Exactly the URLs the agent is about to see — the *retained* subset of
+        // `render_results`, not the raw `take(max_results)` slice. A URL the
+        // render budget dropped is a URL the agent never saw, and recording it
+        // would let a later deliverable citing it earn an attribution footer
+        // this search did not actually expose (issue #1695).
+        let (rendered, shown) =
+            render_results(&query, &response.results, provider, max_results, remaining);
+        self.backend
+            .provenance
+            .record(shown.iter().map(|result| result.url.as_str()));
 
-        Ok(ToolResult::success(render_results(
-            &query,
-            &response.results,
-            provider,
-            max_results,
-            remaining,
-        )))
+        Ok(ToolResult::success(rendered))
     }
 }
 
