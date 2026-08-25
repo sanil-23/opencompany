@@ -1005,7 +1005,8 @@ mod tests {
         let results: Vec<SearchResultItem> = (0..8)
             .map(|i| item(&format!("t{i}"), &format!("https://a{i}.test/"), None, None))
             .collect();
-        let rendered = render_results("q", &results, "Exa", 3, 1);
+        let (rendered, shown) = render_results("q", &results, "Exa", 3, 1);
+        assert_eq!(shown.len(), 3, "all requested results fit: nothing dropped");
         assert!(rendered.contains("3 results"), "{rendered}");
         assert!(rendered.contains("t2"), "{rendered}");
         assert!(
