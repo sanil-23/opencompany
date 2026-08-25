@@ -86,16 +86,19 @@ impl SearchProvenance {
 
     /// Record result URLs the agent was shown, newest kept on eviction.
     ///
-    /// URLs are stored normalized ([`normalize_url`]); duplicates refresh
-    /// nothing and are skipped, so a repeated search cannot flush older
-    /// evidence out of the window.
+    /// URLs are stored normalized ([`normalize_url`]). A re-shown URL moves
+    /// to the back — its recency refreshes — rather than being skipped: if
+    /// the ring's oldest entry came back and a new URL followed, skipping
+    /// would let the new URL evict a result the agent was just shown.
     pub fn record<'a>(&self, urls: impl IntoIterator<Item = &'a str>) {
         let mut tracked = self.urls.lock().expect("search provenance lock");
         for url in urls {
             let Some(normalized) = normalize_url(url) else {
                 continue;
             };
-            if tracked.contains(&normalized) {
+            if let Some(at) = tracked.iter().position(|u| u == &normalized) {
+                tracked.remove(at);
+                tracked.push_back(normalized);
                 continue;
             }
             if tracked.len() == MAX_TRACKED_URLS {
