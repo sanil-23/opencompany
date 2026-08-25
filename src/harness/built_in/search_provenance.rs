@@ -344,7 +344,25 @@ fn cited_urls(content: &str) -> Vec<String> {
             // — and that value is a parameter of the wrapper, never a citation
             // of its own. Resuming at `sep + 3` would re-scan it as a fresh
             // candidate and credit the inner page.
+            //
+            // The forward walk above stops at Unicode prose delimiters (an em
+            // dash, a full-width comma) because those bound a *cited* URL
+            // against the prose that follows it. Inside a rejected scheme they
+            // are data: RFC 3987 permits them in an IRI, and they can sit
+            // between the wrapper and a nested `https://…` it carries —
+            // `ftp://proxy.test/—https://exa.ai/docs`. Continue past them,
+            // stopping only at a character no URI may contain (RFC 3986
+            // excludes whitespace, `<>"{}|\^`` and, of course, a newline).
             from = end.max(sep + 3);
+            while from < content.len() {
+                let c = content[from..].chars().next().expect("from < len");
+                if c.is_whitespace()
+                    || matches!(c, '<' | '>' | '"' | '{' | '}' | '|' | '\\' | '^' | '`')
+                {
+                    break;
+                }
+                from += c.len_utf8();
+            }
             continue;
         }
         // An absolute URL glued inside a larger URI is a payload or a path
@@ -870,6 +888,31 @@ mod tests {
         }
         // The genuine citation still matches in the same prose.
         assert!(p.cited_in("download via https://exa.ai/docs now"));
+    }
+
+    /// A Unicode prose delimiter inside a rejected scheme is IRI data, not a
+    /// boundary: RFC 3987 permits an em dash in an IRI, so
+    /// `ftp://proxy.test/—https://exa.ai/docs` is one FTP URI whose path embeds
+    /// the `https` as a value of the wrapper. The forward walk stops at the em
+    /// dash (it would bound a *cited* URL against prose), so the rejected-scheme
+    /// skip has to continue past it — otherwise scanning resumes at the nested
+    /// `https://…` and the FTP-only document earns the footer.
+    #[test]
+    fn a_nested_url_behind_unicode_punctuation_is_still_wrapper_data() {
+        let p = provenance_with(&["https://exa.ai/docs"]);
+        for wrapper in [
+            "ftp://proxy.test/—https://exa.ai/docs",
+            "ftp://proxy.test/，https://exa.ai/docs",
+            "ftp://proxy.test/…https://exa.ai/docs",
+        ] {
+            assert!(
+                !p.cited_in(&format!("download via {wrapper} now")),
+                "{wrapper}"
+            );
+        }
+        // Whitespace still separates a rejected IRI from a real citation: the
+        // em dash with spaces is prose, and the URL after it stands alone.
+        assert!(p.cited_in("download via ftp://proxy.test — https://exa.ai/docs now"));
     }
 
     /// A wrapper without a scheme of its own still owns its `https://` payload:
