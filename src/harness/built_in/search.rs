@@ -917,7 +917,11 @@ mod tests {
         )];
         let (rendered, shown) = render_results("competitor pricing", &results, "Exa", 5, 4);
 
-        assert_eq!(shown.len(), 1, "the retained subset must be exactly the rendered entry");
+        assert_eq!(
+            shown.len(),
+            1,
+            "the retained subset must be exactly the rendered entry"
+        );
         assert!(rendered.contains("1. Pricing"), "{rendered}");
         assert!(
             rendered.contains("url: https://www.Example.com/pricing?ref=x"),
@@ -1080,7 +1084,10 @@ mod tests {
             shown.is_empty(),
             "a URL that cannot render must not be recorded as cited"
         );
-        assert!(!rendered.contains("url:"), "no URL may be shown: {rendered}");
+        assert!(
+            !rendered.contains("url:"),
+            "no URL may be shown: {rendered}"
+        );
         assert!(rendered.contains("TRUNCATED"), "{rendered}");
         assert!(rendered.contains("1 more result"), "{rendered}");
     }
@@ -1090,7 +1097,10 @@ mod tests {
     #[test]
     fn an_empty_result_set_is_reported_as_a_fact() {
         let (rendered, shown) = render_results("nothing at all", &[], "Exa", 5, 4);
-        assert!(shown.is_empty(), "nothing retained from an empty result set");
+        assert!(
+            shown.is_empty(),
+            "nothing retained from an empty result set"
+        );
         assert!(rendered.contains("returned no results"), "{rendered}");
         assert!(rendered.contains("Do NOT invent sources"), "{rendered}");
     }
