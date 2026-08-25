@@ -279,6 +279,22 @@ impl SearchBackend {
         self.daily_call_cap = cap;
         self
     }
+
+    /// This backend with a **fresh** provenance record, for the per-company
+    /// clone the runtime builder hands each `HarnessDeps`.
+    ///
+    /// [`Clone`] shares the [`SearchProvenance`] `Arc` the way it shares the
+    /// ledger — which is right within a company (every agent of the company
+    /// draws on one record) but wrong across them: the process resolves ONE
+    /// managed backend, and if company B's clone kept company A's record, a
+    /// company-B document citing a URL only company A's search returned would
+    /// earn a footer company B never deserved. The ledger is safe under sharing
+    /// because it is keyed by company id; the provenance is a single deque, so
+    /// the per-company isolation has to come from the wiring instead.
+    pub fn with_fresh_provenance(mut self) -> Self {
+        self.provenance = crate::harness::search_provenance::SearchProvenance::new();
+        self
+    }
 }
 
 impl std::fmt::Debug for SearchBackend {
