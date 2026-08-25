@@ -263,10 +263,18 @@ fn cited_urls(content: &str) -> Vec<String> {
         if autolink {
             candidate_start -= 1;
         }
-        if let Some(url) = normalize_url(trim_trailing_punctuation_with_context(
-            &content[candidate_start..end],
-            autolink,
-        )) {
+        let candidate = &content[candidate_start..end];
+        let candidate = if autolink {
+            candidate.strip_suffix('>').unwrap_or(candidate)
+        } else {
+            candidate
+        };
+        let candidate = if autolink {
+            candidate.strip_prefix('<').unwrap_or(candidate)
+        } else {
+            trim_trailing_punctuation(candidate)
+        };
+        if let Some(url) = normalize_url(candidate) {
             found.push(url);
         }
         // Continue past the whole candidate, so a URL carried inside another as
