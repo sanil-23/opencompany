@@ -614,6 +614,30 @@ mod tests {
         }
     }
 
+    /// The forward walk keeps IRI letters and marks but stops at Unicode
+    /// whitespace and prose punctuation. A recorded URL followed by a
+    /// non-breaking space, an ideographic space, an em dash or an ideographic
+    /// comma is still a citation — the separator and everything after it is
+    /// prose, not part of the URL. Absorbing them (the old "keep every
+    /// non-ASCII character" rule) produced `…/docs for details` or
+    /// `…/docs—reference`, which matched no recorded URL, silently dropping
+    /// the earned footer.
+    #[test]
+    fn a_unicode_separator_after_the_url_is_prose() {
+        let p = provenance_with(&["https://exa.ai/docs"]);
+        for prose in [
+            "See https://exa.ai/docs\u{a0}for details.",
+            "See https://exa.ai/docs\u{3000}for details.",
+            "The docs\u{2014}https://exa.ai/docs\u{2014}are the source.",
+            "出典：https://exa.ai/docs、詳細はこちら。",
+        ] {
+            assert!(p.cited_in(prose), "{prose:?}");
+        }
+        // A genuine IRI path still scans whole: the distinct page under the
+        // recorded one earns nothing.
+        assert!(!p.cited_in("From https://exa.ai/docs/東京。"));
+    }
+
     /// `-`, `.` and `+` are scheme characters (RFC 3986), so a longer scheme
     /// that merely *contains* `https` is a different URI, not a citation of the
     /// recorded page. The walk-back must consume the whole scheme or the inner
