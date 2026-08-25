@@ -624,6 +624,28 @@ mod tests {
         );
     }
 
+    /// Scheme and host are case-insensitive (RFC 3986 §6.2.2.1), and the two
+    /// sides of the match arrive independently: the backend records
+    /// `Example.com`, the model's rendered citation says `example.com`, and
+    /// both name the same host — a byte-for-byte compare would silently miss
+    /// the credit the whole feature exists to award. Everything after the
+    /// authority stays case-sensitive, so `…/Docs` is still a different page
+    /// from `…/docs`.
+    #[test]
+    fn scheme_and_host_match_case_insensitively_but_path_does_not() {
+        let p = provenance_with(&["https://Example.com/Docs"]);
+        // Host re-cased.
+        assert!(p.cited_in("See https://example.com/Docs."));
+        // Scheme re-cased too.
+        assert!(p.cited_in("See HTTPS://EXAMPLE.com/Docs."));
+        // Both re-cased at once.
+        assert!(p.cited_in("See HTTPS://EXAMPLE.COM/Docs."));
+        // …and the original casing still matches, of course.
+        assert!(p.cited_in("See https://Example.com/Docs."));
+        // Path case is preserved: a different path is a different page.
+        assert!(!p.cited_in("See https://example.com/docs."));
+    }
+
     #[test]
     fn a_longer_host_gets_no_credit() {
         let p = provenance_with(&["https://exa.ai"]);
