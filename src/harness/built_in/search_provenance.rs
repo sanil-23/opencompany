@@ -192,9 +192,6 @@ fn trim_trailing_punctuation(url: &str) -> &str {
         };
         let drop = match last {
             '.' | ',' | ';' | ':' | '"' => true,
-            '!' | '\'' if !is_autolink_url(url) => true,
-            ')' => url.matches(')').count() > url.matches('(').count(),
-            ']' => url.matches(']').count() > url.matches('[').count(),
             _ => false,
         };
         if !drop {
