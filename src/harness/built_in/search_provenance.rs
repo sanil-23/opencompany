@@ -321,9 +321,12 @@ fn cited_urls(content: &str) -> Vec<String> {
         let markdown_dest = start >= 2
             && content.as_bytes()[start - 1] == b'('
             && content.as_bytes()[start - 2] == b']';
-        let markdown_emphasis = start > 0
-            && matches!(content.as_bytes()[start - 1], b'*' | b'_')
-            && candidate.ends_with(content.as_bytes()[start - 1] as char);
+        let emphasis_delimiter = start.checked_sub(1).and_then(|index| {
+            matches!(content.as_bytes()[index], b'*' | b'_')
+                .then_some(content.as_bytes()[index] as char)
+        });
+        let markdown_emphasis = emphasis_delimiter
+            .is_some_and(|delimiter| trim_trailing_punctuation(candidate).ends_with(delimiter));
         let candidate = if autolink {
             candidate.strip_prefix('<').unwrap_or(candidate)
         } else if markdown_dest {
