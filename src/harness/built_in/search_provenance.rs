@@ -661,6 +661,31 @@ mod tests {
         assert!(!p.cited_in("From https://exa.ai/docs/東京。"));
     }
 
+    /// Symbols and combining marks are valid IRI path characters even though
+    /// they are not alphanumeric. They must remain in the candidate, or a
+    /// recorded `…/wiki` would falsely match `…/wiki/💡` after slash
+    /// normalization.
+    #[test]
+    fn non_alphanumeric_iri_suffixes_do_not_collapse_to_a_prefix() {
+        let p = provenance_with(&["https://example.test/wiki"]);
+        assert!(!p.cited_in("From https://example.test/wiki/💡."));
+        assert!(!p.cited_in("From https://example.test/wiki/e\u{301}."));
+
+        let emoji = provenance_with(&["https://example.test/wiki/💡"]);
+        assert!(emoji.cited_in("From https://example.test/wiki/💡."));
+        let decomposed = provenance_with(&["https://example.test/wiki/e\u{301}"]);
+        assert!(decomposed.cited_in("From https://example.test/wiki/e\u{301}."));
+    }
+
+    /// Markdown emphasis wraps a bare URL without making the emphasis marker
+    /// part of the URL itself.
+    #[test]
+    fn markdown_emphasis_delimiters_do_not_break_bare_citations() {
+        let p = provenance_with(&["https://exa.ai/docs"]);
+        assert!(p.cited_in("See *https://exa.ai/docs* for details."));
+        assert!(p.cited_in("See _https://exa.ai/docs_ for details."));
+    }
+
     /// `-`, `.` and `+` are scheme characters (RFC 3986), so a longer scheme
     /// that merely *contains* `https` is a different URI, not a citation of the
     /// recorded page. The walk-back must consume the whole scheme or the inner
