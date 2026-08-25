@@ -973,7 +973,7 @@ mod tests {
     fn snippets_are_capped_and_flattened() {
         let long: String = "🦀".repeat(MAX_SNIPPET_CHARS + 50);
         let results = vec![item("t", "https://a.test/", None, Some(&long))];
-        let rendered = render_results("q", &results, "Exa", 5, 1);
+        let (rendered, _) = render_results("q", &results, "Exa", 5, 1);
         let line = rendered
             .lines()
             .find(|line| line.trim_start().starts_with("snippet:"))
