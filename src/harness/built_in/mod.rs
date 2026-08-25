@@ -5025,6 +5025,76 @@ description = "Builds the product."
         );
     }
 
+    /// Issue #242 collector-drain contract: a `run_sink` handed to
+    /// `run_with_steer` is flushed before the wrapper returns, so the tail of a
+    /// reasoning run the stream never got to close — exactly what a failed or
+    /// interrupted turn leaves — is persisted rather than dropped.
+    ///
+    /// The module's scripted providers return complete, non-streaming
+    /// `ModelResponse`s and therefore emit no progress events for the test to
+    /// ride on, so the open thinking run is staged directly on the sink with
+    /// the same fixture the sink-level test in `run_trace` uses. The
+    /// collector's flush-on-drain is what's under test: it must persist the
+    /// buffered `"second"` before the wrapper returns. Without it, only the
+    /// first delta's emission survives and the joined reasoning reads
+    /// `"first "`.
+    #[tokio::test]
+    async fn a_steered_turn_persists_its_trace_before_returning() {
+        let home = tempfile::Builder::new()
+            .prefix("opencompany-run-trace-steered-")
+            .tempdir()
+            .expect("tempdir");
+        let company = CompanyId::new("acme");
+        let runs: Arc<dyn crate::ports::RunStore> =
+            Arc::new(crate::store::FsOps::new(home.path().to_path_buf()));
+        let deep: Arc<dyn crate::ports::deep_trace::DeepTraceStore> =
+            Arc::new(crate::store::FsOps::new(home.path().to_path_buf()));
+        let run = runs
+            .create_run(&company, crate::ports::runs::NewRun::for_task("run-1", "t-1", "ceo"))
+            .await
+            .expect("mint");
+        let sink = Arc::new(
+            RunTraceSink::new(company.clone(), run.id, Arc::clone(&runs))
+                .with_deep(Some(Arc::clone(&deep))),
+        );
+
+        // An open thinking run: `"first "` leaves as its own emission, while
+        // `"second"` stays buffered below the interim flush threshold until
+        // something closes the run. The scripted turn below emits no progress
+        // events, so the collector's flush-on-drain is the only path that can
+        // persist `"second"`.
+        sink.record(&oh::agent::progress::AgentProgress::ThinkingDelta {
+            delta: "first ".to_string(),
+            iteration: 1,
+        })
+        .await;
+        sink.record(&oh::agent::progress::AgentProgress::ThinkingDelta {
+            delta: "second".to_string(),
+            iteration: 1,
+        })
+        .await;
+
+        let (agent, _deps) = scripted_agent(vec![Ok("hi".into())]);
+        let (_outcome, _usages) = agent
+            .run_with_steer("hi", None, None, Some(sink.clone()))
+            .await
+            .expect("steered turn runs");
+
+        let details = deep
+            .list_step_details(&company, "run-1")
+            .await
+            .expect("list step details");
+        let reasoning: String = details
+            .iter()
+            .filter_map(|d| d.detail.reasoning.clone())
+            .collect();
+        assert_eq!(
+            reasoning, "first second",
+            "the collector's flush-on-drain must persist the buffered reasoning \
+             tail before run_with_steer returns"
+        );
+    }
+
     // Note: the *installation* of the steer stop-hook can't be observed from the
     // provider — the tinyagents adapter snapshots the hooks at turn entry and the
     // provider call may run on a spawned task where the task-local isn't
