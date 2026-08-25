@@ -347,6 +347,27 @@ fn cited_urls(content: &str) -> Vec<String> {
             from = end.max(sep + 3);
             continue;
         }
+        // An absolute URL glued inside a larger URI is a payload or a path
+        // segment, not a citation of its own. The walk-back consumed the whole
+        // scheme, so the character immediately before it is either prose —
+        // whitespace, an opening bracket, a quote, an emphasis marker, or a
+        // Unicode prose delimiter — or the continuation of a non-hierarchical
+        // wrapper that has no `://` of its own: `data:text/plain,https://
+        // exa.ai/docs` and `/redirect/https://exa.ai/docs` both embed a
+        // perfectly valid `https` the document never cites independently.
+        // None of those continuation characters legitimately precedes a cited
+        // URL in prose, so their presence means the scheme check above could
+        // not have seen the wrapper — reject the candidate whole, exactly as
+        // the rejected-`ftp` case does.
+        if start > 0
+            && matches!(
+                content.as_bytes()[start - 1],
+                b'/' | b':' | b',' | b';' | b'?' | b'#' | b'@' | b'&' | b'='
+            )
+        {
+            from = end.max(sep + 3);
+            continue;
+        }
         let mut candidate_start = start;
         if autolink {
             candidate_start -= 1;
@@ -382,9 +403,15 @@ fn cited_urls(content: &str) -> Vec<String> {
                 None => candidate,
             }
         } else if markdown_emphasis {
+            // Emphasis may wrap a URL in a RUN of identical markers —
+            // `**https://exa.ai/docs**` is bold, `***…***` bold-italic — and
+            // the forward walk absorbs them all (both markers are
+            // `URL_CHARS`). Strip the whole run, not one marker: a single
+            // `strip_suffix` leaves `…/docs*`, which never equals the recorded
+            // URL and silently loses the earned footer.
             let delimiter = emphasis_delimiter.expect("markdown emphasis has a delimiter");
             let trimmed = trim_trailing_punctuation(candidate);
-            trimmed.strip_suffix(delimiter).unwrap_or(trimmed)
+            trimmed.trim_end_matches(delimiter)
         } else {
             trim_trailing_punctuation(candidate)
         };
@@ -784,6 +811,25 @@ mod tests {
         assert!(p.cited_in("See _https://exa.ai/docs_,"));
     }
 
+    /// A URL wrapped in a RUN of identical emphasis markers is stripped whole:
+    /// `***https://exa.ai/docs***` is bold-italic, and the forward walk absorbs
+    /// every marker into the candidate (both `*` and `_` are `URL_CHARS`).
+    /// Stripping a single marker would leave `…/docs*`, which never equals the
+    /// recorded URL and silently loses the earned footer.
+    #[test]
+    fn a_multi_marker_emphasis_wrapper_is_fully_stripped() {
+        let p = provenance_with(&["https://exa.ai/docs"]);
+        for doc in [
+            "See **https://exa.ai/docs** for details.",
+            "See _https://exa.ai/docs_ for details.",
+            "See ***https://exa.ai/docs*** for details.",
+            "See **https://exa.ai/docs**. for details.",
+        ] {
+            let out = p.attributed(doc).expect("footer expected");
+            assert!(out.trim_end().ends_with(ATTRIBUTION_FOOTER), "{doc}");
+        }
+    }
+
     /// `-`, `.` and `+` are scheme characters (RFC 3986), so a longer scheme
     /// that merely *contains* `https` is a different URI, not a citation of the
     /// recorded page. The walk-back must consume the whole scheme or the inner
@@ -824,6 +870,29 @@ mod tests {
         }
         // The genuine citation still matches in the same prose.
         assert!(p.cited_in("download via https://exa.ai/docs now"));
+    }
+
+    /// A wrapper without a scheme of its own still owns its `https://` payload:
+    /// `data:text/plain,https://exa.ai/docs` and `/redirect/https://exa.ai/docs`
+    /// embed a perfectly valid URL the document never cites independently. The
+    /// walk-back consumed the whole scheme, so the character immediately before
+    /// it is the wrapper's continuation — none of which legitimately precedes a
+    /// cited URL in prose.
+    #[test]
+    fn a_url_inside_a_non_hierarchical_uri_is_not_a_citation() {
+        let p = provenance_with(&["https://exa.ai/docs"]);
+        for wrapper in [
+            "data:text/plain,https://exa.ai/docs",
+            "/redirect/https://exa.ai/docs",
+            "/mirror/https://exa.ai/docs",
+        ] {
+            assert!(
+                !p.cited_in(&format!("see {wrapper} for the raw payload")),
+                "{wrapper}"
+            );
+        }
+        // A URL preceded by prose is still a citation in the same document.
+        assert!(p.cited_in("fetch https://exa.ai/docs to see it"));
     }
 
     /// A Markdown link destination keeps its URL-legal punctuation: `!` is a
