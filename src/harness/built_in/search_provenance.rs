@@ -635,9 +635,35 @@ mod tests {
             .map(|n| format!("https://example.com/{n}"))
             .collect();
         p.record(urls.iter().map(String::as_str));
-        p.record(["https://example.com/5"]); // dupe: must not evict anything
+        // A URL still in the window refreshes its recency without evicting
+        // anything: the window stays exactly full.
+        let mid = format!("https://example.com/{}", MAX_TRACKED_URLS / 2);
+        p.record([mid.as_str()]);
+        assert_eq!(p.urls.lock().unwrap().len(), MAX_TRACKED_URLS);
+        assert!(p.cited_in(&mid));
         assert!(!p.cited_in("https://example.com/9")); // evicted
         assert!(p.cited_in(&format!("https://example.com/{}", MAX_TRACKED_URLS + 9)));
+    }
+
+    /// A re-shown URL must survive the eviction a later new URL triggers. In a
+    /// full ring, if a search returns the oldest tracked URL and then a fresh
+    /// one, skipping the duplicate would let the fresh URL evict it — a note
+    /// written right after the search could cite a result the agent was just
+    /// shown and receive no attribution.
+    #[test]
+    fn a_repeated_url_refreshes_recency_in_a_full_ring() {
+        let p = SearchProvenance::new();
+        let urls: Vec<String> = (0..MAX_TRACKED_URLS)
+            .map(|n| format!("https://example.com/{n}"))
+            .collect();
+        p.record(urls.iter().map(String::as_str));
+        // Full ring, oldest is https://example.com/0. The next search returns
+        // that oldest URL again, then a brand-new URL.
+        p.record(["https://example.com/0", "https://example.com/new"]);
+        assert!(p.cited_in("see https://example.com/0 now"));
+        assert!(p.cited_in("see https://example.com/new now"));
+        // The new URL evicts the ring's real oldest, not the re-shown page.
+        assert!(!p.cited_in("see https://example.com/1 now"));
     }
 
     #[test]
