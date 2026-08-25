@@ -181,6 +181,22 @@ fn normalize_url(url: &str) -> Option<String> {
 /// Characters RFC 3986 permits in a URI after the scheme, beside alphanumerics.
 const URL_CHARS: &str = "-._~:/?#[]@!$&'()*+,;=%";
 
+/// Unicode characters that usually separate prose from a URL.
+///
+/// Rust's standard library does not expose Unicode general categories, so this
+/// keeps the separator ranges used by ordinary multilingual prose explicit.
+/// Symbols such as emoji and combining marks remain valid IRI characters.
+fn is_unicode_prose_delimiter(c: char) -> bool {
+    c.is_whitespace()
+        || matches!(
+            c,
+            '\u{2000}'..='\u{206f}'
+                | '\u{2e00}'..='\u{2e7f}'
+                | '\u{3000}'..='\u{303f}'
+                | '\u{ff01}'..='\u{ff65}'
+        )
+}
+
 /// Trailing characters that end a sentence rather than a URL.
 ///
 /// `)` and `]` are URL-legal, so they are dropped only when unbalanced — which
