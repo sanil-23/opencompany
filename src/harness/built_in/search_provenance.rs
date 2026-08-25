@@ -761,6 +761,25 @@ mod tests {
         assert!(p.cited_in("see https://example.test/a!"));
     }
 
+    /// A Markdown autolink owns everything up to its closing `>`: the URL
+    /// between `<` and `>` is unambiguous (RFC 3986 forbids `<`/`>` inside a
+    /// URI), so a Unicode prose delimiter there is an IRI character, not a
+    /// boundary. Read `<https://example.test/a—revision>` as the distinct URL
+    /// it names — never as the recorded `…/a` it merely starts with.
+    #[test]
+    fn an_autolink_preserves_its_unicode_path_until_the_angle_boundary() {
+        let p = provenance_with(&["https://example.test/a"]);
+        // The em dash is part of the autolink's URL, so the recorded page
+        // earns nothing.
+        assert!(!p.cited_in("From <https://example.test/a—revision>."));
+        // The same em dash OUTSIDE an autolink is prose, and the recorded page
+        // keeps its citation.
+        assert!(p.cited_in("From https://example.test/a — reference."));
+        // …and the autolink with the recorded URL itself still cites it.
+        let q = provenance_with(&["https://example.test/a—revision"]);
+        assert!(q.cited_in("From <https://example.test/a—revision>."));
+    }
+
     #[test]
     fn the_window_is_bounded_and_dedupes() {
         let p = SearchProvenance::new();
