@@ -5054,8 +5054,8 @@ description = "Builds the product."
         let sink = Arc::new(RunTraceSink::new(company.clone(), run.id, Arc::clone(&runs)));
 
         let (agent, _deps) = scripted_agent(vec![Ok("hi".into())]);
-        agent
-            .run_with_steer("hi", None, None, Some(sink))
+        let (outcome, _usages) = agent
+            .run_with_steer("hi", None, None, Some(sink.clone()))
             .await
             .expect("steered turn runs");
 
@@ -5065,7 +5065,10 @@ description = "Builds the product."
             .expect("list the attempt's steps");
         assert!(
             !steps.is_empty(),
-            "the steered turn's trace must be in the store before the wrapper returns"
+            "the steered turn's trace must be in the store before the wrapper returns \
+             (sink wrote {} steps; outcome had {} steps)",
+            sink.step_count(),
+            outcome.steps.len(),
         );
     }
 
