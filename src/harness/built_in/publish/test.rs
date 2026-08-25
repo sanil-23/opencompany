@@ -1340,9 +1340,12 @@ async fn attribution_never_pushes_a_deliverable_past_the_prose_cap() {
     provenance.record(["https://competitor.test/pricing"]);
 
     // Exactly at the cap, and citing a recorded result: attributing it would
-    // cross the cap, so the body is published verbatim.
+    // cross the cap, so the body is published verbatim. The padding is
+    // *UTF-8*, so the boundary is a byte count, not a char count — `💡` is
+    // four bytes — and the cap check must hold the byte length.
     let cite = "https://competitor.test/pricing";
-    let at_cap = format!("{cite}{}", "x".repeat(MAX_ARTIFACT_BODY_BYTES - cite.len()));
+    let rune = "\u{1F4A1}"; // 💡, 4 bytes
+    let at_cap = format!("{cite}{rune}{}", "x".repeat(MAX_ARTIFACT_BODY_BYTES - cite.len() - rune.len()));
     assert_eq!(at_cap.len(), MAX_ARTIFACT_BODY_BYTES);
 
     let dir = workspace(&[("big.md", at_cap.as_bytes())]);
