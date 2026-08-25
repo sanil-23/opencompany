@@ -218,6 +218,11 @@ const URL_CHARS: &str = "-._~:/?#[]@!$&'()*+,;=%";
 /// Rust's standard library does not expose Unicode general categories, so this
 /// keeps the separator ranges used by ordinary multilingual prose explicit.
 /// Symbols such as emoji and combining marks remain valid IRI characters.
+///
+/// The Fullwidth/Halfwidth Forms block is split into its punctuation-only
+/// subranges: fullwidth letters (Ａ-Ｚ, ａ-ｚ) and digits (０-９) are IRI code
+/// points, so a path like `…/wiki/ＡＢＣ` scans whole and never truncates onto
+/// a recorded `…/wiki` prefix.
 fn is_unicode_prose_delimiter(c: char) -> bool {
     c.is_whitespace()
         || matches!(
@@ -225,7 +230,10 @@ fn is_unicode_prose_delimiter(c: char) -> bool {
             '\u{2000}'..='\u{206f}'
                 | '\u{2e00}'..='\u{2e7f}'
                 | '\u{3000}'..='\u{303f}'
-                | '\u{ff01}'..='\u{ff65}'
+                | '\u{ff01}'..='\u{ff0f}'
+                | '\u{ff1a}'..='\u{ff20}'
+                | '\u{ff3b}'..='\u{ff40}'
+                | '\u{ff5b}'..='\u{ff65}'
         )
 }
 
@@ -696,6 +704,23 @@ mod tests {
         let p2 = provenance_with(&["https://example.test/wiki/東京"]);
         assert!(p2.cited_in("From https://example.test/wiki/東京."));
         assert!(!p2.cited_in("From https://example.test/wiki/Київ."));
+    }
+
+    /// Fullwidth letters and digits are IRI code points, not prose delimiters:
+    /// `…/wiki/ＡＢＣ` names a distinct page and must scan whole, or its
+    /// trailing slash would collapse onto a recorded `…/wiki` and stamp a
+    /// footer the search never returned.
+    #[test]
+    fn a_fullwidth_alphanumeric_path_segment_is_not_truncated() {
+        let p = provenance_with(&["https://example.test/wiki"]);
+        for segment in ["ＡＢＣ", "１２３", "Ｗｉｋｉ２"] {
+            let cited = format!("https://example.test/wiki/{segment}");
+            assert!(!p.cited_in(&format!("From {cited}.")), "{segment}");
+        }
+        // …and the exact fullwidth IRI still cites itself.
+        let q = provenance_with(&["https://example.test/wiki/ＡＢＣ"]);
+        assert!(q.cited_in("From https://example.test/wiki/ＡＢＣ."));
+        assert!(q.cited_in("出典：https://example.test/wiki/ＡＢＣ、詳細はこちら。"));
     }
 
     /// A full-width sentence stop after the URL is prose, mirroring the ASCII
