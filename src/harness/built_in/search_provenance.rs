@@ -321,6 +321,9 @@ fn cited_urls(content: &str) -> Vec<String> {
         let markdown_dest = start >= 2
             && content.as_bytes()[start - 1] == b'('
             && content.as_bytes()[start - 2] == b']';
+        let markdown_emphasis = start > 0
+            && matches!(content.as_bytes()[start - 1], b'*' | b'_')
+            && content[start - 1..].chars().last() == content[start - 1..].chars().next();
         let candidate = if autolink {
             candidate.strip_prefix('<').unwrap_or(candidate)
         } else if markdown_dest {
@@ -328,6 +331,9 @@ fn cited_urls(content: &str) -> Vec<String> {
                 Some(at) => &candidate[..at],
                 None => candidate,
             }
+        } else if markdown_emphasis {
+            let delimiter = content.as_bytes()[start - 1] as char;
+            candidate.strip_suffix(delimiter).unwrap_or(candidate)
         } else {
             trim_trailing_punctuation(candidate)
         };
