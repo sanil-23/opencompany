@@ -596,7 +596,10 @@ mod tests {
             "ftp://proxy.test/?next=https://exa.ai/docs",
             "ftp://proxy.test/https://exa.ai/docs",
         ] {
-            assert!(!p.cited_in(&format!("download via {wrapper} now")), "{wrapper}");
+            assert!(
+                !p.cited_in(&format!("download via {wrapper} now")),
+                "{wrapper}"
+            );
         }
         // The genuine citation still matches in the same prose.
         assert!(p.cited_in("download via https://exa.ai/docs now"));
