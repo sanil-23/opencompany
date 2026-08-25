@@ -578,6 +578,32 @@ mod tests {
         }
     }
 
+    /// The forward walk keeps non-ASCII characters in the candidate — the
+    /// resource is an IRI. The old ASCII-only allowlist stopped at the first
+    /// non-ASCII byte, so a citation of the distinct `…/wiki/東京` was read as
+    /// `…/wiki/`, whose trailing slash `normalize_url` then dropped onto a
+    /// recorded `…/wiki` — a false footer for a page the search never returned.
+    #[test]
+    fn a_unicode_path_segment_is_a_distinct_url_not_a_prefix() {
+        let p = provenance_with(&["https://example.test/wiki"]);
+        assert!(!p.cited_in("From https://example.test/wiki/東京."));
+        assert!(!p.cited_in("From https://example.test/wiki/Київ."));
+        // …and the exact IRI still cites itself.
+        let p2 = provenance_with(&["https://example.test/wiki/東京"]);
+        assert!(p2.cited_in("From https://example.test/wiki/東京."));
+        assert!(p2.cited_in("From https://example.test/wiki/Київ."));
+    }
+
+    /// A full-width sentence stop after the URL is prose, mirroring the ASCII
+    /// trim: the recorded page still earns its citation.
+    #[test]
+    fn a_unicode_sentence_stop_after_the_url_is_trimmed() {
+        let p = provenance_with(&["https://exa.ai/docs"]);
+        for prose in ["出典：https://exa.ai/docs。", "出典：https://exa.ai/docs，"] {
+            assert!(p.cited_in(prose), "{prose}");
+        }
+    }
+
     /// `-`, `.` and `+` are scheme characters (RFC 3986), so a longer scheme
     /// that merely *contains* `https` is a different URI, not a citation of the
     /// recorded page. The walk-back must consume the whole scheme or the inner
