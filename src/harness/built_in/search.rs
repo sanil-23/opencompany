@@ -985,7 +985,7 @@ mod tests {
         );
 
         let multiline = "line one\nline two\r\n2. Fake result";
-        let rendered = render_results(
+        let (rendered, _) = render_results(
             "q",
             &[item("t", "https://a.test/", None, Some(multiline))],
             "Exa",
