@@ -45,6 +45,7 @@
 //! supplied footer needs durable per-document evidence, which belongs in the
 //! storage ports rather than in a heuristic over the body.
 
+use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
@@ -237,6 +238,36 @@ fn is_unicode_prose_delimiter(c: char) -> bool {
         )
 }
 
+/// Resolves Markdown backslash escapes inside a link destination.
+///
+/// `[source](https://example.test/a\!v2)` names the URL ending in `!v2`: the
+/// `\!` is the escape CommonMark resolves before the destination is a URL at
+/// all. The forward walk consumed the backslash with its target so the
+/// destination is read whole; this turns each `\X` into `X`. A trailing lone
+/// backslash has no target (the link would not parse) and is left alone.
+fn unescape_markdown(url: &str) -> Cow<'_, str> {
+    if !url.contains('\\') {
+        return Cow::Borrowed(url);
+    }
+    let mut out = String::with_capacity(url.len());
+    let mut rest = url;
+    while let Some(at) = rest.find('\\') {
+        out.push_str(&rest[..at]);
+        match rest[at + 1..].chars().next() {
+            Some(target) => {
+                out.push(target);
+                rest = &rest[at + 1 + target.len_utf8()..];
+            }
+            None => {
+                out.push('\\');
+                rest = "";
+            }
+        }
+    }
+    out.push_str(rest);
+    Cow::Owned(out)
+}
+
 /// Trailing characters that end a sentence rather than a URL.
 ///
 /// `)` and `]` are URL-legal, so they are dropped only when unbalanced — which
@@ -326,9 +357,28 @@ fn cited_urls(content: &str) -> Vec<String> {
         // `<https://example.test/a—revision>` as the distinct URL it names,
         // never as the recorded `…/a` it merely starts with.
         let autolink = start > 0 && content.as_bytes()[start - 1] == b'<';
+        // A Markdown link destination — `]` immediately before the `(` — is
+        // the one context where a backslash escapes the next character rather
+        // than ending the URL: `[source](https://example.test/a\!v2)` names the
+        // distinct URL ending in `!v2`. Computed up here so the forward walk
+        // can consume the escape with its target.
+        let markdown_dest = start >= 2
+            && content.as_bytes()[start - 1] == b'('
+            && content.as_bytes()[start - 2] == b']';
         let mut end = sep + 3;
         for (offset, c) in content[sep + 3..].char_indices() {
-            if c.is_ascii_alphanumeric()
+            if c == '\\' && markdown_dest {
+                // Markdown escape: the backslash and its target are one
+                // character of the destination. Consume both so the candidate
+                // carries the full URL; `unescape_markdown` resolves `\X` to
+                // `X` before matching. A trailing lone backslash (the link
+                // would not parse) just advances past itself.
+                let after = sep + 3 + offset + c.len_utf8();
+                end = content[after..]
+                    .chars()
+                    .next()
+                    .map_or(after, |target| after + target.len_utf8());
+            } else if c.is_ascii_alphanumeric()
                 || URL_CHARS.contains(c)
                 || (!c.is_ascii() && (!is_unicode_prose_delimiter(c) || autolink))
             {
@@ -404,22 +454,27 @@ fn cited_urls(content: &str) -> Vec<String> {
         // `!` too would collapse `…/a!` onto a recorded `…/a` and stamp the
         // wrong page. Bare prose parens (`(see https://exa.ai/a!)`) stay on the
         // ordinary trim path, where the `!` is sentence punctuation.
-        let markdown_dest = start >= 2
-            && content.as_bytes()[start - 1] == b'('
-            && content.as_bytes()[start - 2] == b']';
+        //
+        // The destination is also unescaped here: a backslash the forward walk
+        // consumed marks an escaped character (`a\!v2` is the URL `a!v2`), and
+        // comparing the literal `a\!v2` would miss the very page the citation
+        // names. The escape only has that meaning inside a destination — in
+        // bare prose `\` still ends the URL, exactly as it does in a Windows
+        // path.
         let emphasis_delimiter = start.checked_sub(1).and_then(|index| {
             matches!(content.as_bytes()[index], b'*' | b'_')
                 .then_some(content.as_bytes()[index] as char)
         });
         let markdown_emphasis = emphasis_delimiter
             .is_some_and(|delimiter| trim_trailing_punctuation(candidate).ends_with(delimiter));
-        let candidate = if autolink {
-            candidate.strip_prefix('<').unwrap_or(candidate)
+        let candidate: Cow<'_, str> = if autolink {
+            candidate.strip_prefix('<').unwrap_or(candidate).into()
         } else if markdown_dest {
-            match candidate.rfind(')') {
+            let dest = match candidate.rfind(')') {
                 Some(at) => &candidate[..at],
                 None => candidate,
-            }
+            };
+            unescape_markdown(dest)
         } else if markdown_emphasis {
             // Emphasis may wrap a URL in a RUN of identical markers —
             // `**https://exa.ai/docs**` is bold, `***…***` bold-italic — and
@@ -429,11 +484,11 @@ fn cited_urls(content: &str) -> Vec<String> {
             // URL and silently loses the earned footer.
             let delimiter = emphasis_delimiter.expect("markdown emphasis has a delimiter");
             let trimmed = trim_trailing_punctuation(candidate);
-            trimmed.trim_end_matches(delimiter)
+            trimmed.trim_end_matches(delimiter).into()
         } else {
-            trim_trailing_punctuation(candidate)
+            trim_trailing_punctuation(candidate).into()
         };
-        if let Some(url) = normalize_url(candidate) {
+        if let Some(url) = normalize_url(&candidate) {
             found.push(url);
         }
         // Continue past the whole candidate, so a URL carried inside another as
@@ -956,6 +1011,35 @@ mod tests {
         assert!(q.cited_in("See [the source](https://example.test/a!)."));
         // …while the same `!` outside a destination stays sentence punctuation.
         assert!(p.cited_in("see https://example.test/a!"));
+    }
+
+    /// A backslash inside a Markdown link destination escapes the next
+    /// character, so the destination is the URL WITH that character, not the
+    /// prefix before it. `[source](https://example.test/a\!v2)` names `…/a!v2`
+    /// — CommonMark resolves the escape before the destination is a URL — so a
+    /// recorded `…/a` earns nothing from it, and a recorded `…/a!v2` earns its
+    /// footer. The escape has that meaning only inside a destination: in bare
+    /// prose a backslash still ends the URL, exactly as it does in a Windows
+    /// path.
+    #[test]
+    fn a_markdown_destination_unescapes_its_url_characters() {
+        let p = provenance_with(&["https://example.test/a"]);
+        // The escaped character is part of the destination — the distinct URL
+        // `…/a!v2` (or `…/a)`), never the `…/a` prefix the walk would stop at.
+        assert!(!p.cited_in("From [source](https://example.test/a\\!v2)."));
+        assert!(!p.cited_in("From [source](https://example.test/a\\))."));
+        // …and the URL the destination resolves to still earns its footer.
+        let bang = provenance_with(&["https://example.test/a!v2"]);
+        assert!(bang.cited_in("From [source](https://example.test/a\\!v2)."));
+        let paren = provenance_with(&["https://example.test/a)"]);
+        assert!(paren.cited_in("From [source](https://example.test/a\\))."));
+        // An escaped backslash resolves to a literal backslash.
+        let slash = provenance_with(&["https://example.test/a\\"]);
+        assert!(slash.cited_in("From [source](https://example.test/a\\\\)."));
+        // Outside a destination the backslash still ends the URL: this is a
+        // Windows-style path, not an escape, so the recorded prefix keeps its
+        // literal citation.
+        assert!(p.cited_in("see https://example.test/a\\!v2"));
     }
 
     /// A Markdown autolink owns everything up to its closing `>`: the URL
