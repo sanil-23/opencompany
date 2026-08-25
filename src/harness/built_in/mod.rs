@@ -5051,7 +5051,7 @@ description = "Builds the product."
             .create_run(&company, crate::ports::runs::NewRun::for_task("run-1", "t-1", "ceo"))
             .await
             .expect("mint");
-        let sink = RunTraceSink::new(company.clone(), run.id, Arc::clone(&runs));
+        let sink = Arc::new(RunTraceSink::new(company.clone(), run.id, Arc::clone(&runs)));
 
         let (agent, _deps) = scripted_agent(vec![Ok("hi".into())]);
         agent
