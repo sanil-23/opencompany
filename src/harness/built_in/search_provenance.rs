@@ -204,9 +204,11 @@ fn trim_trailing_punctuation(url: &str) -> &str {
     }
 }
 
-/// Whether a candidate came from Markdown autolink syntax (`<https://…>`).
-fn is_autolink_url(url: &str) -> bool {
-    url.starts_with('<')
+fn trim_trailing_punctuation_with_context(url: &str, autolink: bool) -> &str {
+    if autolink {
+        return url.strip_prefix('<').unwrap_or(url);
+    }
+    trim_trailing_punctuation(url)
 }
 
 ///
