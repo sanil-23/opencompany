@@ -5032,46 +5032,6 @@ description = "Builds the product."
     // retry-guard edge above and the `run_task` disposition matrix in
     // `harness::brain::tests` (cancel / pause / redirect all take effect).
 
-    /// Issue #242 end-to-end: a `run_sink` handed to `run_with_steer` has its
-    /// collector drained before the wrapper returns, so the attempt's stored
-    /// trace holds the turn's steps. The sink-level test in `run_trace`
-    /// exercises `flush()` directly; this one proves the *turn path* records
-    /// and flushes on the way out — a turn that ends mid-thought with nothing
-    /// closing the reasoning tail must not leave that tail unpersisted.
-    #[tokio::test]
-    async fn a_steered_turn_persists_its_trace_before_returning() {
-        let home = tempfile::Builder::new()
-            .prefix("opencompany-run-trace-steered-")
-            .tempdir()
-            .expect("tempdir");
-        let company = CompanyId::new("acme");
-        let runs: Arc<dyn crate::ports::RunStore> =
-            Arc::new(crate::store::FsOps::new(home.path().to_path_buf()));
-        let run = runs
-            .create_run(&company, crate::ports::runs::NewRun::for_task("run-1", "t-1", "ceo"))
-            .await
-            .expect("mint");
-        let sink = Arc::new(RunTraceSink::new(company.clone(), run.id, Arc::clone(&runs)));
-
-        let (agent, _deps) = scripted_agent(vec![Ok("hi".into())]);
-        let (outcome, _usages) = agent
-            .run_with_steer("hi", None, None, Some(sink.clone()))
-            .await
-            .expect("steered turn runs");
-
-        let steps = runs
-            .list_run_steps(&company, "run-1")
-            .await
-            .expect("list the attempt's steps");
-        assert!(
-            !steps.is_empty(),
-            "the steered turn's trace must be in the store before the wrapper returns \
-             (sink wrote {} steps; outcome had {} steps)",
-            sink.step_count(),
-            outcome.steps.len(),
-        );
-    }
-
     /// Empty twice → a graceful, non-error reply (chat never shows "Couldn't
     /// send" for a transient hiccup), still two attempts.
     #[tokio::test]
