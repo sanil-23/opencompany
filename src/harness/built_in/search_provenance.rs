@@ -218,26 +218,27 @@ fn cited_urls(content: &str) -> Vec<String> {
     let mut from = 0;
     while let Some(at) = lower[from..].find("://") {
         let sep = from + at;
-        // Walk back over the scheme; anything but http/https is skipped whole.
+        // Walk back over the WHOLE scheme. A scheme is `ALPHA *( ALPHA / DIGIT
+        // / "+" / "-" / "." )` (RFC 3986), so the `-` and `.` are scheme
+        // characters, not separators: `git-https://…`, `git+https://…` and
+        // `git.https://…` each name a *different* URI whose inner `https` is
+        // not a citation of the recorded page. Anything but a plain
+        // `http`/`https` is skipped whole.
+        //
         // Walk characters, not bytes: `rfind`'s byte offset points at the start
         // of the character that ends the scheme, so adding 1 lands inside a
         // multi-byte one whenever a cited URL follows non-ASCII punctuation
-        // (a curly quote, an em dash, a full-width colon). Advancing by the
-        // matched character's own width keeps `start` a boundary, so the slice
-        // below cannot panic.
+        // (a curly quote, an em dash, a full-width colon). Walking
+        // `char_indices` keeps every index a boundary, so the slice below
+        // cannot panic.
         let start = content[..sep]
             .char_indices()
             .rev()
-            .find(|(_, c)| !c.is_ascii_alphabetic())
-            .map(|(i, c)| i + c.len_utf8())
-            .unwrap_or(0);
-        if !matches!(&lower[start..sep], "http" | "https")
-            || (start > 0
-                && content[..start]
-                    .chars()
-                    .next_back()
-                    .is_some_and(|c| c == '+' || c.is_ascii_alphanumeric()))
-        {
+            .take_while(|(_, c)| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
+            .map(|(i, _)| i)
+            .last()
+            .unwrap_or(sep);
+        if !matches!(&lower[start..sep], "http" | "https") {
             from = sep + 3;
             continue;
         }
