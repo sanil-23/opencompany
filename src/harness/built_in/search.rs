@@ -118,6 +118,15 @@ const MAX_QUERY_CHARS: usize = 400;
 /// (one truncation rule, ours) rather than an upstream default we do not own.
 const BACKEND_EXCERPT_CHARS: usize = 400;
 
+/// Byte budget for the rendered result listing, before the truncation notice.
+///
+/// Chosen to stay comfortably under the agent harness's shared per-tool-result
+/// budget (16 KiB at the time of writing) so that **this** module's cut — the
+/// one that counts what it dropped and tells the model the list is incomplete —
+/// is the cut the agent sees. If the two ever swap places the notice is still
+/// emitted; it just risks being clipped.
+const MAX_RENDER_BYTES: usize = 11 * 1024;
+
 // ---------------------------------------------------------------------------
 // The daily call ledger
 // ---------------------------------------------------------------------------
