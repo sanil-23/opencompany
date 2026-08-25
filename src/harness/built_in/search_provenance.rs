@@ -333,7 +333,9 @@ fn cited_urls(content: &str) -> Vec<String> {
             }
         } else if markdown_emphasis {
             let delimiter = content.as_bytes()[start - 1] as char;
-            candidate.strip_suffix(delimiter).unwrap_or(candidate)
+            trim_trailing_punctuation(candidate)
+                .strip_suffix(delimiter)
+                .unwrap_or(candidate)
         } else {
             trim_trailing_punctuation(candidate)
         };
