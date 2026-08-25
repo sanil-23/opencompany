@@ -950,14 +950,14 @@ mod tests {
     /// closing delimiter and speaking as the harness.
     #[test]
     fn the_fence_token_differs_between_calls() {
-        let a = render_results(
+        let (a, _) = render_results(
             "q",
             &[item("t", "https://a.test/", None, None)],
             "Exa",
             5,
             1,
         );
-        let b = render_results(
+        let (b, _) = render_results(
             "q",
             &[item("t", "https://a.test/", None, None)],
             "Exa",
