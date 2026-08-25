@@ -191,7 +191,9 @@ fn trim_trailing_punctuation(url: &str) -> &str {
             None => return url,
         };
         let drop = match last {
-            '.' | ',' | ';' | ':' | '"' => true,
+            '.' | ',' | ';' | ':' | '!' | '?' | '\'' | '"' => true,
+            ')' => url.matches(')').count() > url.matches('(').count(),
+            ']' => url.matches(']').count() > url.matches('[').count(),
             _ => false,
         };
         if !drop {
