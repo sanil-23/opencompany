@@ -242,10 +242,17 @@ fn cited_urls(content: &str) -> Vec<String> {
             .last()
             .unwrap_or(sep);
         // Walk forward over everything a URI may contain — needed by BOTH
-        // branches, so it runs before the scheme check.
+        // branches, so it runs before the scheme check. The allowlist covers
+        // RFC 3986's ASCII URI characters; every NON-ASCII character is kept
+        // too, because the real-world resource is an IRI: `…/wiki/東京` is a
+        // distinct page, and stopping at the first non-ASCII byte would read
+        // it as `…/wiki/` — whose trailing slash `normalize_url` then drops
+        // onto a recorded `…/wiki`, stamping the footer for a page the search
+        // never returned. (The scheme itself stays ASCII-only, so the
+        // walk-back above is unaffected.)
         let mut end = sep + 3;
         for (offset, c) in content[sep + 3..].char_indices() {
-            if c.is_ascii_alphanumeric() || URL_CHARS.contains(c) {
+            if c.is_ascii_alphanumeric() || URL_CHARS.contains(c) || !c.is_ascii() {
                 end = sep + 3 + offset + c.len_utf8();
             } else {
                 break;
