@@ -249,15 +249,15 @@ fn cited_urls(content: &str) -> Vec<String> {
         // Walk forward over everything a URI may contain — needed by BOTH
         // branches, so it runs before the scheme check. The allowlist covers
         // RFC 3986's ASCII URI characters; non-ASCII code points are kept only
-        // when they are IRI letters, digits or combining marks, because the
-        // real-world resource is an IRI: `…/wiki/東京` is a distinct page and
-        // must scan whole — stopping at the first non-ASCII byte would read it
-        // as `…/wiki/`, whose trailing slash `normalize_url` then drops onto a
-        // recorded `…/wiki`, stamping the footer for a page the search never
-        // returned. Unicode whitespace and prose punctuation (a non-breaking
-        // space, an em dash, a full-width comma) are NOT IRI code points:
-        // absorbing them would swallow the separator and the following prose
-        // into the candidate, so an exact `…/docs` followed by `\u{a0}for` or
+        // when they are IRI letters or digits, because the real-world resource
+        // is an IRI: `…/wiki/東京` is a distinct page and must scan whole —
+        // stopping at the first non-ASCII byte would read it as `…/wiki/`,
+        // whose trailing slash `normalize_url` then drops onto a recorded
+        // `…/wiki`, stamping the footer for a page the search never returned.
+        // Unicode whitespace and prose punctuation (a non-breaking space, an em
+        // dash, a full-width comma) are NOT IRI code points: absorbing them
+        // would swallow the separator and the following prose into the
+        // candidate, so an exact `…/docs` followed by `\u{a0}for` or
         // `—reference` would no longer match and the earned footer would be
         // lost. (The scheme itself stays ASCII-only, so the walk-back above is
         // unaffected.)
@@ -265,7 +265,7 @@ fn cited_urls(content: &str) -> Vec<String> {
         for (offset, c) in content[sep + 3..].char_indices() {
             if c.is_ascii_alphanumeric()
                 || URL_CHARS.contains(c)
-                || (!c.is_ascii() && (c.is_alphanumeric() || c.is_mark()))
+                || (!c.is_ascii() && c.is_alphanumeric())
             {
                 end = sep + 3 + offset + c.len_utf8();
             } else {
