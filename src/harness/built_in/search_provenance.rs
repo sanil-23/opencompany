@@ -540,6 +540,27 @@ mod tests {
         }
     }
 
+    /// `-`, `.` and `+` are scheme characters (RFC 3986), so a longer scheme
+    /// that merely *contains* `https` is a different URI, not a citation of the
+    /// recorded page. The walk-back must consume the whole scheme or the inner
+    /// `https://…` would be read as a citation for a `git-https`/`git.https`
+    /// document that never touched a search result.
+    #[test]
+    fn an_outer_scheme_with_a_separator_is_not_the_inner_url() {
+        let p = provenance_with(&["https://exa.ai/docs"]);
+        for wrapper in [
+            "git-https://exa.ai/docs",
+            "git+https://exa.ai/docs",
+            "git.https://exa.ai/docs",
+            "sub.https://exa.ai/docs",
+            "1https://exa.ai/docs",
+        ] {
+            assert!(!p.cited_in(&format!("via {wrapper} today")), "{wrapper}");
+        }
+        // The plain https citation still counts in the same prose.
+        assert!(p.cited_in("via https://exa.ai/docs today"));
+    }
+
     #[test]
     fn the_window_is_bounded_and_dedupes() {
         let p = SearchProvenance::new();
