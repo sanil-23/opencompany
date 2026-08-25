@@ -278,11 +278,19 @@ fn cited_urls(content: &str) -> Vec<String> {
         // lost. Symbols such as emoji and combining marks remain valid IRI
         // code points, so they must not be used as a boundary. (The scheme
         // itself stays ASCII-only, so the walk-back above is unaffected.)
+        //
+        // One context overrides the prose rules: a Markdown autolink. Between
+        // `<` and `>` the URL is unambiguous — the closing `>` is the only
+        // boundary (RFC 3986 forbids it inside a URI), so an em dash or
+        // full-width comma there is an IRI character, not prose. Read
+        // `<https://example.test/a—revision>` as the distinct URL it names,
+        // never as the recorded `…/a` it merely starts with.
+        let autolink = start > 0 && content.as_bytes()[start - 1] == b'<';
         let mut end = sep + 3;
         for (offset, c) in content[sep + 3..].char_indices() {
             if c.is_ascii_alphanumeric()
                 || URL_CHARS.contains(c)
-                || (!c.is_ascii() && !is_unicode_prose_delimiter(c))
+                || (!c.is_ascii() && (!is_unicode_prose_delimiter(c) || autolink))
             {
                 end = sep + 3 + offset + c.len_utf8();
             } else {
