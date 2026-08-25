@@ -238,11 +238,8 @@ fn cited_urls(content: &str) -> Vec<String> {
             .map(|(i, _)| i)
             .last()
             .unwrap_or(sep);
-        if !matches!(&lower[start..sep], "http" | "https") {
-            from = sep + 3;
-            continue;
-        }
-        // Walk forward over everything a URI may contain.
+        // Walk forward over everything a URI may contain — needed by BOTH
+        // branches, so it runs before the scheme check.
         let mut end = sep + 3;
         for (offset, c) in content[sep + 3..].char_indices() {
             if c.is_ascii_alphanumeric() || URL_CHARS.contains(c) {
@@ -250,6 +247,16 @@ fn cited_urls(content: &str) -> Vec<String> {
             } else {
                 break;
             }
+        }
+        if !matches!(&lower[start..sep], "http" | "https") {
+            // Consume the WHOLE URI, not just past its `://`. A rejected outer
+            // scheme (`ftp`, `git-https`, …) may carry a nested `https://…` in
+            // its path or query — `ftp://proxy.test/?next=https://exa.ai/docs`
+            // — and that value is a parameter of the wrapper, never a citation
+            // of its own. Resuming at `sep + 3` would re-scan it as a fresh
+            // candidate and credit the inner page.
+            from = end.max(sep + 3);
+            continue;
         }
         let mut candidate_start = start;
         let autolink = start > 0 && content.as_bytes()[start - 1] == b'<';
@@ -262,8 +269,24 @@ fn cited_urls(content: &str) -> Vec<String> {
         } else {
             candidate
         };
+        // A Markdown link destination — `]` immediately before the `(` —
+        // keeps its URL-legal punctuation. `[source](https://example.test/a!)`
+        // cites the URL ending in `!`; the closing `)` is the link terminator
+        // (the LAST one, so a balanced pair inside the URL survives), and
+        // everything after it is prose the forward walk swallowed. Trimming the
+        // `!` too would collapse `…/a!` onto a recorded `…/a` and stamp the
+        // wrong page. Bare prose parens (`(see https://exa.ai/a!)`) stay on the
+        // ordinary trim path, where the `!` is sentence punctuation.
+        let markdown_dest = start >= 2
+            && content.as_bytes()[start - 1] == b'('
+            && content.as_bytes()[start - 2] == b']';
         let candidate = if autolink {
             candidate.strip_prefix('<').unwrap_or(candidate)
+        } else if markdown_dest {
+            match candidate.rfind(')') {
+                Some(at) => &candidate[..at],
+                None => candidate,
+            }
         } else {
             trim_trailing_punctuation(candidate)
         };
