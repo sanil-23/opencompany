@@ -233,7 +233,13 @@ fn cited_urls(content: &str) -> Vec<String> {
             .find(|(_, c)| !c.is_ascii_alphabetic())
             .map(|(i, c)| i + c.len_utf8())
             .unwrap_or(0);
-        if !matches!(&lower[start..sep], "http" | "https") {
+        if !matches!(&lower[start..sep], "http" | "https")
+            || (start > 0
+                && content[..start]
+                    .chars()
+                    .next_back()
+                    .is_some_and(|c| c == '+' || c.is_ascii_alphanumeric()))
+        {
             from = sep + 3;
             continue;
         }
