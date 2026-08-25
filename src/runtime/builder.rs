@@ -2686,14 +2686,21 @@ impl RuntimeBuilder {
                                 // credential still yields a per-company budget;
                                 // the clone carries the shared ledger, so every
                                 // agent of the company draws on one budget
-                                // rather than one each.
+                                // rather than one each. The provenance record is
+                                // FRESHENED per company: the process-wide clone
+                                // would otherwise share one deque across every
+                                // company on the host, letting a company-B
+                                // document earn attribution for a URL only
+                                // company A's search ever returned.
                                 search: self.search_backend.clone().map(|backend| {
-                                    backend.with_daily_call_cap(
-                                        self.manifest
-                                            .tools
-                                            .search_daily_calls
-                                            .unwrap_or(crate::company::DEFAULT_SEARCH_DAILY_CALLS),
-                                    )
+                                    backend
+                                        .with_daily_call_cap(
+                                            self.manifest
+                                                .tools
+                                                .search_daily_calls
+                                                .unwrap_or(crate::company::DEFAULT_SEARCH_DAILY_CALLS),
+                                        )
+                                        .with_fresh_provenance()
                                 }),
                                 // Issue #110: the per-tenant Composio config
                                 // resolved above (token from the secret store,
