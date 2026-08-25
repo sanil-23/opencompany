@@ -865,6 +865,51 @@ mod tests {
         assert_eq!(second_agent.ledger().try_reserve(&acme, 1, 0), Err(1));
     }
 
+    // --- per-company provenance isolation --------------------------------
+
+    /// The runtime builder hands each company a clone with a **fresh**
+    /// provenance record (issue #1695). Without that wiring, one process-wide
+    /// backend would share a single deque across every company on the host: a
+    /// company-B document citing a URL only company A's search returned would
+    /// earn a footer company B never deserved. This is the regression for the
+    /// builder seam — the shared clone keeps the record, the freshened clone
+    /// does not.
+    #[test]
+    fn a_freshened_clone_does_not_carry_another_companys_record() {
+        let backend = SearchBackend::new(
+            "https://api.example.test".to_string(),
+            Credential::from_value("managed"),
+            1,
+        );
+        backend
+            .provenance()
+            .record(["https://exa.ai/results/company-a"]);
+
+        // Company B is built from the same process-wide backend exactly as the
+        // runtime builder does: clone, then per-company cap, then fresh record.
+        let company_b = backend.clone().with_fresh_provenance();
+
+        let a_doc = "From https://exa.ai/results/company-a.";
+        assert!(
+            backend.provenance().cited_in(a_doc),
+            "company A's own record must still attribute its document"
+        );
+        assert_eq!(
+            company_b.provenance().attributed(a_doc),
+            None,
+            "company B must not earn a footer for a URL only company A's search returned"
+        );
+
+        // And the fresh record is a working one, not a dead end: company B's
+        // own search still earns B its footer.
+        company_b
+            .provenance()
+            .record(["https://exa.ai/results/company-b"]);
+        let b_doc = "From https://exa.ai/results/company-b.";
+        assert!(company_b.provenance().cited_in(b_doc));
+        assert!(company_b.provenance().attributed(b_doc).is_some());
+    }
+
     // --- credential hygiene ------------------------------------------------
 
     #[test]
