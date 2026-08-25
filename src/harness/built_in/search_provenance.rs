@@ -323,7 +323,7 @@ fn cited_urls(content: &str) -> Vec<String> {
             && content.as_bytes()[start - 2] == b']';
         let markdown_emphasis = start > 0
             && matches!(content.as_bytes()[start - 1], b'*' | b'_')
-            && content[start - 1..].chars().last() == content[start - 1..].chars().next();
+            && candidate.ends_with(content.as_bytes()[start - 1] as char);
         let candidate = if autolink {
             candidate.strip_prefix('<').unwrap_or(candidate)
         } else if markdown_dest {
