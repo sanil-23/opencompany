@@ -1015,6 +1015,76 @@ mod tests {
         );
     }
 
+    /// The rendered listing self-caps below the harness's 16 KiB per-tool-result
+    /// budget, cutting trailing entries with an explicit notice — so the
+    /// harness's own anonymous truncation can never silently hide a result the
+    /// provenance record still credits.
+    #[test]
+    fn the_render_budget_never_exceeds_the_harness_result_limit() {
+        let results: Vec<SearchResultItem> = (0..10)
+            .map(|i| {
+                item(
+                    &"y".repeat(MAX_SNIPPET_CHARS),
+                    &format!("https://{i}.example.com/{}", "x".repeat(2000)),
+                    Some("2026-04-20"),
+                    Some(&"z".repeat(MAX_SNIPPET_CHARS)),
+                )
+            })
+            .collect();
+        let (rendered, shown) = render_results("q", &results, "Exa", 10, 3);
+
+        assert!(
+            rendered.len() < 16 * 1024,
+            "the module's own cut must fire before the harness's anonymous one: {} bytes",
+            rendered.len()
+        );
+        assert!(rendered.contains("TRUNCATED"), "{rendered}");
+        assert!(
+            shown.len() < results.len(),
+            "trailing results must be dropped: shown {}, returned {}",
+            shown.len(),
+            results.len()
+        );
+
+        // The retained slice is exactly the rendered entries — the provenance
+        // record and the agent see the same URLs.
+        for result in &shown {
+            assert!(
+                rendered.contains(&format!("url: {}", result.url)),
+                "a retained URL must be visible in the rendering: {}",
+                result.url
+            );
+        }
+        let first_dropped = &results[shown.len()];
+        assert!(
+            !rendered.contains(&format!("url: {}", first_dropped.url)),
+            "a URL the budget dropped must not be visible (or recorded): {}",
+            first_dropped.url
+        );
+    }
+
+    /// A single result too large for the listing budget renders zero entries —
+    /// and therefore records nothing — rather than emitting a URL the agent will
+    /// never see.
+    #[test]
+    fn an_oversized_entry_is_dropped_entirely_from_render_and_record() {
+        let results = vec![item(
+            "t",
+            &format!("https://example.com/{}", "x".repeat(12 * 1024)),
+            None,
+            None,
+        )];
+        let (rendered, shown) = render_results("q", &results, "Exa", 5, 1);
+
+        assert!(
+            shown.is_empty(),
+            "a URL that cannot render must not be recorded as cited"
+        );
+        assert!(!rendered.contains("url:"), "no URL may be shown: {rendered}");
+        assert!(rendered.contains("TRUNCATED"), "{rendered}");
+        assert!(rendered.contains("1 more result"), "{rendered}");
+    }
+
     /// An empty result set says so loudly. The fabrication this feature exists
     /// to stop starts exactly here — an agent handed silence fills it in.
     #[test]
