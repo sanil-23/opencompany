@@ -175,7 +175,39 @@ fn normalize_url(url: &str) -> Option<String> {
         Some(_) => url,
         None => url.strip_suffix('/').unwrap_or(url),
     };
-    Some(normalized.to_string())
+    // Scheme and host are case-insensitive (RFC 3986 §6.2.2.1), and the two
+    // sides of the match arrive here independently: the backend may record
+    // `Example.com` while the model's rendered citation is `example.com`, and
+    // both name the same host. Everything after the authority — path, query,
+    // fragment, and any userinfo — stays byte-for-byte, so `…/Docs` remains a
+    // different URL from `…/docs`: lowercasing the whole string would mint the
+    // false credit this module refuses.
+    Some(lowercase_scheme_and_host(normalized))
+}
+
+/// Lowercases the scheme and host of `url`, leaving the path, query, fragment,
+/// and any userinfo byte-for-byte.
+///
+/// `rest` is everything after `://`; the authority runs to the first `/`, `?`,
+/// or `#`. Scheme and host are case-insensitive, so both fold to ASCII
+/// lowercase before the exact-match comparison in
+/// [`SearchProvenance::cited_in`].
+fn lowercase_scheme_and_host(url: &str) -> String {
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return url.to_string();
+    };
+    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let host_start = rest[..authority_end]
+        .rfind('@')
+        .map(|at| at + 1)
+        .unwrap_or(0);
+    let mut out = String::with_capacity(url.len());
+    out.push_str(&scheme.to_ascii_lowercase());
+    out.push_str("://");
+    out.push_str(&rest[..host_start]);
+    out.push_str(&rest[host_start..authority_end].to_ascii_lowercase());
+    out.push_str(&rest[authority_end..]);
+    out
 }
 
 /// Characters RFC 3986 permits in a URI after the scheme, beside alphanumerics.
