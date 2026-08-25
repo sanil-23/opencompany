@@ -308,10 +308,6 @@ fn cited_urls(content: &str) -> Vec<String> {
             continue;
         }
         let mut candidate_start = start;
-        let autolink = start > 0 && content.as_bytes()[start - 1] == b'<';
-        if autolink {
-            candidate_start -= 1;
-        }
         let candidate = &content[candidate_start..end];
         let candidate = if autolink {
             candidate.strip_suffix('>').unwrap_or(candidate)
