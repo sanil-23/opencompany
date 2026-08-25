@@ -2695,10 +2695,9 @@ impl RuntimeBuilder {
                                 search: self.search_backend.clone().map(|backend| {
                                     backend
                                         .with_daily_call_cap(
-                                            self.manifest
-                                                .tools
-                                                .search_daily_calls
-                                                .unwrap_or(crate::company::DEFAULT_SEARCH_DAILY_CALLS),
+                                            self.manifest.tools.search_daily_calls.unwrap_or(
+                                                crate::company::DEFAULT_SEARCH_DAILY_CALLS,
+                                            ),
                                         )
                                         .with_fresh_provenance()
                                 }),
