@@ -257,7 +257,15 @@ fn cited_urls(content: &str) -> Vec<String> {
                 break;
             }
         }
-        if let Some(url) = normalize_url(trim_trailing_punctuation(&content[start..end])) {
+        let mut candidate_start = start;
+        let autolink = start > 0 && content.as_bytes()[start - 1] == b'<';
+        if autolink {
+            candidate_start -= 1;
+        }
+        if let Some(url) = normalize_url(trim_trailing_punctuation_with_context(
+            &content[candidate_start..end],
+            autolink,
+        )) {
             found.push(url);
         }
         // Continue past the whole candidate, so a URL carried inside another as
