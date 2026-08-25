@@ -685,6 +685,8 @@ mod tests {
         let p = provenance_with(&["https://exa.ai/docs"]);
         assert!(p.cited_in("See *https://exa.ai/docs* for details."));
         assert!(p.cited_in("See _https://exa.ai/docs_ for details."));
+        assert!(p.cited_in("See *https://exa.ai/docs*."));
+        assert!(p.cited_in("See _https://exa.ai/docs_,"));
     }
 
     /// `-`, `.` and `+` are scheme characters (RFC 3986), so a longer scheme
