@@ -644,6 +644,12 @@ mod tests {
         assert!(p.cited_in("See https://Example.com/Docs."));
         // Path case is preserved: a different path is a different page.
         assert!(!p.cited_in("See https://example.com/docs."));
+        // Direct normalization pins the component boundary: userinfo and path
+        // keep their case, host and port fold.
+        assert_eq!(
+            normalize_url("HTTPS://User@EXAMPLE.com:8080/Docs").as_deref(),
+            Some("https://User@example.com:8080/Docs")
+        );
     }
 
     #[test]
