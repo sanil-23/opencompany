@@ -588,10 +588,11 @@ mod tests {
         let p = provenance_with(&["https://example.test/wiki"]);
         assert!(!p.cited_in("From https://example.test/wiki/東京."));
         assert!(!p.cited_in("From https://example.test/wiki/Київ."));
-        // …and the exact IRI still cites itself.
+        // …and the exact IRI still cites itself, while a sibling segment does
+        // not.
         let p2 = provenance_with(&["https://example.test/wiki/東京"]);
         assert!(p2.cited_in("From https://example.test/wiki/東京."));
-        assert!(p2.cited_in("From https://example.test/wiki/Київ."));
+        assert!(!p2.cited_in("From https://example.test/wiki/Київ."));
     }
 
     /// A full-width sentence stop after the URL is prose, mirroring the ASCII
