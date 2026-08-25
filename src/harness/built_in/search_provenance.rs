@@ -584,6 +584,44 @@ mod tests {
         assert!(p.cited_in("via https://exa.ai/docs today"));
     }
 
+    /// A rejected outer scheme is consumed WHOLE, so a nested `https://` in its
+    /// path or query is never re-scanned as a citation of its own.
+    /// `ftp://proxy.test/?next=https://exa.ai/docs` cites only the FTP URI —
+    /// the inner value is a parameter of the wrapper, exactly like the
+    /// accepted-scheme wrappers above.
+    #[test]
+    fn a_nested_url_inside_a_rejected_scheme_is_not_a_citation() {
+        let p = provenance_with(&["https://exa.ai/docs"]);
+        for wrapper in [
+            "ftp://proxy.test/?next=https://exa.ai/docs",
+            "ftp://proxy.test/https://exa.ai/docs",
+        ] {
+            assert!(!p.cited_in(&format!("download via {wrapper} now")), "{wrapper}");
+        }
+        // The genuine citation still matches in the same prose.
+        assert!(p.cited_in("download via https://exa.ai/docs now"));
+    }
+
+    /// A Markdown link destination keeps its URL-legal punctuation: `!` is a
+    /// sub-delim, so `[source](https://example.test/a!)` cites the URL ending in
+    /// `!` — never the recorded `https://example.test/a`. Only the closing `)`
+    /// (the link terminator) is stripped, and only prose after it.
+    #[test]
+    fn a_markdown_link_destination_preserves_url_legal_punctuation() {
+        let p = provenance_with(&["https://example.test/a"]);
+        for doc in [
+            "See [the source](https://example.test/a!) for the prices.",
+            "Per [the source](https://example.test/a!), the price is fixed.",
+        ] {
+            assert!(!p.cited_in(doc), "{doc} cites a different URL");
+        }
+        // The identical URL in a Markdown destination still matches.
+        let q = provenance_with(&["https://example.test/a!"]);
+        assert!(q.cited_in("See [the source](https://example.test/a!)."));
+        // …while the same `!` outside a destination stays sentence punctuation.
+        assert!(p.cited_in("see https://example.test/a!"));
+    }
+
     #[test]
     fn the_window_is_bounded_and_dedupes() {
         let p = SearchProvenance::new();
