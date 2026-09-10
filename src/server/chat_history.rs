@@ -283,15 +283,29 @@ pub fn agent_channels(record: &CompanyRecord, agent_id: &str) -> Vec<Channel> {
         });
     }
 
-    // This agent's own direct line. Keyed on the id, never the name — renaming
-    // somebody must not move their DM or orphan its history (issue #364).
-    let dm = format!("{}{agent_id}", crate::runtime::assignee::DM_PREFIX);
-    if seen.insert(dm.clone()) {
-        channels.push(Channel {
-            label: "dm".to_string(),
-            name: dm.clone(),
-            id: dm,
-        });
+    // This agent's own direct line — under **both** spellings it is journaled
+    // under, because the console and the route disagree and both are correct.
+    //
+    // `dmThreadId` (`views/room/channels.ts`) posts a DM under the teammate's
+    // **bare id**; `dm:<id>` is the console's channel key and is *also* a
+    // documented key on the chat route (`assignee::dm_key`), which a teammate
+    // whose id is a General spelling is always addressed by. A session that
+    // listed only one of them would miss every DM keyed the other way — which
+    // is the whole of the operator's own line to this agent.
+    //
+    // Keyed on the id and never the name: renaming somebody must not move their
+    // DM or orphan its history (issue #364).
+    for (label, id) in [
+        ("dm", agent_id.to_string()),
+        ("dm", format!("{}{agent_id}", crate::runtime::assignee::DM_PREFIX)),
+    ] {
+        if seen.insert(id.clone()) {
+            channels.push(Channel {
+                label: label.to_string(),
+                name: id.clone(),
+                id,
+            });
+        }
     }
 
     // The company's own line. Not a desk (issue #1743) unless a blueprint
