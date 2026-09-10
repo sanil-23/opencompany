@@ -72,6 +72,11 @@ mod spend_halt_turn_test;
 /// to another conversation in the channel a turn is answering in. Scoped
 /// through the same `owns` predicate the chat seed uses, so it cannot reach a
 /// thread the isolation was built to keep out. See [`thread_tools`].
+/// Talking as a tool call: `desk_post`, `desk_dm`, `desk_close` and
+/// `desk_read`, whose names, argument shapes and description text all come from
+/// `tinyhivemind::speech`. Off unless the manifest says `[speech] enabled`. See
+/// [`speech_tools`].
+pub mod speech_tools;
 pub mod thread_tools;
 
 /// The ACP `RunTurn`, under the path it had before the split.
