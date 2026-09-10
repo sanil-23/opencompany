@@ -301,6 +301,14 @@ pub fn build_agent(
     routed_context: &[(String, String)],
     instructions: Option<&str>,
     is_orchestrator: bool,
+    /// Whether this company's `[speech]` block turns talking into a tool call.
+    ///
+    /// A `bool` resolved by the caller rather than a `&CompanyManifest` read
+    /// here, on exactly the precedent `is_orchestrator` above sets: this
+    /// function builds one agent from parts its caller has already decided, and
+    /// handing it the whole manifest so it can re-derive one flag would give it
+    /// a second, drifting opinion about the company.
+    speech_enabled: bool,
 ) -> crate::Result<Agent> {
     let memory: Arc<dyn Memory> = Arc::new(OcMemory::new(
         company.clone(),
@@ -372,7 +380,7 @@ pub fn build_agent(
     // there is nothing for them to do and registering them would advertise a
     // voice the host cannot give. A company in that configuration keeps the
     // return-text path, which is the same fallback an un-called tool gets.
-    if manifest.speech.enabled
+    if speech_enabled
         && let Some(events) = deps.events.clone()
     {
         tools.extend(crate::harness::speech_tools::speech_belt(
