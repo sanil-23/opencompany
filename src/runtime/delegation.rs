@@ -4061,6 +4061,50 @@ pub fn mark_turn_spoke() {
     });
 }
 
+tokio::task_local! {
+    /// What this turn has asked to say to its whole channel, in call order.
+    ///
+    /// `desk_post` and `desk_close` do **not** append. The crate's own rule is
+    /// that *"a tool call is a request to speak — the host appends, the host
+    /// decides"*, and here the host that appends is the reply path that has
+    /// always appended: it carries the folded steps, the live SSE frame, the
+    /// mention resolution and the board-card correlation, none of which a tool
+    /// holds. So a post is collected here and becomes the turn's reply.
+    ///
+    /// `desk_dm` is the exception and journals directly, because a narrowed
+    /// audience is not something a turn's single reply can express.
+    static TURN_UTTERANCES: std::sync::Arc<std::sync::Mutex<Vec<String>>>;
+}
+
+/// A fresh, empty utterance collector for one turn.
+pub fn new_utterance_sink() -> std::sync::Arc<std::sync::Mutex<Vec<String>>> {
+    std::sync::Arc::new(std::sync::Mutex::new(Vec::new()))
+}
+
+/// Runs `fut` with `sink` collecting this turn's channel-visible utterances.
+pub(crate) async fn with_utterance_sink<F: std::future::Future>(
+    sink: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    fut: F,
+) -> F::Output {
+    TURN_UTTERANCES.scope(sink, fut).await
+}
+
+/// Records one channel-visible utterance for this turn.
+///
+/// Returns whether it was collected: `false` outside a tracked turn, which
+/// tells the caller to fall back to appending it itself.
+pub fn collect_utterance(text: String) -> bool {
+    TURN_UTTERANCES
+        .try_with(|sink| {
+            if let Ok(mut lines) = sink.lock() {
+                lines.push(text);
+                return true;
+            }
+            false
+        })
+        .unwrap_or(false)
+}
+
 /// Run `fut` with the current turn's channel set (issue #1890 F).
 pub(crate) async fn with_turn_conversation<F: std::future::Future>(
     chat_id: Option<String>,
