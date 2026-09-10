@@ -301,13 +301,13 @@ pub fn build_agent(
     routed_context: &[(String, String)],
     instructions: Option<&str>,
     is_orchestrator: bool,
-    /// Whether this company's `[speech]` block turns talking into a tool call.
-    ///
-    /// A `bool` resolved by the caller rather than a `&CompanyManifest` read
-    /// here, on exactly the precedent `is_orchestrator` above sets: this
-    /// function builds one agent from parts its caller has already decided, and
-    /// handing it the whole manifest so it can re-derive one flag would give it
-    /// a second, drifting opinion about the company.
+    // Whether this company's `[speech]` block turns talking into a tool call.
+    //
+    // A `bool` resolved by the caller rather than a `&CompanyManifest` read
+    // here, on exactly the precedent `is_orchestrator` above sets: this
+    // function builds one agent from parts its caller has already decided, and
+    // handing it the whole manifest so it could re-derive one flag would give
+    // it a second, drifting opinion about the company.
     speech_enabled: bool,
 ) -> crate::Result<Agent> {
     let memory: Arc<dyn Memory> = Arc::new(OcMemory::new(
