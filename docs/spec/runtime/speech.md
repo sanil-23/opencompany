@@ -137,7 +137,8 @@ with the caller's own `Viewer`, and `Audience::admits` admits every operator
 unconditionally. Privacy between agents is a deliberation device, never a
 security boundary — see [`hivemind-asides.md`](hivemind-asides.md).
 
-The console renders it as the **Session** tab on `#/team/<id>`
+The console renders it as the **Session** tab on `#/company/agent/<id>`
+(`#/team/<id>` rewrites onto that address)
 (`frontend/src/views/team/AgentSession.tsx`), reusing the room's own
 `StepTimeline`, `ReferralConversation` and `AsideConversation` so an
 agent-to-agent exchange reads the same way there as in the channel it happened

@@ -5,7 +5,8 @@
 // precedent every one of these cites). Three things have to stay true and none
 // of them shows up in a rendered snapshot:
 //
-//   1. the tab exists and is addressable, so `#/team/<id>?tab=session` lands;
+//   1. the tab exists and is addressable, so `#/company/agent/<id>?tab=session`
+//      lands (`#/team/<id>` rewrites onto that and drops the query);
 //   2. the stream is fed by the host's own per-agent route, not by a
 //      console-side merge of per-desk histories;
 //   3. the agent-to-agent collapses are the room's, not second copies.
