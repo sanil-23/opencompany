@@ -19,14 +19,23 @@ import { expect, test, type Page } from "@playwright/test";
  * panel failing to render, or holding a spinner forever.
  */
 
+/**
+ * Clears both things that can stand in front of a deep link.
+ *
+ * "Skip setup" is the activation gate's control and "Skip for now" is the
+ * guided tour's — two different surfaces with two different labels, and either
+ * can be up on a fresh data directory. Both are tried because which one appears
+ * depends on state this test does not own.
+ */
 async function dismissOnboarding(page: Page) {
-  const skip = page.getByRole("button", { name: "Skip for now" });
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    if (!(await skip.isVisible().catch(() => false))) return;
-    await skip.click({ force: true }).catch(() => {});
-    await page.waitForTimeout(300);
+  for (const name of ["Skip setup", "Skip for now"]) {
+    const skip = page.getByRole("button", { name });
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      if (!(await skip.isVisible().catch(() => false))) break;
+      await skip.click({ force: true }).catch(() => {});
+      await page.waitForTimeout(300);
+    }
   }
-  await expect(skip).toHaveCount(0);
 }
 
 test.beforeEach(async ({ page }) => {
@@ -39,6 +48,12 @@ test.beforeEach(async ({ page }) => {
 });
 
 test("a teammate's session opens from its own address", async ({ page }) => {
+  // Clear the gate FIRST, on a neutral address. Dismissing it navigates, and a
+  // navigation rewrites the hash — so opening the deep link before the gate is
+  // gone would test the gate's redirect rather than the link.
+  await page.goto("/");
+  await dismissOnboarding(page);
+
   await page.goto("/#/team/engineer?tab=session");
   await dismissOnboarding(page);
 
