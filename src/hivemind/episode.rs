@@ -159,6 +159,16 @@ pub struct EpisodeDriver<'a> {
     thread_root: Option<EventSeq>,
     memory: Arc<dyn HiveMemory>,
     federation: Option<(HiveFederation, &'a dyn HiveReferralRunner)>,
+    /// Every desk in the company, for loading a speaker's *own* other
+    /// conversations into its prompt.
+    ///
+    /// Deliberately not read off [`Self::federation`], which is `None` unless
+    /// the home desk opted in to referral: whether a seat may ask another desk a
+    /// question and whether it can already read a desk it sits on are different
+    /// permissions, and conflating them would hide half a member's own history
+    /// from it because of a knob about somebody else's desk. Empty is the
+    /// default, and an empty list renders nothing.
+    context_desks: Vec<super::referral::FederationDesk>,
 }
 
 impl std::fmt::Debug for EpisodeDriver<'_> {
@@ -209,6 +219,7 @@ impl<'a> EpisodeDriver<'a> {
             thread_root: None,
             memory: Arc::new(NullHiveMemory),
             federation: None,
+            context_desks: Vec::new(),
         }
     }
 
@@ -226,6 +237,18 @@ impl<'a> EpisodeDriver<'a> {
         runner: &'a dyn HiveReferralRunner,
     ) -> Self {
         self.federation = Some((federation, runner));
+        self
+    }
+
+    /// Give every seat the other conversations it is part of.
+    ///
+    /// `desks` is the whole company's desk list; each speaker is matched against
+    /// it by membership, so one snapshot serves every seat in the room. Unset is
+    /// the default and renders nothing, which is what every caller that existed
+    /// before this builder got.
+    #[must_use]
+    pub fn with_context_desks(mut self, desks: Vec<super::referral::FederationDesk>) -> Self {
+        self.context_desks = desks;
         self
     }
 
@@ -474,8 +497,10 @@ impl<'a> EpisodeDriver<'a> {
             } else {
                 Vec::new()
             };
+            let elsewhere = self.elsewhere_for(&turn.agent_id).await;
             let prompt = EpisodePrompt::new(member, &self.desk, &self.task, policy.quorum, &pins)
                 .with_recall(&recall)
+                .with_elsewhere(&elsewhere)
                 .with_unspoken(&unspoken)
                 .with_peers(peers.clone())
                 .with_trigger(Sequence(trigger.value()))
@@ -899,6 +924,94 @@ impl<'a> EpisodeDriver<'a> {
         let (line, rode) = split_reply(&self.runner.speak(agent_id, &corrected).await?);
         scratch.aside = rode;
         Ok(line)
+    }
+
+    /// The conversations this speaker is part of besides the one deliberating.
+    ///
+    /// Read per turn rather than once per episode, for the same reason the
+    /// pinboard is: a message that lands on this seat's other desk while this
+    /// room is still open is exactly what the next speaker should be holding.
+    ///
+    /// Projected **as the speaker** and never as the operator, so an aside it is
+    /// not in arrives elided here exactly as it would at home. The episode's
+    /// `scope` is deliberately not applied either: that boundary is *this* desk's
+    /// fold, and another conversation's rows are not votes here at all.
+    ///
+    /// Best-effort per conversation — one that cannot be read is dropped with a
+    /// warning rather than failing the turn. A seat reading less than it might is
+    /// a poorer prompt; a stalled room is a worse outcome.
+    async fn elsewhere_for(
+        &self,
+        agent_id: &str,
+    ) -> Vec<(String, Vec<tinyhivemind_hive::SessionMessage>)> {
+        // Unset is the default, and a caller that never named the company's desks
+        // gets exactly the prompt it got before this existed — including no read
+        // of the seat's own direct line, which would otherwise be a new query on
+        // every turn of every episode ever driven.
+        if self.context_desks.is_empty() {
+            return Vec::new();
+        }
+        let viewer = Viewer::Agent {
+            id: agent_id.to_string(),
+        };
+        // Every other desk this seat sits on, and then its own direct line. A
+        // DM's `chat_id` *is* the roster agent id, so that id is carried in both
+        // fields: `in_desk` matches on id or name, and a desk that happened to be
+        // named like an agent could otherwise widen the match.
+        let targets: Vec<(String, String, String)> = self
+            .context_desks
+            .iter()
+            .filter(|desk| {
+                desk.id != self.desk.id && desk.members.iter().any(|member| member == agent_id)
+            })
+            .map(|desk| {
+                (
+                    desk.id.clone(),
+                    desk.name.clone(),
+                    format!("#{} ({})", desk.id, desk.name),
+                )
+            })
+            .chain(std::iter::once((
+                agent_id.to_string(),
+                agent_id.to_string(),
+                format!("Your direct line (@{agent_id})"),
+            )))
+            .collect();
+        let mut elsewhere = Vec::with_capacity(targets.len());
+        for (desk_id, desk_name, label) in targets {
+            let log = EventLogSessionLog::new(
+                Arc::clone(&self.events),
+                self.company.clone(),
+                desk_id.clone(),
+                desk_name.clone(),
+            );
+            match tinyhivemind_hive::project_session(
+                &log,
+                &SessionQuery {
+                    conversation: Conversation {
+                        desk_id,
+                        desk_name,
+                        thread_root: None,
+                    },
+                    viewer: viewer.clone(),
+                    before: None,
+                    window: SESSION_WINDOW,
+                },
+            )
+            .await
+            {
+                Ok(rows) if !rows.is_empty() => elsewhere.push((label, rows)),
+                Ok(_) => {}
+                Err(error) => tracing::warn!(
+                    company = %self.company,
+                    desk = %self.desk.id,
+                    agent = %agent_id,
+                    error = %error,
+                    "[hive] a seat's other conversation could not be read; the turn runs without it"
+                ),
+            }
+        }
+        elsewhere
     }
 
     /// What the desk remembers about the operator's task, best-effort.
