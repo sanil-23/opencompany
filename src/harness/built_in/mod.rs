@@ -1501,10 +1501,25 @@ impl CompanyAgent {
             let mut bound = self.bound_chat.lock().await;
             if bound.is_some() {
                 tracing::debug!(
-                    "[harness] unthreaded turn — dropping the chat binding; the session continues"
+                    "[harness] unthreaded turn — dropping the chat binding"
                 );
                 *bound = None;
             }
+            // And the conversational session restarts after it.
+            //
+            // A background task is work this agent did, but it is not something
+            // it *said* — it names no conversation, journals no chat line, and
+            // what it leaves in the live history is the raw output of whatever
+            // tools it ran. Carrying that forward would put a fetched page into
+            // the next thing an operator types, which is the cross-context leak
+            // this branch was originally written to prevent.
+            //
+            // Dropping the watermark makes the next chat turn re-seed from the
+            // journal — prose, attributed, and including anything the task
+            // actually journaled. So the agent still knows what it did; it
+            // simply does not carry the residue of doing it.
+            let mut session = self.session.lock().await;
+            *session = agent_session::AgentSessionState::default();
         }
 
         // The text this turn actually runs on: the cue block, then the message.
