@@ -359,6 +359,67 @@ pub struct ReferralConversation {
     pub lines: Vec<ReferralLine>,
 }
 
+/// One line of a private aside, in the order it was said.
+///
+/// No `author_label`: unlike a referral, both sides of an aside sit on the desk
+/// being read, so the console already knows their names.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AsideLine {
+    /// The agent that wrote it.
+    pub author_id: String,
+    /// What they said, with the `!aside @peer` head already stripped.
+    pub text: String,
+}
+
+/// A private exchange between members of one desk, folded onto the move it rode
+/// under.
+///
+/// The same idiom as [`ReferralConversation`] and for the same reason: it is
+/// detail behind a line, not part of the desk's own conversation. It differs in
+/// who may read it — an operator reads every row in full (`Audience::admits`
+/// admits `Viewer::Operator` unconditionally), because privacy here is between
+/// agents and is a deliberation device, never a security boundary. Collapsing it
+/// is a rendering choice, not an access-control one, and nothing here withholds
+/// anything from the person reading.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AsideConversation {
+    /// Everyone in it — the author first, then who they addressed.
+    pub members: Vec<String>,
+    /// The exchange, oldest first. Its length is the collapsed label's count.
+    pub lines: Vec<AsideLine>,
+}
+
+#[cfg(test)]
+impl MessageView {
+    /// A bare row, for tests that exercise the folds rather than the projection.
+    ///
+    /// Test-only on purpose: the real constructor is `From<StoredEvent>` and has
+    /// to stay the only way a view is built from a journal, or a projection
+    /// concern could be skipped by a caller that assembled one by hand.
+    pub(crate) fn for_test(id: &str, author: &str, text: &str, audience: Vec<String>) -> Self {
+        Self {
+            id: id.to_owned(),
+            channel: author.to_owned(),
+            admin_only: false,
+            author: author.to_owned(),
+            text: text.to_owned(),
+            at_millis: 0.0,
+            mine: false,
+            by_person: false,
+            referred_from: None,
+            referral_conversation: None,
+            aside_audience: audience,
+            aside_conversation: None,
+            steps: Vec::new(),
+            task_id: None,
+            parent_id: None,
+            reactions: Vec::new(),
+            mentions: Vec::new(),
+            attachments: Vec::new(),
+        }
+    }
+}
+
 /// Who is reading a desk history. `mine` is relative to this.
 ///
 /// There is no `From<StoredEvent> for MessageView`, and there cannot be:
@@ -419,6 +480,14 @@ pub struct MessageView {
     pub referred_from: Option<ReferredFrom>,
     /// The crossing this report brought home, when it brought one.
     pub referral_conversation: Option<ReferralConversation>,
+    /// The addressees of this row when it is a private aside, else empty.
+    ///
+    /// Fold input, not output: `fold_asides` reads it to know which rows to
+    /// collect, and no DTO carries it — what the console renders is the folded
+    /// [`Self::aside_conversation`] on the row the aside rode under.
+    pub aside_audience: Vec<String>,
+    /// The private exchange this move carried, when it carried one.
+    pub aside_conversation: Option<AsideConversation>,
     /// Whether this row may reach only administrators (issue #1781 review,
     /// Codex P1).
     ///
@@ -656,6 +725,7 @@ impl MessageView {
                 task_id,
                 parent,
                 mentions,
+                audience,
                 ..
             } => MessageView {
                 id,
@@ -670,6 +740,8 @@ impl MessageView {
                 // Set by the referral fold in `history_for_desk`, never here.
                 referred_from: None,
                 referral_conversation: None,
+                aside_audience: audience,
+                aside_conversation: None,
                 steps,
                 task_id,
                 parent_id: parent.map(|seq| seq.value().to_string()),
@@ -741,6 +813,8 @@ impl MessageView {
                     // Set by the referral fold in `history_for_desk`, never here.
                     referred_from: None,
                     referral_conversation: None,
+                    aside_audience: Vec::new(),
+                    aside_conversation: None,
                     id,
                     channel: voice,
                     admin_only: false,
@@ -811,6 +885,8 @@ impl MessageView {
                 // Set by the referral fold in `history_for_desk`, never here.
                 referred_from: None,
                 referral_conversation: None,
+                aside_audience: Vec::new(),
+                aside_conversation: None,
                 steps: Vec::new(),
                 task_id: Some(task_id),
                 // Rendered the same way an `OperatorMessage`'s parent is, a few
@@ -834,6 +910,8 @@ impl MessageView {
                 // Set by the referral fold in `history_for_desk`, never here.
                 referred_from: None,
                 referral_conversation: None,
+                aside_audience: Vec::new(),
+                aside_conversation: None,
                 steps: Vec::new(),
                 task_id: None,
                 parent_id: None,
@@ -1221,7 +1299,100 @@ pub async fn history_for_desk(
 
     drop_dead_cards(runtime, &mut messages).await?;
     attach_referral_origins(runtime, desk_id, &mut messages).await?;
+    fold_asides(&mut messages);
     Ok(messages)
+}
+
+/// Fold each private aside onto the move it rode under.
+///
+/// A seat writes its move and may add one `!aside @peer` line beneath it; the
+/// host journals that line as its own row carrying an `audience`. Left alone it
+/// renders in the transcript as an ordinary message with the raw marker still in
+/// its body — which is both a leak of the grammar into the operator's view and a
+/// misreading of what happened, since the row was never addressed to the room.
+///
+/// So the aside rows are lifted out of the transcript and hung on the nearest
+/// preceding desk-visible row by the same author — the move they rode under.
+///
+/// **An orphan is kept, never dropped.** An aside with no move above it (the
+/// author's first row, or a history page that begins mid-exchange) stays where it
+/// is as an ordinary row. A rendered line in the wrong shape is a cosmetic
+/// defect; a dropped one is a lost message, and this projection already refuses
+/// that trade for referrals one function below.
+pub(crate) fn fold_asides(messages: &mut Vec<MessageView>) {
+    if messages
+        .iter()
+        .all(|message| message.aside_audience.is_empty())
+    {
+        return;
+    }
+    let mut folded = Vec::with_capacity(messages.len());
+    for message in std::mem::take(messages) {
+        if message.aside_audience.is_empty() {
+            folded.push(message);
+            continue;
+        }
+        // The move this aside rode under: the nearest row above it that this same
+        // seat wrote in the open. Searching by author rather than by adjacency
+        // keeps the pairing right when two seats aside in the same round.
+        let anchor = folded.iter_mut().rev().find(|earlier| {
+            // Same seat, and speaking in the open: an orphaned aside kept
+            // above must not become the anchor for the one below it.
+            earlier.author == message.author && earlier.aside_audience.is_empty()
+        });
+        let Some(anchor) = anchor else {
+            // Orphan: no move of ours above it. Keep the row.
+            folded.push(message);
+            continue;
+        };
+        let line = AsideLine {
+            author_id: message.author.clone(),
+            text: aside_body(&message.text),
+        };
+        match &mut anchor.aside_conversation {
+            Some(conversation) => {
+                for member in &message.aside_audience {
+                    if !conversation.members.contains(member) {
+                        conversation.members.push(member.clone());
+                    }
+                }
+                conversation.lines.push(line);
+            }
+            slot @ None => {
+                let mut members = vec![message.author.clone()];
+                members.extend(message.aside_audience.iter().cloned());
+                *slot = Some(AsideConversation {
+                    members,
+                    lines: vec![line],
+                });
+            }
+        }
+    }
+    *messages = folded;
+}
+
+/// `!aside @peer the body` -> `the body`.
+///
+/// The marker and the addressee are what the collapsed chip's header already
+/// says; leaving them in the body is the leak this fold exists to close.
+/// `line_kind` cannot do it — `MOVE_KINDS` deliberately omits `aside`, because a
+/// marker the fold discards is not a move anybody made — so the strip is here.
+fn aside_body(text: &str) -> String {
+    let trimmed = text.trim_start();
+    let Some(rest) = trimmed.strip_prefix("!aside") else {
+        return text.to_string();
+    };
+    let mut rest = rest.trim_start();
+    // Every leading `@name`, not just the first: an aside may name more than one
+    // peer when a desk raised `max_members`.
+    while let Some(after_at) = rest.strip_prefix('@') {
+        let cut = after_at.find(char::is_whitespace).unwrap_or(after_at.len());
+        rest = after_at[cut..].trim_start();
+    }
+    // Trailing space too: the head strip is the only thing standing between the
+    // authored line and a chat bubble, and a bubble padded with the whitespace
+    // that used to separate `@peer` from the body is a rendering artefact.
+    rest.trim_end().to_string()
 }
 
 /// Fold each `ReferralEnqueued` marker onto the message it caused
@@ -1759,6 +1930,107 @@ fn is_admin_only_event(event: &CompanyEvent) -> bool {
 
 #[cfg(test)]
 mod test {
+    use super::{AsideConversation, MessageView, aside_body, fold_asides};
+
+    /// A desk-visible row by `author`, or an aside when `to` names somebody.
+    fn row(id: &str, author: &str, text: &str, to: &[&str]) -> MessageView {
+        MessageView {
+            id: id.to_owned(),
+            channel: author.to_owned(),
+            admin_only: false,
+            author: author.to_owned(),
+            text: text.to_owned(),
+            at_millis: 0.0,
+            mine: false,
+            by_person: false,
+            referred_from: None,
+            referral_conversation: None,
+            aside_audience: to.iter().map(|id| (*id).to_owned()).collect(),
+            aside_conversation: None,
+            steps: Vec::new(),
+            task_id: None,
+            parent_id: None,
+            reactions: Vec::new(),
+            mentions: Vec::new(),
+            attachments: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn an_aside_folds_onto_the_move_it_rode_under() {
+        let mut messages = vec![
+            row("1", "exchanges", "!propose #swap the clicky variant", &[]),
+            row(
+                "2",
+                "exchanges",
+                "!aside @refunds the difference is -$16.63",
+                &["refunds"],
+            ),
+            row("3", "refunds", "!support #swap ^1", &[]),
+        ];
+        fold_asides(&mut messages);
+
+        // The aside is lifted out of the transcript...
+        assert_eq!(
+            messages.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+            vec!["1", "3"],
+            "the aside row no longer stands in the desk's own conversation"
+        );
+        // ...and hangs on its author's move, with the marker head stripped.
+        let Some(AsideConversation { members, lines }) = &messages[0].aside_conversation else {
+            panic!("the move carries the aside");
+        };
+        assert_eq!(members, &["exchanges".to_owned(), "refunds".to_owned()]);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].text, "the difference is -$16.63");
+        assert!(
+            !lines[0].text.contains("!aside"),
+            "the grammar never reaches the operator's view"
+        );
+    }
+
+    #[test]
+    fn an_orphan_aside_is_kept_rather_than_dropped() {
+        // No move above it — a page that begins mid-exchange. A line in the wrong
+        // shape beats a line nobody can read.
+        let mut messages = vec![row(
+            "1",
+            "exchanges",
+            "!aside @refunds mid-page",
+            &["refunds"],
+        )];
+        fold_asides(&mut messages);
+        assert_eq!(messages.len(), 1, "the row survives");
+        assert!(messages[0].aside_conversation.is_none());
+    }
+
+    #[test]
+    fn an_aside_never_hangs_on_another_seats_move() {
+        let mut messages = vec![
+            row("1", "refunds", "!propose #refund take the return", &[]),
+            row(
+                "2",
+                "exchanges",
+                "!aside @refunds are you sure?",
+                &["refunds"],
+            ),
+        ];
+        fold_asides(&mut messages);
+        // `exchanges` has no move above it, so its aside stays put rather than
+        // being attributed to the seat that happened to speak last.
+        assert_eq!(messages.len(), 2);
+        assert!(messages[0].aside_conversation.is_none());
+    }
+
+    #[test]
+    fn aside_body_strips_every_addressee_and_leaves_other_text_alone() {
+        assert_eq!(aside_body("!aside @a @b the point"), "the point");
+        assert_eq!(aside_body("  !aside   @a   spaced  "), "spaced");
+        // Not an aside: untouched, including a marker this host does not police.
+        assert_eq!(aside_body("!propose #x y"), "!propose #x y");
+        assert_eq!(aside_body("plain prose"), "plain prose");
+    }
+
     use super::*;
     use crate::ports::tasks::{
         COLUMN_DONE, COLUMN_IN_PROGRESS, COLUMN_IN_REVIEW, COLUMN_PAUSED, COLUMN_PLANNING,

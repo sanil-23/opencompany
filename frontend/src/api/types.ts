@@ -398,6 +398,20 @@ export interface ReferralConversationDto {
   lines: ReferralLineDto[];
 }
 
+export interface AsideLineDto {
+  authorId: string;
+  text: string;
+}
+
+/** A private exchange between members of one desk, folded onto the move it rode
+ *  under. The operator reads it in full — collapsing is presentation, not
+ *  access control. */
+export interface AsideConversationDto {
+  /** Everyone in it — the author first, then who they addressed. */
+  members: string[];
+  lines: AsideLineDto[];
+}
+
 export interface ReferredFromDto {
   deskId: string;
   deskName: string;
@@ -430,6 +444,7 @@ export interface ChatHistoryMessageDto {
   text: string;
   referredFrom?: ReferredFromDto;
   referralConversation?: ReferralConversationDto;
+  asideConversation?: AsideConversationDto;
   atMillis: number;
   mine: boolean;
   /**
