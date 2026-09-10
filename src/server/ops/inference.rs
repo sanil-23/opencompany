@@ -213,8 +213,30 @@ async fn list_models(company: ScopedCompany) -> Result<Json<ModelCatalogDto>, Ap
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct InferenceStatusDto {
-    /// Provider kind (`managed` / `openrouter` / `openai_compatible` / `ollama`).
+    /// Provider kind (`managed` / `openrouter` / `openai_compatible` / `ollama`)
+    /// **as the operator selected it**, not as it resolves.
+    ///
+    /// The two differ only for the managed route, and reporting the resolved
+    /// kind here is what made "Managed (TinyHumans)" impossible to select: the
+    /// card seeds its provider select from this field verbatim (deliberately —
+    /// it is what keeps the select and the header beside it from ever naming
+    /// different providers), so a `managed` save that read back as `openrouter`
+    /// snapped the select to OpenRouter and took the Connect-TinyHumans button,
+    /// which only the managed route offers, with it. The save had landed; there
+    /// was simply no way to see it. See
+    /// [`selected_kind`](inference::selected_kind).
     provider: String,
+    /// Whether the saved config rides the platform's subscription proxy rather
+    /// than a credential this tenant supplied.
+    ///
+    /// The console used to re-derive this from `provider` and `keyConfigured`
+    /// (`!(provider == "openrouter" && keyConfigured)`) — a restatement of
+    /// [`InferenceDecl::is_proxied`](inference::InferenceDecl::is_proxied) that
+    /// only held while `provider` was the *resolved* kind. Now that it is the
+    /// selected one, that derivation would read a managed company with its own
+    /// OpenRouter key as proxied and point it at top-up links for an account its
+    /// turns are not billed to. Reported rather than re-derived.
+    proxied: bool,
     /// The stable telemetry slug (`managed` / `openrouter` / `byok` / `ollama`).
     slug: String,
     /// Resolved OpenAI-compatible base URL — the endpoint requests actually
@@ -634,7 +656,8 @@ async fn effective_status_with(
         .collect();
     Ok(match decl {
         Some(d) => InferenceStatusDto {
-            provider: d.provider.clone(),
+            provider: d.selected_provider().to_string(),
+            proxied: d.is_proxied(),
             slug: d.telemetry_slug().to_string(),
             base_url,
             models: d.models.clone(),
@@ -650,6 +673,9 @@ async fn effective_status_with(
         },
         None => InferenceStatusDto {
             provider: "managed".to_string(),
+            // `decl` is `None` because this deployment has no platform default
+            // to inherit, so there is no subscription to ride.
+            proxied: false,
             slug: "managed".to_string(),
             base_url,
             models: BTreeMap::new(),
