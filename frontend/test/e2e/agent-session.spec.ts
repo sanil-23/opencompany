@@ -10,7 +10,9 @@ import { expect, test, type Page } from "@playwright/test";
  * agent's own context — and stamps every row with the channel it was said on.
  * A stubbed client proves the component; only a host proves the projection.
  *
- * The tab is an address (`#/team/<id>?tab=session`), so the walk is a deep link
+ * The tab is an address (`#/company/agent/<id>?tab=session` — `#/team/<id>`
+ * rewrites onto it and drops the query, so the canonical form is the one used
+ * here), so the walk is a deep link
  * rather than a click path: that is the property that lets one operator paste a
  * teammate's session to another, and it is the one a click path would not test.
  *
@@ -54,13 +56,19 @@ test("a teammate's session opens from its own address", async ({ page }) => {
   await page.goto("/");
   await dismissOnboarding(page);
 
-  await page.goto("/#/team/engineer?tab=session");
+  await page.goto("/#/company/agent/engineer?tab=session");
   await dismissOnboarding(page);
 
   // The tab resolved from the hash rather than defaulting to Overview — the
   // whole point of `useHashTab`, and what makes the link shareable.
-  const tab = page.getByRole("tab", { name: "Session" });
+  // Addressed by test id and asserted on the attribute rather than through
+  // `getByRole("tab", …)`: the strip's buttons carry `tabindex="-1"` (roving
+  // focus), which keeps them out of that role query on this build.
+  const tab = page.getByTestId("agent-tab-session");
   await expect(tab).toBeVisible({ timeout: 30_000 });
+  // The tab resolved FROM THE HASH rather than defaulting to Overview. This is
+  // the assertion the whole spec exists for — a click path would pass without
+  // the address ever working.
   await expect(tab).toHaveAttribute("aria-selected", "true");
 
   // One of the three honest states, never a spinner that never settles: the
