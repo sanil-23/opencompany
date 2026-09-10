@@ -13343,11 +13343,32 @@ description = "Builds the product."
             )
             .await
             .expect("second chat turn");
-            assert_eq!(
-                log.reads(),
-                reads_after_first,
-                "a same-desk, non-switch chat turn must not re-read the \
-                 journal to build a seed the switch check will discard"
+            // The property this pins CHANGED when the session became
+            // continuous, and the change is the feature rather than a
+            // regression against it.
+            //
+            // It used to assert **zero** further reads: a same-desk turn was
+            // not a switch, so no seed was built, so the journal was not
+            // touched. An agent now asks what it missed on every chat turn —
+            // that question is the whole of "one session", and its answer
+            // cannot be cached, because another teammate may have said
+            // something on another desk a moment ago.
+            //
+            // What must still hold is the bound. The delta walks **backwards
+            // from the tail and stops at the watermark**, so a quiet company
+            // costs one page and a busy one costs no more than
+            // `SESSION_SCAN_LIMIT`. That is what the original test was
+            // protecting — the fs backend's whole-journal scan — and it is
+            // what this asserts now.
+            let delta_reads = log.reads() - reads_after_first;
+            assert!(
+                delta_reads > 0,
+                "a chat turn must ask what it missed; that is the session"
+            );
+            assert!(
+                delta_reads <= reads_after_first,
+                "the delta must cost no more than the seed it replaced: \
+                 {delta_reads} reads against {reads_after_first}"
             );
         }
 
@@ -13576,10 +13597,19 @@ description = "Builds the product."
             pool.run(&rec.id, "ceo", "second", &fx.deps, thread)
                 .await
                 .expect("second chat turn");
-            assert_eq!(
-                log.reads(),
-                reads_after_first,
-                "a second turn in the same thread is not a switch"
+            // Bounded, not zero — see the sibling test above for why the
+            // property changed. A second turn in the same thread is still not
+            // a switch, and still re-seeds nothing; what it now does is ask
+            // whether anything was said elsewhere while it was answering here.
+            let delta_reads = log.reads() - reads_after_first;
+            assert!(
+                delta_reads > 0,
+                "a chat turn must ask what it missed; that is the session"
+            );
+            assert!(
+                delta_reads <= reads_after_first,
+                "the delta must cost no more than the seed it replaced: \
+                 {delta_reads} reads against {reads_after_first}"
             );
         }
 
