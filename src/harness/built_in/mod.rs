@@ -687,6 +687,13 @@ pub struct CompanyAgent {
     /// thread every unparented line hangs in, which is every line in a company
     /// that has never threaded.
     bound_chat: Mutex<Option<(String, Option<EventSeq>)>>,
+    /// How far through the company journal this agent's session has been
+    /// carried — the watermark that replaced the per-chat clear-and-reseed.
+    ///
+    /// See [`agent_session`]. Held beside `bound_chat` rather than inside it
+    /// because it is deliberately **not** keyed on a conversation: surviving a
+    /// channel switch is the whole point of it.
+    session: Mutex<agent_session::AgentSessionState>,
 }
 
 /// The graceful reply returned when a turn yields the transient empty-response
@@ -4116,6 +4123,7 @@ impl HarnessPool {
             step_labels: steps::StepLabels::from_tools(confined.tools()),
             agent: Mutex::new(confined),
             bound_chat: Mutex::new(None),
+            session: Mutex::new(agent_session::AgentSessionState::default()),
         };
 
         let stream_ctx = Some(crate::turn_stream::TurnStreamCtx {
@@ -5499,6 +5507,7 @@ pub(crate) fn build_roster(
             step_labels: steps::StepLabels::from_tools(agent.tools()),
             agent: Mutex::new(agent),
             bound_chat: Mutex::new(None),
+            session: Mutex::new(agent_session::AgentSessionState::default()),
         }));
     }
 
@@ -5586,6 +5595,7 @@ pub(crate) fn build_roster(
             step_labels: steps::StepLabels::from_tools(agent.tools()),
             agent: Mutex::new(agent),
             bound_chat: Mutex::new(None),
+            session: Mutex::new(agent_session::AgentSessionState::default()),
         }));
     }
 
