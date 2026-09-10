@@ -1,4 +1,12 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { OpenCompanyClient } from "@/api/client";
 import {
   ApiError,
@@ -26,7 +34,10 @@ import { TitleBarSearch } from "@/components/title-bar-search";
 import { TitleBarUtilities } from "@/components/title-bar-utilities";
 import { RouteLoading } from "@/components/route-loading";
 import { WINDOW_TITLE_BAR_HEIGHT } from "@/components/window-chrome";
-import { TITLE_BAR_ICON_BUTTON, WindowTitleBar } from "@/components/window-title-bar";
+import {
+  TITLE_BAR_ICON_BUTTON,
+  WindowTitleBar,
+} from "@/components/window-title-bar";
 import { cn } from "@/lib/utils";
 import { SidebarCollapseButton } from "@/components/sidebar-controls";
 import { SectionContentRail } from "@/components/section-rail";
@@ -107,9 +118,17 @@ import { typersIn } from "@/lib/awareness";
 import type { WorkspaceEvent } from "@/views/WorkspaceView";
 import { useHashView } from "@/hooks/use-hash-view";
 import { formatConsolePath, parseConsolePath } from "@/lib/console-paths";
-import { LEDGER_VIEW_PARAM, readLedgerViewMode } from "@/hooks/use-ledger-view-mode";
+import {
+  LEDGER_VIEW_PARAM,
+  readLedgerViewMode,
+} from "@/hooks/use-ledger-view-mode";
 import { BOARD_LEDGER } from "@/lib/board-columns";
-import { DEFAULT_VIEW, isNavigationActive, VIEWS, type View } from "@/lib/console-routes";
+import {
+  DEFAULT_VIEW,
+  isNavigationActive,
+  VIEWS,
+  type View,
+} from "@/lib/console-routes";
 import { REWRITE_RETIRED } from "@/lib/console-route-rewrites";
 import { taskIdFromSegment } from "@/lib/task-route";
 import { toast } from "sonner";
@@ -141,7 +160,11 @@ import { writeLastChannel } from "@/lib/last-channel";
 import { ProfileRow } from "@/components/profile-row";
 import { ConsoleProvider } from "@/lib/console-context";
 import { fromDto, type TeamMember } from "@/lib/team";
-import { agentDmThreads, defaultThreads, threadsFromDesks } from "@/lib/threads";
+import {
+  agentDmThreads,
+  defaultThreads,
+  threadsFromDesks,
+} from "@/lib/threads";
 import { drainReReadQueue, type PendingReRead } from "@/lib/re-read-queue";
 import { fetchWithOneRetry } from "@/lib/fetch-with-retry";
 import { Overview } from "@/views/Overview";
@@ -201,7 +224,9 @@ const MemoryView = lazy(() =>
 // Wallet (PayPal). Load on demand — its Overview page is Recharts-backed and
 // its two provider pages are only reached by an operator who went looking.
 const FinanceSection = lazy(() =>
-  import("@/views/finance/FinanceSection").then((m) => ({ default: m.FinanceSection })),
+  import("@/views/finance/FinanceSection").then((m) => ({
+    default: m.FinanceSection,
+  })),
 );
 
 /**
@@ -229,7 +254,9 @@ export function financeFallbackTitle(sub: string | null): string {
 }
 // Hosts a sandboxed iframe and the postMessage bridge — load on demand, same
 // as the other heavier, less-visited surfaces.
-const PagesView = lazy(() => import("@/views/PagesView").then((m) => ({ default: m.PagesView })));
+const PagesView = lazy(() =>
+  import("@/views/PagesView").then((m) => ({ default: m.PagesView })),
+);
 
 // The route table lives in `@/lib/console-routes` — a plain module the unit
 // lane can import, and the single place a surface is declared routable (issue
@@ -277,7 +304,11 @@ const MAIN_CONTENT_ID = "main-content";
  */
 const NAV_ALWAYS_PARENT = new Set<View>(["company"]);
 
-const LEGACY_CONNECT_QUERY_KEYS = ["connected", "connect_error", "provider"] as const;
+const LEGACY_CONNECT_QUERY_KEYS = [
+  "connected",
+  "connect_error",
+  "provider",
+] as const;
 
 /**
  * Reads a former native OAuth callback's query whether it was appended to the
@@ -292,7 +323,8 @@ function legacyConnectParams(): URLSearchParams {
   const [, hashQuery = ""] = window.location.hash.split("?");
   const hashParams = new URLSearchParams(hashQuery);
   for (const key of LEGACY_CONNECT_QUERY_KEYS) {
-    if (!params.has(key) && hashParams.has(key)) params.set(key, hashParams.get(key)!);
+    if (!params.has(key) && hashParams.has(key))
+      params.set(key, hashParams.get(key)!);
   }
   return params;
 }
@@ -414,7 +446,10 @@ function connectErrorMessage(code: string, provider: string | null): string {
  * desk list plus the roster can bridge the two. Built once per company beside
  * the transcript hydration that already resolves the same pairing.
  */
-function channelMap(desks: Desk[], members: TeamMember[]): Record<string, string> {
+function channelMap(
+  desks: Desk[],
+  members: TeamMember[],
+): Record<string, string> {
   const map: Record<string, string> = {};
   // Every spelling the host folds the company-wide line under (issue #1743).
   //
@@ -438,7 +473,10 @@ function channelMap(desks: Desk[], members: TeamMember[]): Record<string, string
   // addressed on `dm:<id>`, and the host emits its live frames under that key.
   // Seeded bare, `channelForThread` could place neither that DM's reply nor its
   // working indicator anywhere at all (issue #1743).
-  for (const threadId of [...desks.map((d) => d.id), ...members.map(dmThreadId)]) {
+  for (const threadId of [
+    ...desks.map((d) => d.id),
+    ...members.map(dmThreadId),
+  ]) {
     const channelId = channelIdForThread(threadId, desks, members);
     if (channelId) map[threadId] = channelId;
   }
@@ -678,7 +716,9 @@ export function AppShell({
   // This company's first desk channel — the same channel `RoomView` lands on
   // when the hash names none, and so where a line with nowhere else to go is
   // still somewhere the operator will find it.
-  const [firstDeskChannelId, setFirstDeskChannelId] = useState<string | null>(null);
+  const [firstDeskChannelId, setFirstDeskChannelId] = useState<string | null>(
+    null,
+  );
   // The chat channel the operator last had on screen. A ref, not state,
   // because it outlives `RoomView`: it is what an unaddressed system line is
   // addressed to after the operator has walked off to Approvals (issue #368).
@@ -715,7 +755,9 @@ export function AppShell({
    * and this is the same value chat restores from, read the same scoped way, so
    * the two cannot disagree.
    */
-  const [chatSub, setChatSub] = useState<string | null>(() => readLastChannel(scope));
+  const [chatSub, setChatSub] = useState<string | null>(() =>
+    readLastChannel(scope),
+  );
   // Which thread panel is open in that channel, or `null` for none (#1890 B).
   //
   // A third condition on "is this completion's marker actually on screen",
@@ -784,7 +826,9 @@ export function AppShell({
   // it alone, refetch it, or close the pane because it was deleted. `tick` rides
   // alongside so two frames naming the same node in one React batch are still
   // two events rather than a state update React coalesces away.
-  const [workspaceEvent, setWorkspaceEvent] = useState<WorkspaceEvent | null>(null);
+  const [workspaceEvent, setWorkspaceEvent] = useState<WorkspaceEvent | null>(
+    null,
+  );
   // A recovery does not name one node, so it cannot reuse `workspaceEvent`'s
   // payload contract. The workspace re-reads its whole canonical tree on this
   // tick, just as the task and workflow surfaces do below.
@@ -827,7 +871,9 @@ export function AppShell({
   // Bounded so a long-lived tab cannot grow it without limit. The cap is orders
   // of magnitude above a run's ~N+2 frames; if it ever did cut a run's start,
   // the view simply shows no live state and the run history still has it.
-  const [workflowRunEvents, setWorkflowRunEvents] = useState<CompanyStreamEvent[]>([]);
+  const [workflowRunEvents, setWorkflowRunEvents] = useState<
+    CompanyStreamEvent[]
+  >([]);
   // Issue #1010: and emptied when the company changes.
   //
   // The window is the one company-scoped buffer that was never reset. Every
@@ -862,7 +908,9 @@ export function AppShell({
   // Company-scoped for the reason `openTurns` above is: the keys are message ids
   // from one company's journal, and two companies' sequences collide freely.
   useEffect(() => {
-    setLiveStepsByMessage((prev) => (Object.keys(prev).length === 0 ? prev : {}));
+    setLiveStepsByMessage((prev) =>
+      Object.keys(prev).length === 0 ? prev : {},
+    );
   }, [company]);
   // The live tool timeline, per thread, built from the transient `tool_call` /
   // `tool_result` SSE frames while a turn runs (mirrors OpenHuman's live tool
@@ -911,9 +959,14 @@ export function AppShell({
     (messages: readonly ChatMessage[], alsoDrop: readonly string[] = []) => {
       setLiveStepsByMessage((prev) => {
         const done = new Set(alsoDrop);
-        for (const m of messages) if (m.steps && m.steps.length > 0) done.add(m.id);
+        for (const m of messages)
+          if (m.steps && m.steps.length > 0) done.add(m.id);
         let hit = false;
-        for (const id of done) if (id in prev) { hit = true; break; }
+        for (const id of done)
+          if (id in prev) {
+            hit = true;
+            break;
+          }
         if (!hit) return prev;
         const next = { ...prev };
         for (const id of done) delete next[id];
@@ -998,7 +1051,9 @@ export function AppShell({
    * `const`, so clicking "skip for now" re-renders past the gate without a
    * page reload — `sessionStorage` alone would need one.
    */
-  const [gateSkipped, setGateSkipped] = useState(() => gateSkippedThisSession(scope));
+  const [gateSkipped, setGateSkipped] = useState(() =>
+    gateSkippedThisSession(scope),
+  );
   useEffect(() => {
     setGateSkipped(gateSkippedThisSession(scope));
   }, [scope]);
@@ -1016,7 +1071,9 @@ export function AppShell({
    * `onboarding/state.ts` for why an unfinishable step plus a session-scoped
    * skip is a checklist that reappears forever.
    */
-  const [gateIsDismissed, setGateIsDismissed] = useState(() => gateDismissed(scope));
+  const [gateIsDismissed, setGateIsDismissed] = useState(() =>
+    gateDismissed(scope),
+  );
   useEffect(() => {
     setGateIsDismissed(gateDismissed(scope));
   }, [scope]);
@@ -1032,7 +1089,9 @@ export function AppShell({
    * the same reason `gateSkipped` is: waiving has to re-render past the gate
    * without a reload, and `localStorage` alone would need one.
    */
-  const [gateWaived, setGateWaived] = useState<GateStepId[]>(() => waivedGateSteps(scope));
+  const [gateWaived, setGateWaived] = useState<GateStepId[]>(() =>
+    waivedGateSteps(scope),
+  );
   useEffect(() => {
     setGateWaived(waivedGateSteps(scope));
   }, [scope]);
@@ -1111,8 +1170,12 @@ export function AppShell({
       void (async () => {
         try {
           const admin =
-            (await withReadTimeout(fetchMe(client, company), GATE_ADMIN_CHECK_TIMEOUT_MS)).role ===
-            "admin";
+            (
+              await withReadTimeout(
+                fetchMe(client, company),
+                GATE_ADMIN_CHECK_TIMEOUT_MS,
+              )
+            ).role === "admin";
           if (!live) return;
           setIsGateAdmin(admin);
           failures = 0;
@@ -1126,7 +1189,8 @@ export function AppShell({
             setIsGateAdminStuck(false);
           } else {
             failures += 1;
-            if (failures >= GATE_ADMIN_CHECK_STUCK_AFTER_FAILURES) setIsGateAdminStuck(true);
+            if (failures >= GATE_ADMIN_CHECK_STUCK_AFTER_FAILURES)
+              setIsGateAdminStuck(true);
             retryTimer = setTimeout(load, GATE_ADMIN_CHECK_RETRY_MS);
           }
         }
@@ -1152,7 +1216,11 @@ export function AppShell({
   // admin-gated) and reverted it — see `shouldPollActivationForRole`'s own
   // doc for why every role now polls alike. The poll still stops itself once
   // the company is actually activated; nothing here needs to.
-  const activationGate = useActivationGate(client, company, shouldPollActivationForRole(isGateAdmin));
+  const activationGate = useActivationGate(
+    client,
+    company,
+    shouldPollActivationForRole(isGateAdmin),
+  );
 
   // CodeRabbit review, PR #2046: which scope `activationGate.status` actually
   // describes, read during THIS effect before it is overwritten below.
@@ -1176,7 +1244,9 @@ export function AppShell({
   useEffect(() => {
     const previous = lastGateWaiverScopeRef.current;
     const scopeJustChanged =
-      previous === null || previous.connection !== scope.connection || previous.company !== scope.company;
+      previous === null ||
+      previous.connection !== scope.connection ||
+      previous.company !== scope.company;
     lastGateWaiverScopeRef.current = scope;
     if (scopeJustChanged) return;
     const status = activationGate.status;
@@ -1239,7 +1309,8 @@ export function AppShell({
     setGateWaived((previous) => {
       const stored = waivedGateSteps(scope);
       const same =
-        previous.length === stored.length && stored.every((step, i) => previous[i] === step);
+        previous.length === stored.length &&
+        stored.every((step, i) => previous[i] === step);
       return same ? previous : stored;
     });
   }, [activationGate.status, scope]);
@@ -1339,10 +1410,12 @@ export function AppShell({
   // the host drops a resolved approval from the feed at once, so a console
   // holding only a verdict has nothing left to draw and the card blinks out of
   // the thread the instant it is decided.
-  const [decidingApprovals, setDecidingApprovals] = useState<ReadonlyMap<string, Verdict>>(
-    () => new Map(),
-  );
-  const [decidedApprovals, setDecidedApprovals] = useState<Record<string, DecidedApproval>>({});
+  const [decidingApprovals, setDecidingApprovals] = useState<
+    ReadonlyMap<string, Verdict>
+  >(() => new Map());
+  const [decidedApprovals, setDecidedApprovals] = useState<
+    Record<string, DecidedApproval>
+  >({});
   /**
    * Decisions that did **not** land, per approval id (#842 review).
    *
@@ -1357,7 +1430,9 @@ export function AppShell({
    * Cleared when that item is decided again, so a retry starts from a clean
    * state rather than showing the previous attempt's error under a live one.
    */
-  const [failedApprovals, setFailedApprovals] = useState<Record<string, string>>({});
+  const [failedApprovals, setFailedApprovals] = useState<
+    Record<string, string>
+  >({});
 
   // The sidebar badge, and the rising edge behind the "needs a sign-off" push.
   //
@@ -1398,13 +1473,16 @@ export function AppShell({
     window.history.replaceState(
       {},
       "",
-      window.location.pathname + (query ? `?${query}` : "") + stripLegacyConnectParams(window.location.hash),
+      window.location.pathname +
+        (query ? `?${query}` : "") +
+        stripLegacyConnectParams(window.location.hash),
     );
     setView("connections", "apps");
     // The callback param carries the raw provider id (e.g. "slack"); show the
     // catalog display name ("Slack") when we know it, falling back to the id.
     const providerName = providerId
-      ? (CONNECTION_PROVIDERS.find((p) => p.id === providerId)?.name ?? providerId)
+      ? (CONNECTION_PROVIDERS.find((p) => p.id === providerId)?.name ??
+        providerId)
       : null;
     if (failed) toast.error(connectErrorMessage(failed, providerName));
     else toast.success(`Connected ${providerName}.`);
@@ -1469,7 +1547,8 @@ export function AppShell({
     client
       .readState(company)
       .then(({ markers }) => {
-          if (cancelled || requestCompany !== company || markers.length === 0) return;
+        if (cancelled || requestCompany !== company || markers.length === 0)
+          return;
         setLastViewedChannel((viewed) => mergeReadFloors(viewed, markers));
       })
       .catch(() => {
@@ -1535,7 +1614,10 @@ export function AppShell({
     // (see `RoomView`'s `send`). Fetching per unique thread means a thread
     // rendered by more than one channel is read once, not twice, on every tick
     // (issue #1690).
-    const hydrateThread = (threadId: string, channels: readonly { channelId: string }[]) => {
+    const hydrateThread = (
+      threadId: string,
+      channels: readonly { channelId: string }[],
+    ) => {
       // Serialize: a tick that fires while the cold read is still in flight
       // does not fire a second request for the same thread (issue #1690).
       if (inFlight.has(threadId)) return;
@@ -1561,8 +1643,13 @@ export function AppShell({
             // browser-local rows are tail optimistic sends.
             channels.forEach(({ channelId }) => {
               setTranscripts((t) => {
-                const merged = mergeHistoryInOrder(t[channelId] ?? [], hydrated);
-                return merged === (t[channelId] ?? []) ? t : { ...t, [channelId]: merged };
+                const merged = mergeHistoryInOrder(
+                  t[channelId] ?? [],
+                  hydrated,
+                );
+                return merged === (t[channelId] ?? [])
+                  ? t
+                  : { ...t, [channelId]: merged };
               });
             });
           }
@@ -1570,7 +1657,10 @@ export function AppShell({
         })
         .catch(() => {
           /* host without `/chat/history`, or offline — stores stay as they are */
-          if (!cancelled) channels.forEach(({ channelId }) => markHistory(channelId, "ready"));
+          if (!cancelled)
+            channels.forEach(({ channelId }) =>
+              markHistory(channelId, "ready"),
+            );
         })
         .finally(() => {
           inFlight.delete(threadId);
@@ -1595,8 +1685,9 @@ export function AppShell({
       // a channel — the main line is a thread with no Chat channel. And every
       // channel's backing thread is in `threadIds`, so the union is the full
       // set, each exactly once (issue #1690).
-      [...new Set([...threadIds, ...channelsByThread.keys()])].forEach((threadId) =>
-        hydrateThread(threadId, channelsByThread.get(threadId) ?? []),
+      [...new Set([...threadIds, ...channelsByThread.keys()])].forEach(
+        (threadId) =>
+          hydrateThread(threadId, channelsByThread.get(threadId) ?? []),
       );
     };
 
@@ -1631,7 +1722,8 @@ export function AppShell({
         // that 404s `/team` keeps its desks rather than losing the whole list.
         const team = await client.listTeam(company).catch(() => []);
         if (cancelled) return;
-        const deskThreads = desks === null ? defaultThreads() : threadsFromDesks(desks);
+        const deskThreads =
+          desks === null ? defaultThreads() : threadsFromDesks(desks);
         const resolved = [
           ...deskThreads,
           ...agentDmThreads(
@@ -1644,7 +1736,8 @@ export function AppShell({
         // failed (`desks === null`, from the `.catch(() => null)` above); a
         // company that simply declares no `[[group_chat]]` used to be given
         // three fabricated ones here.
-        const chatDesks = desks === null ? defaultDesks() : desks.map(deskFromDto);
+        const chatDesks =
+          desks === null ? defaultDesks() : desks.map(deskFromDto);
         const roster = team.map(fromDto);
         // The name map the live receipt resolves an agent id through (issue
         // #1934) — derived from the roster this effect already read, so it costs
@@ -1664,7 +1757,9 @@ export function AppShell({
         // this closes the live-event gap the poll was quietly papering over.
         setChatChannelByThread({
           ...channelMap(chatDesks, roster),
-          ...(operatorChannel ? { [operatorChannel.id]: operatorChannel.id } : {}),
+          ...(operatorChannel
+            ? { [operatorChannel.id]: operatorChannel.id }
+            : {}),
         });
         // The channel `RoomView` lands on when the hash names none, which since
         // issue #1743 is the built-in `#general` rather than the first desk —
@@ -1673,7 +1768,9 @@ export function AppShell({
         // hard-coded, for the reason `generalChannelId` gives: a grandfathered
         // blueprint desk owns the line in its own company, and `main` is then
         // not a channel at all.
-        setFirstDeskChannelId(channelIdForThread(MAIN_THREAD_ID, chatDesks, roster));
+        setFirstDeskChannelId(
+          channelIdForThread(MAIN_THREAD_ID, chatDesks, roster),
+        );
         // Fold the Operator feed's id into the same rehydration pass, keyed on
         // its own id both as channel and thread (its channel id *is* its
         // thread id — `chat/history?desk=<id>` reads it through the ordinary
@@ -1690,7 +1787,9 @@ export function AppShell({
           // history has to be named here or nothing would rehydrate it on
           // reload — the one channel every company has would come back empty.
           {
-            channelId: channelIdForThread(MAIN_THREAD_ID, chatDesks, roster) ?? MAIN_THREAD_ID,
+            channelId:
+              channelIdForThread(MAIN_THREAD_ID, chatDesks, roster) ??
+              MAIN_THREAD_ID,
             threadId: MAIN_THREAD_ID,
           },
           ...chatDesks.map((d) => ({ channelId: d.id, threadId: d.id })),
@@ -1709,7 +1808,9 @@ export function AppShell({
           // where a thread renders decides it here too (issue #1743). For every
           // ordinary teammate that is exactly `dm:<id>`, unchanged.
           ...roster.map((m) => ({
-            channelId: channelIdForThread(dmThreadId(m), chatDesks, roster) ?? dmChannelId(m),
+            channelId:
+              channelIdForThread(dmThreadId(m), chatDesks, roster) ??
+              dmChannelId(m),
             // The address the DM is actually written under. Bare, this fetched
             // the folded General history for a teammate whose id is a General
             // spelling, so its own transcript could never be recovered after a
@@ -1785,7 +1886,8 @@ export function AppShell({
         // flight is already in the map and is the more recent truth. The merge
         // appends per thread and collapses the same turn onto one entry, so a
         // re-arm never evicts a row the POST leg is already watching.
-        if (Object.keys(open).length) setOpenTurns((prev) => mergeOpenTurns(prev, open));
+        if (Object.keys(open).length)
+          setOpenTurns((prev) => mergeOpenTurns(prev, open));
       })
       .catch(() => {
         /* host without `/runs`, or offline — nothing to re-arm */
@@ -1917,7 +2019,8 @@ export function AppShell({
             scopeRef.current.company !== company ||
             scopeRef.current.connection !== scope.connection ||
             scopeRef.current.client !== client
-          ) return;
+          )
+            return;
           const hydrated = fromHistory(entries);
           // The turn is over, so its transient tool rows have served their
           // purpose — the durable record just folded in is what stands now.
@@ -1937,7 +2040,13 @@ export function AppShell({
           // whenever its frames arrived while this history read was in flight,
           // which on a round trip is a wide window. The newer turn's own
           // settle clears them when it gets there.
-          if (!hasOtherOpenTurns(room.readRoom().openTurns, liveKey, settledTurnId)) {
+          if (
+            !hasOtherOpenTurns(
+              room.readRoom().openTurns,
+              liveKey,
+              settledTurnId,
+            )
+          ) {
             setLiveStepsByThread((prev) =>
               prev[liveKey]?.length ? { ...prev, [liveKey]: [] } : prev,
             );
@@ -1962,9 +2071,15 @@ export function AppShell({
             // reply, so it never grows durable steps to swap for, and its bucket
             // would otherwise hold a row marked `running` for the whole session
             // (Codex on #2069).
-            clearLiveRowsSettledBy(hydrated, hydrated.map((m) => m.id));
+            clearLiveRowsSettledBy(
+              hydrated,
+              hydrated.map((m) => m.id),
+            );
           }
-          const channelId = channelForThread(chatChannelByThreadRef.current, threadId);
+          const channelId = channelForThread(
+            chatChannelByThreadRef.current,
+            threadId,
+          );
           // The thread settled before the desks/roster effect populated its
           // channel id — on a cold load, or the moment after a company switch
           // (issue #1701). Park the id so the drain effect replays the
@@ -1978,11 +2093,14 @@ export function AppShell({
             // receipt, armed before its `openTurns` row landed (Codex on
             // #2044). Keyed by the pair so two threads of one desk park
             // separately rather than collapsing onto one entry.
-            pendingReReadRef.current.set(`${liveKey}\u0000${settledTurnId ?? ""}`, {
-              desk: threadId,
-              stateKey: liveKey,
-              turnId: settledTurnId,
-            });
+            pendingReReadRef.current.set(
+              `${liveKey}\u0000${settledTurnId ?? ""}`,
+              {
+                desk: threadId,
+                stateKey: liveKey,
+                turnId: settledTurnId,
+              },
+            );
             return;
           }
           setTranscripts((t) => {
@@ -2010,7 +2128,11 @@ export function AppShell({
   // callback only: `transcripts`/`threads` are written by the replay itself,
   // so depending on them would loop.
   useEffect(() => {
-    drainReReadQueue(pendingReReadRef.current, chatChannelByThread, reReadSettledThread);
+    drainReReadQueue(
+      pendingReReadRef.current,
+      chatChannelByThread,
+      reReadSettledThread,
+    );
   }, [chatChannelByThread, reReadSettledThread]);
 
   /**
@@ -2088,7 +2210,9 @@ export function AppShell({
             // means it has not taken the per-company lock yet.
             const queued = run.status === "pending";
             setOpenTurns((prev) =>
-              prev[stateKey]?.some((t) => t.turnId === turn.turnId && t.queued !== queued)
+              prev[stateKey]?.some(
+                (t) => t.turnId === turn.turnId && t.queued !== queued,
+              )
                 ? {
                     ...prev,
                     [stateKey]: prev[stateKey].map((t) =>
@@ -2198,7 +2322,9 @@ export function AppShell({
           requestCompany !== scopeRef.current.company
         )
           return;
-        const next = Array.isArray(feed?.notifications) ? feed.notifications : [];
+        const next = Array.isArray(feed?.notifications)
+          ? feed.notifications
+          : [];
         setMentionFeed(next);
         // A mention posted by another operator never reaches this tab through
         // SSE (`OperatorMessage` is dropped from the projection), and the
@@ -2209,7 +2335,9 @@ export function AppShell({
         // nothing to show and the `loadedMessageIds` gate unable to clear it
         // (Codex). Re-read the host thread so the mentioned message lands.
         const loadedByChannel: Record<string, ReadonlySet<string>> = {};
-        for (const [channelId, rows] of Object.entries(room.readRoom().transcripts)) {
+        for (const [channelId, rows] of Object.entries(
+          room.readRoom().transcripts,
+        )) {
           loadedByChannel[channelId] = new Set(rows.map((m) => m.id));
         }
         const { threadIds, subjects } = threadsToReReadForMentions(
@@ -2249,11 +2377,14 @@ export function AppShell({
           // ack below fires.
           ids.forEach((id) => operationalAnnouncedRef.current.add(id));
           for (const n of toAnnounce) {
-            if (operationalNotificationSeverity(n) === "error") toast.error(n.title);
+            if (operationalNotificationSeverity(n) === "error")
+              toast.error(n.title);
             else toast.warning(n.title);
           }
           setMentionFeed((current) =>
-            current.map((n) => (ids.includes(n.id) ? { ...n, readAt: Date.now() } : n)),
+            current.map((n) =>
+              ids.includes(n.id) ? { ...n, readAt: Date.now() } : n,
+            ),
           );
           const { ackNow, pending } = scheduleAcknowledgement(
             ids,
@@ -2263,14 +2394,16 @@ export function AppShell({
           );
           pendingAckRef.current = pending;
           if (ackNow.length > 0) {
-            void client.markNotificationsRead(ackNow, requestCompany).catch(() => {
-              // A failed mark-read leaves the row unread server-side; the next
-              // poll re-fetches it, finds it still in `readAt: undefined`, but
-              // `operationalAnnouncedRef` has already seen its id, so it is not
-              // re-toasted. The row itself is not lost — it is still durable
-              // and still returned — only the toast is best-effort, matching
-              // how mention marking already treats offline/older-host failure.
-            });
+            void client
+              .markNotificationsRead(ackNow, requestCompany)
+              .catch(() => {
+                // A failed mark-read leaves the row unread server-side; the next
+                // poll re-fetches it, finds it still in `readAt: undefined`, but
+                // `operationalAnnouncedRef` has already seen its id, so it is not
+                // re-toasted. The row itself is not lost — it is still durable
+                // and still returned — only the toast is best-effort, matching
+                // how mention marking already treats offline/older-host failure.
+              });
           }
         }
       })
@@ -2310,16 +2443,19 @@ export function AppShell({
       );
       pendingAckRef.current = pending;
       if (ackNow.length > 0) {
-        void client.markNotificationsRead(ackNow, scopeRef.current.company).catch(() => {
-          // Same best-effort contract as the immediate path above — a failed
-          // flush leaves the rows unread server-side, re-fetched (but not
-          // re-toasted, `operationalAnnouncedRef` already has their ids) on
-          // the next poll.
-        });
+        void client
+          .markNotificationsRead(ackNow, scopeRef.current.company)
+          .catch(() => {
+            // Same best-effort contract as the immediate path above — a failed
+            // flush leaves the rows unread server-side, re-fetched (but not
+            // re-toasted, `operationalAnnouncedRef` already has their ids) on
+            // the next poll.
+          });
       }
     };
     document.addEventListener("visibilitychange", onVisibilityChange);
-    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
+    return () =>
+      document.removeEventListener("visibilitychange", onVisibilityChange);
   }, [client]);
 
   const mentionCounts = useMemo(() => {
@@ -2478,7 +2614,9 @@ export function AppShell({
     // Through `channelForThread`, not a bare index: the host accepts any casing
     // of a General spelling and echoes back the one the caller used, so a map
     // of four literals misses `MAIN` from an API client (issue #1743).
-    const target = threadId ? (channelForThread(chatChannelByThread, threadId) ?? undefined) : undefined;
+    const target = threadId
+      ? (channelForThread(chatChannelByThread, threadId) ?? undefined)
+      : undefined;
     if (!target) {
       noteSystem(line);
       return;
@@ -2580,7 +2718,9 @@ export function AppShell({
               // of appearing in the channel and moving on the next reload. The
               // host names the parent by its own id, so it takes the same
               // namespace prefix a hydrated line does.
-              parentId: event.parentId ? hostMessageId(event.parentId) : undefined,
+              parentId: event.parentId
+                ? hostMessageId(event.parentId)
+                : undefined,
             }),
           ],
         };
@@ -2618,7 +2758,10 @@ export function AppShell({
       // erase the live tool trace of a turn that is, per the very lookup
       // racing it, still running. Only the actual reply — never an advisory
       // interleaved before it — is a completion signal.
-      if (from !== "system" && !hasOtherOpenTurns(room.readRoom().openTurns, event.chatId)) {
+      if (
+        from !== "system" &&
+        !hasOtherOpenTurns(room.readRoom().openTurns, event.chatId)
+      ) {
         setLiveStepsByThread((prev) =>
           prev[event.chatId]?.length ? { ...prev, [event.chatId]: [] } : prev,
         );
@@ -2759,9 +2902,13 @@ export function AppShell({
       // Rendered here rather than discarded: see `ended`'s own doc for why the
       // response's own text, only available at this call site, is what makes
       // this safe without double-rendering the frames the response DOES carry.
-      const released = pendingPostThreadsRef.current.ended(threadId, responseTexts);
+      const released = pendingPostThreadsRef.current.ended(
+        threadId,
+        responseTexts,
+      );
       released.forEach((frame) => renderAgentReply(frame));
-      if (activeTurnThreadRef.current === threadId) activeTurnThreadRef.current = null;
+      if (activeTurnThreadRef.current === threadId)
+        activeTurnThreadRef.current = null;
       setLiveStepsByThread((prev) => {
         if (!prev[threadId]?.length) return prev;
         return { ...prev, [threadId]: [] };
@@ -2839,7 +2986,10 @@ export function AppShell({
         // than a parse of the key (CodeRabbit on #2044).
         return {
           ...prev,
-          [threadId]: [...turns, { turnId, queued: true, chatId: chatId ?? threadId }],
+          [threadId]: [
+            ...turns,
+            { turnId, queued: true, chatId: chatId ?? threadId },
+          ],
         };
       });
       held.forEach((frame) => renderAgentReply(frame));
@@ -2914,13 +3064,17 @@ export function AppShell({
             scopeRef.current.company !== company ||
             scopeRef.current.connection !== scope.connection ||
             scopeRef.current.client !== client
-          ) return;
+          )
+            return;
           const open = openTurnsFromRuns(runs);
           // The fold's whole list for this thread, not just its head: the POST
           // died mid-queue, so any rows the host kept are this turn's kin and
           // each has a reply to deliver. The merge appends and collapses by id.
           const durable = open[threadId];
-          if (durable) setOpenTurns((prev) => mergeOpenTurns(prev, { [threadId]: durable }));
+          if (durable)
+            setOpenTurns((prev) =>
+              mergeOpenTurns(prev, { [threadId]: durable }),
+            );
           else clearReceipt(threadId, gen);
         })
         .catch(() => {
@@ -2999,13 +3153,25 @@ export function AppShell({
   // flickers off mid-window.
   useEffect(() => {
     if (budgetProximity === null) return;
-    if (isBudgetProximityExpired(budgetProximity.atMillis, Date.now(), budgetProximity.agentId)) {
+    if (
+      isBudgetProximityExpired(
+        budgetProximity.atMillis,
+        Date.now(),
+        budgetProximity.agentId,
+      )
+    ) {
       setBudgetProximity(null);
       return;
     }
     const remainingMs =
-      budgetProximityExpiresAt(budgetProximity.atMillis, budgetProximity.agentId) - Date.now();
-    const timer = setTimeout(() => setBudgetProximity(null), Math.max(remainingMs, 0));
+      budgetProximityExpiresAt(
+        budgetProximity.atMillis,
+        budgetProximity.agentId,
+      ) - Date.now();
+    const timer = setTimeout(
+      () => setBudgetProximity(null),
+      Math.max(remainingMs, 0),
+    );
     return () => clearTimeout(timer);
   }, [budgetProximity]);
   /**
@@ -3021,9 +3187,9 @@ export function AppShell({
    * People section does not render and a typing line falls back to naming
    * nobody rather than naming a raw id.
    */
-  const [companyPeople, setCompanyPeople] = useState<Array<{ id: string; label: string }>>(
-    [],
-  );
+  const [companyPeople, setCompanyPeople] = useState<
+    Array<{ id: string; label: string }>
+  >([]);
   useEffect(() => {
     let live = true;
     void client
@@ -3080,7 +3246,11 @@ export function AppShell({
     // guard is a type narrowing rather than a runtime filter — but it is stated
     // rather than assumed, because `foldLiveFrame` takes the narrow shape and a
     // cast would let a fourth kind through silently if that routing ever grew.
-    if (event.type !== "tool_call" && event.type !== "tool_result" && event.type !== "thinking") {
+    if (
+      event.type !== "tool_call" &&
+      event.type !== "tool_result" &&
+      event.type !== "thinking"
+    ) {
       return;
     }
     // Workflow agent-node frames carry `workflowRunId`/`nodeId` instead of a
@@ -3146,7 +3316,10 @@ export function AppShell({
       if (!existing) return prev;
       const frameAgentId = "agentId" in event ? event.agentId : undefined;
       const agentId = existing.agentId ?? (frameAgentId || undefined);
-      return { ...prev, [threadId]: { ...existing, lastFrameAt: Date.now(), agentId } };
+      return {
+        ...prev,
+        [threadId]: { ...existing, lastFrameAt: Date.now(), agentId },
+      };
     });
   }, []);
 
@@ -3204,11 +3377,17 @@ export function AppShell({
     // live one, or the operator cannot tell which attempt it belongs to.
     clearFailure(approval.id);
     try {
-      const answer = await client.resolveApproval(approval.id, verdict, undefined, company, {
-        detach: true,
-        scope,
-        blocker,
-      });
+      const answer = await client.resolveApproval(
+        approval.id,
+        verdict,
+        undefined,
+        company,
+        {
+          detach: true,
+          scope,
+          blocker,
+        },
+      );
       // A blocker answers for its whole root-cause group. Each sibling the host
       // settled is this tab's decision too, so its SSE echo must not surface as
       // a second toast for a card the operator decided once (#1211).
@@ -3235,14 +3414,19 @@ export function AppShell({
         // refresh in `finally`) settles the card with the truth.
         if (answer.outcome === "expired") {
           setDecidedApprovals((prev) =>
-            prev[approval.id] ? prev : { ...prev, [approval.id]: { verdict: "deny", approval } },
+            prev[approval.id]
+              ? prev
+              : { ...prev, [approval.id]: { verdict: "deny", approval } },
           );
         }
         toast.info(stale);
         noteInChannel(approval.thread, stale);
         return;
       }
-      setDecidedApprovals((prev) => ({ ...prev, [approval.id]: { verdict, approval } }));
+      setDecidedApprovals((prev) => ({
+        ...prev,
+        [approval.id]: { verdict, approval },
+      }));
       toast.success(
         blocker
           ? blockerDecidedLine(blocker.verdict, undefined, answer.settledIds)
@@ -3259,10 +3443,14 @@ export function AppShell({
           blockerDecidedLine(blocker.verdict, undefined, answer.settledIds),
         );
       } else if (verdict === "deny") {
-        noteInChannel(approval.thread, "Declined — the agent will not take that action.");
+        noteInChannel(
+          approval.thread,
+          "Declined — the agent will not take that action.",
+        );
       }
     } catch (err) {
-      const msg = err instanceof ApiError ? err.message : "something went wrong";
+      const msg =
+        err instanceof ApiError ? err.message : "something went wrong";
       toast.error(`Couldn't record your decision — ${msg}`);
       noteInChannel(approval.thread, `Couldn't record your decision — ${msg}`);
       // On the card as well as in a toast, and keyed to the item that failed.
@@ -3306,7 +3494,8 @@ export function AppShell({
     // event hook raises the linked completion toast (#1758).
     isViewingTaskOrigin: useCallback(
       (event: CompanyStreamEvent) => {
-        if (event.type !== "desk_task_completed" || view !== "chat") return false;
+        if (event.type !== "desk_task_completed" || view !== "chat")
+          return false;
         // Below `lg`, selecting the channel rail hides the transcript while
         // leaving `activeChatChannelRef` naming whatever was last shown — a
         // completion from that channel must not suppress its toast while the
@@ -3314,7 +3503,8 @@ export function AppShell({
         if (!chatPaneVisibleRef.current) return false;
         const placement = dispatchMarkerPlacement(event, chatChannelByThread);
         const origin = placement?.channelId;
-        if (origin == null || activeChatChannelRef.current !== origin) return false;
+        if (origin == null || activeChatChannelRef.current !== origin)
+          return false;
         // #1890 B: a card raised in a thread settles into that thread, and
         // `buildTimeline` folds every parented line into its root's replies —
         // so the marker is NOT in the channel timeline and the channel being
@@ -3366,8 +3556,11 @@ export function AppShell({
       // the live canvas. Progress frames are far more frequent than outcomes,
       // so only an outcome bumps the tick — refetching history once per node
       // would be N round trips per run for a list that has not changed yet.
-      setWorkflowRunEvents((prev) => [...prev, event].slice(-WORKFLOW_EVENT_WINDOW));
-      if (event.type === "workflow_run_finished") setWorkflowRunTick((n) => n + 1);
+      setWorkflowRunEvents((prev) =>
+        [...prev, event].slice(-WORKFLOW_EVENT_WINDOW),
+      );
+      if (event.type === "workflow_run_finished")
+        setWorkflowRunTick((n) => n + 1);
       // The Observatory's live refresh is a separate tick fed by node
       // boundaries, not the run-history tick above: a node starting or settling
       // is exactly when a watching operator's attempt trace changes, and the
@@ -3400,14 +3593,17 @@ export function AppShell({
     // stream re-open and cannot go stale over the refresh it calls.
     onApprovalEvent: (event: CompanyStreamEvent) => {
       if (event.type === "approval_resolved") {
-        const verdict: Verdict = event.verdict === "approve" ? "approve" : "deny";
+        const verdict: Verdict =
+          event.verdict === "approve" ? "approve" : "deny";
         // Snapshot the summary from the feed as it stands *now* — before the
         // refresh below drops it. An id this console never had a summary for
         // records nothing, which is right: there is no card to settle.
         const approval = feed.approvals.find((a) => a.id === event.approvalId);
         if (approval) {
           setDecidedApprovals((prev) =>
-            prev[event.approvalId] ? prev : { ...prev, [event.approvalId]: { verdict, approval } },
+            prev[event.approvalId]
+              ? prev
+              : { ...prev, [event.approvalId]: { verdict, approval } },
           );
         }
         // A failed attempt here is superseded the moment the approval resolves
@@ -3433,7 +3629,8 @@ export function AppShell({
     onResync: resyncDurableState,
     onRecoveryError: useCallback(() => {
       toast.error("Live updates couldn't be recovered", {
-        description: "We couldn't refresh the latest company state. Check your connection and try again.",
+        description:
+          "We couldn't refresh the latest company state. Check your connection and try again.",
       });
     }, []),
   });
@@ -3512,6 +3709,7 @@ export function AppShell({
       setupOpen,
       setupChecked,
       skippedThisSession: gateSkipped,
+      dismissed: gateIsDismissed,
       isAdmin: isGateAdmin,
       retrying: activationGate.retrying,
       waived: gateWaived,
@@ -3540,10 +3738,12 @@ export function AppShell({
           {setupController}
           <div className="flex min-h-svh items-center justify-center p-6">
             <div className="max-w-md space-y-3 text-center">
-              <h1 className="text-lg font-medium">We can’t check your setup right now</h1>
+              <h1 className="text-lg font-medium">
+                We can’t check your setup right now
+              </h1>
               <p className="text-sm text-muted-foreground">
-                The console keeps failing to read this company’s setup status. It will keep
-                retrying, but you don’t have to wait.
+                The console keeps failing to read this company’s setup status.
+                It will keep retrying, but you don’t have to wait.
               </p>
               <button
                 type="button"
@@ -3580,6 +3780,7 @@ export function AppShell({
       checked: activationGate.checked,
       setupOpen,
       skippedThisSession: gateSkipped,
+      dismissed: gateIsDismissed,
       isAdmin: isGateAdmin,
       waived: gateWaived,
     }) &&
@@ -3624,25 +3825,25 @@ export function AppShell({
           control, which is inside this context — so the direction is flipped
           here rather than by wrapping the provider in another element. */}
       <SidebarProvider className="h-svh flex-col overflow-hidden">
-      {/* Room's channel list is rendered by `RoomView`, in the content column,
+        {/* Room's channel list is rendered by `RoomView`, in the content column,
           and painted in the sidebar column. This provider is the slot the two
           agree on; `room-rail.tsx` explains why it is a portal rather than the
           whole chat model lifted up here. Inside `SidebarProvider` because it
           also carries the sidebar's density down to the rail — the sidebar's
           collapse IS the channel list's collapse now — and above both the
           sidebar and the inset, which are the two ends of the portal. */}
-      <RoomRailSlotProvider>
-        <a
-          href={`#${MAIN_CONTENT_ID}`}
-          className="sr-only focus:fixed focus:top-4 focus:left-4 focus:z-50 focus:not-sr-only focus:rounded-md focus:bg-background focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:text-foreground focus:ring-2 focus:ring-ring focus:outline-none"
-          onClick={(event) => {
-            event.preventDefault();
-            document.getElementById(MAIN_CONTENT_ID)?.focus();
-          }}
-        >
-          Skip to content
-        </a>
-      {/* The window's one title row, above the sidebar and above the content
+        <RoomRailSlotProvider>
+          <a
+            href={`#${MAIN_CONTENT_ID}`}
+            className="sr-only focus:fixed focus:top-4 focus:left-4 focus:z-50 focus:not-sr-only focus:rounded-md focus:bg-background focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:text-foreground focus:ring-2 focus:ring-ring focus:outline-none"
+            onClick={(event) => {
+              event.preventDefault();
+              document.getElementById(MAIN_CONTENT_ID)?.focus();
+            }}
+          >
+            Skip to content
+          </a>
+          {/* The window's one title row, above the sidebar and above the content
           and spanning the full width of the window. It carries the two controls
           that are about the *console* rather than about the page: which company
           you are in, and who you are signed in as. Both used to sit in the
@@ -3651,136 +3852,145 @@ export function AppShell({
           opposite ends of a 13.5rem column and left the lights overlapping a
           narrow column instead of insetting a bar. See `window-title-bar.tsx`,
           which owns the geometry including the traffic-light inset. */}
-      <WindowTitleBar
-        switcher={
-          <HostSwitcher
-            variant="titlebar"
-            companyName={feed.status.name}
-            // The company's lifecycle, and every company on this host: both
-            // were rows in the sidebar footer, and both are facts about *which
-            // company you are in* — which is what this control is. See
-            // `HostSwitcher`'s `companyState` for why the lifecycle is not
-            // folded into the connection dot.
-            companyState={lifecycle(feed.status.lifecycle, feed.status.emergency_paused)}
-            companies={companies}
-            activeCompany={company}
-            onSwitchCompany={onSwitchCompany}
-            onBackToPicker={onBackToPicker}
-            onCreateCompany={onCreateCompany}
-            canCreateCompany={offersCompanyCreation(client)}
+          <WindowTitleBar
+            switcher={
+              <HostSwitcher
+                variant="titlebar"
+                companyName={feed.status.name}
+                // The company's lifecycle, and every company on this host: both
+                // were rows in the sidebar footer, and both are facts about *which
+                // company you are in* — which is what this control is. See
+                // `HostSwitcher`'s `companyState` for why the lifecycle is not
+                // folded into the connection dot.
+                companyState={lifecycle(
+                  feed.status.lifecycle,
+                  feed.status.emergency_paused,
+                )}
+                companies={companies}
+                activeCompany={company}
+                onSwitchCompany={onSwitchCompany}
+                onBackToPicker={onBackToPicker}
+                onCreateCompany={onCreateCompany}
+                canCreateCompany={offersCompanyCreation(client)}
+              />
+            }
+            sidebarToggle={
+              // Two controls, one slot, exact complements — so the way to the
+              // navigation is in the same corner at every width and is never in
+              // both places or neither.
+              //
+              // `md` and up is the column, which collapses: `SidebarCollapseButton`
+              // says "Collapse"/"Expand", and `md` is the width `useIsMobile` flips
+              // at, so its own mobile guard and this gate agree by construction.
+              //
+              // Below `md` the sidebar is a sheet, which opens: those two labels are
+              // both wrong for one, so the sheet's own trigger takes the slot. It
+              // used to be a reserved row at the FOOT of the inset (issue #1265,
+              // which was about a `fixed` trigger floating over the content and
+              // winning every hit-test in the bottom-left corner). A row of its own
+              // solved that and put the way back to navigation at the bottom of the
+              // screen, furthest from the header it belongs to. In the title row it
+              // is neither floating nor buried.
+              <>
+                <span className="hidden md:inline-flex">
+                  <SidebarCollapseButton />
+                </span>
+                <SidebarTrigger
+                  aria-label="Toggle sidebar"
+                  // The row's shared glyph shape, so it sits with its neighbours
+                  // rather than reading as a `ghost` Button that wandered in.
+                  className={cn(TITLE_BAR_ICON_BUTTON, "md:hidden")}
+                />
+              </>
+            }
+            search={<TitleBarSearch />}
+            utilities={
+              // The three that were the sidebar's footer, beside Overview in the
+              // same group: all four are about the console rather than the page.
+              <TitleBarUtilities view={view} onNavigate={setView} />
+            }
+            overview={
+              // The console's front page, as a glyph. `NAV` still carries the
+              // labelled row and will until the sidebar restructure removes it; in a
+              // chrome band a labelled button reads as content, so the name moves
+              // here to `aria-label` and `title`. First thing the row drops as the
+              // window narrows — see `TITLE_BAR_LADDER`.
+              <OverviewButton
+                active={isNavigationActive("overview", view)}
+                onNavigate={() => setView("overview")}
+              />
+            }
+            // No `approvals` slot. It is a sidebar row again — a labelled place
+            // you go, rather than one unlabelled square between an Overview glyph
+            // and an autonomy pill. The count that kept it here (issue #1018: a
+            // signal must survive the rail collapsing) is answered in the column by
+            // `SidebarMenuBadge` and its icon-rail mirror `SidebarMenuDot`, so
+            // nothing about the signal depends on this row any more. See
+            // `NAV_SECTIONS`.
+            //
+            // No `autonomy` slot either. The tier is a control on the composer's
+            // toolbar row now (`views/chat/MessageComposer.tsx`): it is a fact
+            // about what happens when you press Send, so it belongs beside Send
+            // rather than in the band that holds facts about the console.
+            profile={
+              // Who you are signed in as, and nothing else. It renders nothing
+              // where there is nobody to name — a host with no sign-in, or a
+              // session that has just gone — and the row simply closes up.
+              <ProfileRow
+                variant="titlebar"
+                client={client}
+                company={company}
+                onSignedOut={() => void forgetSession(scope.connection)}
+              />
+            }
           />
-        }
-        sidebarToggle={
-          // Two controls, one slot, exact complements — so the way to the
-          // navigation is in the same corner at every width and is never in
-          // both places or neither.
-          //
-          // `md` and up is the column, which collapses: `SidebarCollapseButton`
-          // says "Collapse"/"Expand", and `md` is the width `useIsMobile` flips
-          // at, so its own mobile guard and this gate agree by construction.
-          //
-          // Below `md` the sidebar is a sheet, which opens: those two labels are
-          // both wrong for one, so the sheet's own trigger takes the slot. It
-          // used to be a reserved row at the FOOT of the inset (issue #1265,
-          // which was about a `fixed` trigger floating over the content and
-          // winning every hit-test in the bottom-left corner). A row of its own
-          // solved that and put the way back to navigation at the bottom of the
-          // screen, furthest from the header it belongs to. In the title row it
-          // is neither floating nor buried.
-          <>
-            <span className="hidden md:inline-flex">
-              <SidebarCollapseButton />
-            </span>
-            <SidebarTrigger
-              aria-label="Toggle sidebar"
-              // The row's shared glyph shape, so it sits with its neighbours
-              // rather than reading as a `ghost` Button that wandered in.
-              className={cn(TITLE_BAR_ICON_BUTTON, "md:hidden")}
-            />
-          </>
-        }
-        search={<TitleBarSearch />}
-        utilities={
-          // The three that were the sidebar's footer, beside Overview in the
-          // same group: all four are about the console rather than the page.
-          <TitleBarUtilities view={view} onNavigate={setView} />
-        }
-        overview={
-          // The console's front page, as a glyph. `NAV` still carries the
-          // labelled row and will until the sidebar restructure removes it; in a
-          // chrome band a labelled button reads as content, so the name moves
-          // here to `aria-label` and `title`. First thing the row drops as the
-          // window narrows — see `TITLE_BAR_LADDER`.
-          <OverviewButton
-            active={isNavigationActive("overview", view)}
-            onNavigate={() => setView("overview")}
-          />
-        }
-        // No `approvals` slot. It is a sidebar row again — a labelled place
-        // you go, rather than one unlabelled square between an Overview glyph
-        // and an autonomy pill. The count that kept it here (issue #1018: a
-        // signal must survive the rail collapsing) is answered in the column by
-        // `SidebarMenuBadge` and its icon-rail mirror `SidebarMenuDot`, so
-        // nothing about the signal depends on this row any more. See
-        // `NAV_SECTIONS`.
-        //
-        // No `autonomy` slot either. The tier is a control on the composer's
-        // toolbar row now (`views/chat/MessageComposer.tsx`): it is a fact
-        // about what happens when you press Send, so it belongs beside Send
-        // rather than in the band that holds facts about the console.
-        profile={
-          // Who you are signed in as, and nothing else. It renders nothing
-          // where there is nobody to name — a host with no sign-in, or a
-          // session that has just gone — and the row simply closes up.
-          <ProfileRow
-            variant="titlebar"
-            client={client}
-            company={company}
-            onSignedOut={() => void forgetSession(scope.connection)}
-          />
-        }
-      />
 
-      {/* The shell proper, below the title row: the sidebar column and the
+          {/* The shell proper, below the title row: the sidebar column and the
           content column, still flex siblings so the sidebar's `peer` selectors
           and its in-flow width gap keep working. */}
-      <div className="flex w-full min-h-0 flex-1">
-      <Sidebar
-        collapsible="icon"
-        // The sidebar's container is `fixed inset-y-0 h-svh` — it positions
-        // against the VIEWPORT, so a title row placed above it in the flow does
-        // not push it down and the column would slide underneath the bar. This
-        // is the offset that puts it back, as inline style rather than a class
-        // because `top-*` and `h-*` would be fighting `inset-y-0` and `h-svh`
-        // on the same element and the winner would come down to stylesheet
-        // order.
-        style={{
-          top: WINDOW_TITLE_BAR_HEIGHT,
-          height: `calc(100svh - ${WINDOW_TITLE_BAR_HEIGHT}px)`,
-        }}
-      >
-
-        <nav aria-label="Main navigation" className="flex min-h-0 flex-1 flex-col">
-          <SidebarContent data-tour="sidebar">
-          <SidebarNavigation view={view} onNavigate={setView} pending={pending} />
-        </SidebarContent>
-        {/* The console's own utilities sit at the FOOT of the column, under the
+          <div className="flex w-full min-h-0 flex-1">
+            <Sidebar
+              collapsible="icon"
+              // The sidebar's container is `fixed inset-y-0 h-svh` — it positions
+              // against the VIEWPORT, so a title row placed above it in the flow does
+              // not push it down and the column would slide underneath the bar. This
+              // is the offset that puts it back, as inline style rather than a class
+              // because `top-*` and `h-*` would be fighting `inset-y-0` and `h-svh`
+              // on the same element and the winner would come down to stylesheet
+              // order.
+              style={{
+                top: WINDOW_TITLE_BAR_HEIGHT,
+                height: `calc(100svh - ${WINDOW_TITLE_BAR_HEIGHT}px)`,
+              }}
+            >
+              <nav
+                aria-label="Main navigation"
+                className="flex min-h-0 flex-1 flex-col"
+              >
+                <SidebarContent data-tour="sidebar">
+                  <SidebarNavigation
+                    view={view}
+                    onNavigate={setView}
+                    pending={pending}
+                  />
+                </SidebarContent>
+                {/* The console's own utilities sit at the FOOT of the column, under the
             destinations rather than over them. They act on the console, not on
             the company, so they belong after the list of places you can go —
             and the header they used to occupy is gone entirely now that the
             switcher lives in the window's title row. */}
-        {/* No footer. Settings, Feedback and Discord are glyphs in the
+                {/* No footer. Settings, Feedback and Discord are glyphs in the
             window's title row now (`title-bar-utilities.tsx`): none of the
             three is a place inside this company, which is the one thing this
             column enumerates. The Overview row that sat with them, drawn
             `md:hidden` as the complement of the title row's `hidden
             md:inline-flex`, went with them — the glyph up there is on at every
             width now, so the destination is still on screen exactly once. */}
-        </nav>
-        <SidebarRail />
-      </Sidebar>
+              </nav>
+              <SidebarRail />
+            </Sidebar>
 
-      {/* `min-w-0`: the inset is a flex item beside the sidebar, and a flex
+            {/* `min-w-0`: the inset is a flex item beside the sidebar, and a flex
           item's default `min-width: auto` floors it at its content's
           min-content width. That floor won — the inset measured a full window
           wide while sitting a sidebar's width to the right of the origin, so
@@ -3788,8 +3998,12 @@ export function AppShell({
           wrapper that clips and cannot scroll. On the task board that clipped
           strip held the "Done" column, which is why a card could not be dragged
           into it (issue #334); every view was losing the same strip. */}
-      <SidebarInset id={MAIN_CONTENT_ID} tabIndex={-1} className="min-h-0 min-w-0">
-          {/* The sidebar toggle was here — absolutely positioned over this
+            <SidebarInset
+              id={MAIN_CONTENT_ID}
+              tabIndex={-1}
+              className="min-h-0 min-w-0"
+            >
+              {/* The sidebar toggle was here — absolutely positioned over this
               inset, straddling the content card's leading edge. It is a glyph
               in the window's title row now, beside the switcher whose column it
               acts on: no `pointer-events` dance, no z-index over the page, and
@@ -3797,26 +4011,30 @@ export function AppShell({
               gate travelled with it, unchanged and for the unchanged reason —
               below that width the sidebar is a sheet with its own trigger in
               this inset, and both of this button's labels are wrong for one. */}
-        {/* The card half of the two-layer shell: the one opaque sheet in the
+              {/* The card half of the two-layer shell: the one opaque sheet in the
             console, floating on the chrome the shell root paints (issue
             #1178). A `div`, not `main` — `SidebarInset` above is already the
             console's one `<main>` landmark, and a second nested one gave every
             page two identical "skip to content" destinations (issue #1221). */}
-        {/* Every agent's face in here is a way into who they are (issue
+              {/* Every agent's face in here is a way into who they are (issue
             #1653): the panel is mounted once around the whole surface so a
             click on an avatar in a transcript, a member list or a channel
             header opens the same summary, over the page rather than instead of
             it. */}
-        <AgentProfileProvider client={client} company={company}>
-        <ContentSurface>
-          {/* A section's sub-navigation is the first column of its content
+              <AgentProfileProvider client={client} company={company}>
+                <ContentSurface>
+                  {/* A section's sub-navigation is the first column of its content
               (issue #2130) — Company's five pages, Connections' two — driven by
               the same `NAV_SECTIONS` table the sidebar's four rows come from.
               Sections with no children (Room, Flows) and addresses filed under
               none (Settings, Overview, Approvals) render bare, exactly as they
               did. See `components/section-rail.tsx`. */}
-          <SectionContentRail view={view} sub={sub} onNavigate={setView}>
-          {/* `#/overview` is the company graph again — the page #1321 swapped
+                  <SectionContentRail
+                    view={view}
+                    sub={sub}
+                    onNavigate={setView}
+                  >
+                    {/* `#/overview` is the company graph again — the page #1321 swapped
               out for the operator landing view. The graph keeps the
               `#/company/graph` alias that issue gave it, so every link minted
               while it lived there still resolves.
@@ -3824,53 +4042,63 @@ export function AppShell({
               `OperatorOverview` is left in the tree, unrouted: its panels are
               real work (#1015, #1700, #1745) and the decision about where they
               belong is not this change's to make. Nothing renders it today. */}
-          {(view === "overview" || view === "setup") && (
-            <Overview client={client} company={company} companyName={feed.status.name} />
-          )}
-          {view === "company" && (
-            <CompanyView
-              client={client}
-              company={company}
-              // Issue #485: chat's member pane links in at a desk
-              // (`#/company/<deskId>`), which needs the hash's second segment
-              // to reach this view at all — it was dropped here, so the chart
-              // had no per-desk address to link to. `useHashView` hands the
-              // segment back unvalidated, so the chart resolves an unknown id
-              // itself rather than this shell guessing which desks exist.
-              //
-              // Issue #1193: and the segment decides the surface outright.
-              // Nothing (`#/company`) is the roster; `desks` is the org chart;
-              // anything else is a desk on it. There is no remembered mode to
-              // disagree with the address.
-              sub={sub}
-              onNavigate={(next) => navigate("company", next ?? undefined)}
-              // The roster half's own sub-page is `#/team/<agentId>`, not a
-              // second segment of this view — the teammate detail page is a
-              // linkable address of its own (issue #264) and stays one.
-              onOpenAgent={(agentId, options) =>
-                agentId
-                  ? // Issue #1989: `?edit` lands on the detail page with its
-                    // edit form already open, which is where the reduced
-                    // Add-teammate dialog sends a teammate it has just created
-                    // — the copilot that drafts their description and persona
-                    // lives inside that form. `undefined` otherwise, so every
-                    // other way of opening a teammate keeps exactly the
-                    // navigation it had.
-                    navigate("team", agentId, options?.edit ? { edit: "" } : undefined)
-                  : navigate("company")
-              }
-              // The graph at `#/company/graph` names its core node after the
-              // company the way the rest of the console does (issue #1219),
-              // not after the slug.
-              companyName={feed.status.name}
-              // Setup just staffed the company, so the roster read is stale.
-              refreshKey={teamBuilt}
-              // Skipping setup must not be a dead end: an unstaffed company keeps
-              // a visible way back in.
-              onRunSetup={() => setSetupForced(true)}
-            />
-          )}
-          {/* Mounted on EVERY route, not only on `#/chat` (issue #2130).
+                    {(view === "overview" || view === "setup") && (
+                      <Overview
+                        client={client}
+                        company={company}
+                        companyName={feed.status.name}
+                      />
+                    )}
+                    {view === "company" && (
+                      <CompanyView
+                        client={client}
+                        company={company}
+                        // Issue #485: chat's member pane links in at a desk
+                        // (`#/company/<deskId>`), which needs the hash's second segment
+                        // to reach this view at all — it was dropped here, so the chart
+                        // had no per-desk address to link to. `useHashView` hands the
+                        // segment back unvalidated, so the chart resolves an unknown id
+                        // itself rather than this shell guessing which desks exist.
+                        //
+                        // Issue #1193: and the segment decides the surface outright.
+                        // Nothing (`#/company`) is the roster; `desks` is the org chart;
+                        // anything else is a desk on it. There is no remembered mode to
+                        // disagree with the address.
+                        sub={sub}
+                        onNavigate={(next) =>
+                          navigate("company", next ?? undefined)
+                        }
+                        // The roster half's own sub-page is `#/team/<agentId>`, not a
+                        // second segment of this view — the teammate detail page is a
+                        // linkable address of its own (issue #264) and stays one.
+                        onOpenAgent={(agentId, options) =>
+                          agentId
+                            ? // Issue #1989: `?edit` lands on the detail page with its
+                              // edit form already open, which is where the reduced
+                              // Add-teammate dialog sends a teammate it has just created
+                              // — the copilot that drafts their description and persona
+                              // lives inside that form. `undefined` otherwise, so every
+                              // other way of opening a teammate keeps exactly the
+                              // navigation it had.
+                              navigate(
+                                "team",
+                                agentId,
+                                options?.edit ? { edit: "" } : undefined,
+                              )
+                            : navigate("company")
+                        }
+                        // The graph at `#/company/graph` names its core node after the
+                        // company the way the rest of the console does (issue #1219),
+                        // not after the slug.
+                        companyName={feed.status.name}
+                        // Setup just staffed the company, so the roster read is stale.
+                        refreshKey={teamBuilt}
+                        // Skipping setup must not be a dead end: an unstaffed company keeps
+                        // a visible way back in.
+                        onRunSetup={() => setSetupForced(true)}
+                      />
+                    )}
+                    {/* Mounted on EVERY route, not only on `#/chat` (issue #2130).
 
               The sidebar's channel rail is portalled out of this view
               (`components/room-rail.tsx`), and it is pinned in the sidebar on
@@ -3892,116 +4120,129 @@ export function AppShell({
               effect in `RoomView` writing state up here and re-render the whole
               console on every unread tick from every section, rather than only
               from Room. */}
-          <RoomView
-              client={client}
-              company={company}
-              // What the agents in this company are allowed to do without
-              // asking, rendered on the composer's toolbar row. Nothing renders
-              // until the host has said what the tier is, rather than guessing
-              // one — see `useAutonomy`.
-              //
-              // `canManage` is the role this shell already knows. Both write
-              // routes behind the pill call `require_admin`
-              // (`src/server/ops/policy.rs:309,427`), so without it a member was
-              // offered a menu whose every selection ends in a 403. The pill
-              // still STATES the tier for them — standing policy is a fact about
-              // what the agents around you may do, not an admin setting — it
-              // simply stops pretending to be a control. `null` while `fetchMe`
-              // is in flight reads as read-only, which is the safe direction.
-              autonomy={<AutonomyPill status={autonomy} canManage={isGateAdmin} />}
-              // The chat segment, not the current view's — see `chatSub`.
-              sub={view === "chat" ? sub : chatSub}
-              routeOpen={view === "chat"}
-              presence={presence.peers}
-              companyPeople={companyPeople}
-              resolveTypingNames={resolveTypingNames}
-              onTyping={typing.announce}
-              onNavigate={(channelId) => navigate("chat", channelId)}
-              // Chat's own Add-teammate dialog lands a created teammate on its
-              // detail page with the edit form open (issue #1989) — the same
-              // `#/team/<agentId>?edit` address the roster and the org chart
-              // send theirs to.
-              onOpenAgent={(agentId, options) =>
-                navigate("team", agentId, options?.edit ? { edit: "" } : undefined)
-              }
-              onReply={() => void feed.refresh()}
-              transcripts={transcripts}
-              setTranscripts={setTranscripts}
-              hydration={hydration}
-              onSendStart={onSendStart}
-              onSendEnd={onSendEnd}
-              onSendDetached={onSendDetached}
-              onSendFailed={onSendFailed}
-              onSendStale={onSendStale}
-          scopeRef={scopeRef}
-              agentNames={agentNames}
-              unread={unread}
-              onChannelViewed={onChannelViewed}
-              onChatPaneVisibilityChange={onChatPaneVisibilityChange}
-              mentionFeedRevision={mentionFeedVersion}
-              mentions={mentionCounts}
-              approvals={feed.approvals}
-              taskStatusByTaskId={taskStatusByTaskId}
-              inflightRuns={inflightRuns}
-              onInflightSteered={refreshTaskStatuses}
-              now={feed.now}
-              onDecideApproval={(approval, verdict, scope, blocker) =>
-                void decideApproval(approval, verdict, scope, blocker)
-              }
-              decidingApprovals={decidingApprovals}
-              decidedApprovals={decidedApprovals}
-              failedApprovals={failedApprovals}
-              budgetProximity={budgetProximity}
-              onDismissBudgetProximity={() => setBudgetProximity(null)}
-            />
-          {view === "inbox" && <InboxView client={client} company={company} />}
-          {/* All that is left of the Tasks page: the card detail. `sub` is a
+                    <RoomView
+                      client={client}
+                      company={company}
+                      // What the agents in this company are allowed to do without
+                      // asking, rendered on the composer's toolbar row. Nothing renders
+                      // until the host has said what the tier is, rather than guessing
+                      // one — see `useAutonomy`.
+                      //
+                      // `canManage` is the role this shell already knows. Both write
+                      // routes behind the pill call `require_admin`
+                      // (`src/server/ops/policy.rs:309,427`), so without it a member was
+                      // offered a menu whose every selection ends in a 403. The pill
+                      // still STATES the tier for them — standing policy is a fact about
+                      // what the agents around you may do, not an admin setting — it
+                      // simply stops pretending to be a control. `null` while `fetchMe`
+                      // is in flight reads as read-only, which is the safe direction.
+                      autonomy={
+                        <AutonomyPill
+                          status={autonomy}
+                          canManage={isGateAdmin}
+                        />
+                      }
+                      // The chat segment, not the current view's — see `chatSub`.
+                      sub={view === "chat" ? sub : chatSub}
+                      routeOpen={view === "chat"}
+                      presence={presence.peers}
+                      companyPeople={companyPeople}
+                      resolveTypingNames={resolveTypingNames}
+                      onTyping={typing.announce}
+                      onNavigate={(channelId) => navigate("chat", channelId)}
+                      // Chat's own Add-teammate dialog lands a created teammate on its
+                      // detail page with the edit form open (issue #1989) — the same
+                      // `#/team/<agentId>?edit` address the roster and the org chart
+                      // send theirs to.
+                      onOpenAgent={(agentId, options) =>
+                        navigate(
+                          "team",
+                          agentId,
+                          options?.edit ? { edit: "" } : undefined,
+                        )
+                      }
+                      onReply={() => void feed.refresh()}
+                      transcripts={transcripts}
+                      setTranscripts={setTranscripts}
+                      hydration={hydration}
+                      onSendStart={onSendStart}
+                      onSendEnd={onSendEnd}
+                      onSendDetached={onSendDetached}
+                      onSendFailed={onSendFailed}
+                      onSendStale={onSendStale}
+                      scopeRef={scopeRef}
+                      agentNames={agentNames}
+                      unread={unread}
+                      onChannelViewed={onChannelViewed}
+                      onChatPaneVisibilityChange={onChatPaneVisibilityChange}
+                      mentionFeedRevision={mentionFeedVersion}
+                      mentions={mentionCounts}
+                      approvals={feed.approvals}
+                      taskStatusByTaskId={taskStatusByTaskId}
+                      inflightRuns={inflightRuns}
+                      onInflightSteered={refreshTaskStatuses}
+                      now={feed.now}
+                      onDecideApproval={(approval, verdict, scope, blocker) =>
+                        void decideApproval(approval, verdict, scope, blocker)
+                      }
+                      decidingApprovals={decidingApprovals}
+                      decidedApprovals={decidedApprovals}
+                      failedApprovals={failedApprovals}
+                      budgetProximity={budgetProximity}
+                      onDismissBudgetProximity={() => setBudgetProximity(null)}
+                    />
+                    {view === "inbox" && (
+                      <InboxView client={client} company={company} />
+                    )}
+                    {/* All that is left of the Tasks page: the card detail. `sub` is a
               real id by the time this renders — `REWRITE_RETIRED` sent every
               other `#/tasks…` address to the board in Ledgers. */}
-          {view === "tasks" && (
-            <TaskDetailRoute
-              client={client}
-              company={company}
-              taskId={taskIdFromSegment(sub) ?? ""}
-              attemptEventTick={attemptEventTick}
-              // Issue #883: so a waiting card can name the blocked call rather
-              // than only counting it. The feed the sidebar badge already polls,
-              // so the screen says what it is waiting on with no second request.
-              parked={feed.approvals}
-              // Issue #1891: and decided here too, not only named. The same
-              // bundle the board and the run drawer get, so a verdict given on
-              // any of the three settles on the others with no reload. Named
-              // as this route's own props rather than the `…Approvals` suffix
-              // the section views take: it is a thin wrapper whose props mirror
-              // `TaskDetailView`'s, which has no other kind of decision to
-              // qualify these against.
-              deciding={decidingApprovals}
-              decided={decidedApprovals}
-              failed={failedApprovals}
-              onDecide={(approval, verdict, scope, blocker) =>
-                void decideApproval(approval, verdict, scope, blocker)
-              }
-              // Issue #246: the card → chat half of the round trip. The card
-              // carries the host thread it was opened from; the map is what
-              // turns that into the Room channel rendering it, which is the
-              // whole address (`#/chat/<channelId>`) — so the destination is
-              // linkable and Back returns to the card. The row states the
-              // origin without offering a jump when no channel carries it.
-              chatChannelByThread={chatChannelByThread}
-              onOpenChannel={(channelId, threadId) =>
-                navigate("chat", channelId, { thread: threadId ?? null })
-              }
-              // Back, and a deleted card, go to the board — which is the
-              // `tasks` ledger. Through `navigate` so the address follows.
-              onLeave={() =>
-                navigate("ledgers", BOARD_LEDGER, {
-                  [LEDGER_VIEW_PARAM]:
-                    readLedgerViewMode() === "list" ? "list" : null,
-                })
-              }
-            />
-          )}
-          {/*
+                    {view === "tasks" && (
+                      <TaskDetailRoute
+                        client={client}
+                        company={company}
+                        taskId={taskIdFromSegment(sub) ?? ""}
+                        attemptEventTick={attemptEventTick}
+                        // Issue #883: so a waiting card can name the blocked call rather
+                        // than only counting it. The feed the sidebar badge already polls,
+                        // so the screen says what it is waiting on with no second request.
+                        parked={feed.approvals}
+                        // Issue #1891: and decided here too, not only named. The same
+                        // bundle the board and the run drawer get, so a verdict given on
+                        // any of the three settles on the others with no reload. Named
+                        // as this route's own props rather than the `…Approvals` suffix
+                        // the section views take: it is a thin wrapper whose props mirror
+                        // `TaskDetailView`'s, which has no other kind of decision to
+                        // qualify these against.
+                        deciding={decidingApprovals}
+                        decided={decidedApprovals}
+                        failed={failedApprovals}
+                        onDecide={(approval, verdict, scope, blocker) =>
+                          void decideApproval(approval, verdict, scope, blocker)
+                        }
+                        // Issue #246: the card → chat half of the round trip. The card
+                        // carries the host thread it was opened from; the map is what
+                        // turns that into the Room channel rendering it, which is the
+                        // whole address (`#/chat/<channelId>`) — so the destination is
+                        // linkable and Back returns to the card. The row states the
+                        // origin without offering a jump when no channel carries it.
+                        chatChannelByThread={chatChannelByThread}
+                        onOpenChannel={(channelId, threadId) =>
+                          navigate("chat", channelId, {
+                            thread: threadId ?? null,
+                          })
+                        }
+                        // Back, and a deleted card, go to the board — which is the
+                        // `tasks` ledger. Through `navigate` so the address follows.
+                        onLeave={() =>
+                          navigate("ledgers", BOARD_LEDGER, {
+                            [LEDGER_VIEW_PARAM]:
+                              readLedgerViewMode() === "list" ? "list" : null,
+                          })
+                        }
+                      />
+                    )}
+                    {/*
             `MANAGE_SEGMENT` is checked *here*, before `LedgersView` ever
             mounts — not inside it (issue #1284). `LedgersView`'s own hooks
             read and write real list rows keyed on `sub`; running that
@@ -4014,74 +4255,77 @@ export function AppShell({
             destination, because this screen is reached from wherever a
             list's switcher was open, not from one canonical parent.
           */}
-          {view === "ledgers" && sub === MANAGE_SEGMENT && (
-            <ManageListsView
-              client={client}
-              company={company}
-              ledgerNav={ledgerNav}
-              onBack={() => window.history.back()}
-            />
-          )}
-          {view === "ledgers" && sub !== MANAGE_SEGMENT && (
-            <LedgersView
-              client={client}
-              company={company}
-              // The single read the title switcher and Manage Lists share
-              // (issue #1284) — this view no longer fetches the list itself.
-              ledgers={ledgerNav.ledgers}
-              ledgersLoading={ledgerNav.loading}
-              remaining={ledgerNav.remaining}
-              // `#/ledgers/<slug>` opens that list. Unvalidated here, like
-              // every other sub-page: only this view knows which slugs
-              // exist, and it resolves an unknown one against the host
-              // rather than guessing. A bare `#/ledgers` resolves to Tasks.
-              sub={sub}
-              onOpenLedger={(slug) => navigate("ledgers", slug ?? undefined)}
-              // A board card leaves for its own screen. The board renders
-              // here; the card's timeline, plan, discussion and attempts stay
-              // where they already work.
-              onOpenCard={(id, mode) =>
-                navigate("tasks", id, {
-                  [LEDGER_VIEW_PARAM]: mode === "list" ? "list" : null,
-                })
-              }
-              // Issue #464: the board learns that work appeared. The same
-              // counter the chat's in-flight strip reads, so a card opened from
-              // chat lands on the board without a reload.
-              taskEventTick={taskEventTick}
-              // Issue #883: a paused card is blocked until every approval its
-              // turn parked is decided, and neither the ledger's rows nor the
-              // task store carries them. This is the feed the sidebar badge
-              // already polls, so the card says what it is waiting on without a
-              // second request.
-              approvals={feed.approvals}
-              now={feed.now}
-              // Issue #1891: a blocked card decides in place rather than only
-              // reporting that it is blocked. The same four maps the run drawer
-              // receives, owned here for the same reason — an operator who
-              // decides on the board, steps over to Approvals and comes back
-              // must not find a card that forgot what they did. `decided` is
-              // fed by the `approval_resolved` frame as well as by this
-              // console's own resolves, so a decision taken on the page settles
-              // on the board with no reload.
-              //
-              // This replaces `onReviewApprovals`: the card's own "View
-              // details" is an `href` built with `withHostParam`, which lands
-              // the same `#/approvals/<taskId>` in the hash — surviving a
-              // refresh and the Back button — without a callback to route it.
-              decidingApprovals={decidingApprovals}
-              decidedApprovals={decidedApprovals}
-              failedApprovals={failedApprovals}
-              onDecideApproval={(approval, verdict, scope, blocker) =>
-                void decideApproval(approval, verdict, scope, blocker)
-              }
-              // The switcher's in-place wizard declared a new list — re-read
-              // the shared list so it shows up in the menu (and Manage
-              // Lists, which reads the same instance) with no reload.
-              onListsChanged={ledgerNav.refresh}
-            />
-          )}
-          {/*
+                    {view === "ledgers" && sub === MANAGE_SEGMENT && (
+                      <ManageListsView
+                        client={client}
+                        company={company}
+                        ledgerNav={ledgerNav}
+                        onBack={() => window.history.back()}
+                      />
+                    )}
+                    {view === "ledgers" && sub !== MANAGE_SEGMENT && (
+                      <LedgersView
+                        client={client}
+                        company={company}
+                        // The single read the title switcher and Manage Lists share
+                        // (issue #1284) — this view no longer fetches the list itself.
+                        ledgers={ledgerNav.ledgers}
+                        ledgersLoading={ledgerNav.loading}
+                        remaining={ledgerNav.remaining}
+                        // `#/ledgers/<slug>` opens that list. Unvalidated here, like
+                        // every other sub-page: only this view knows which slugs
+                        // exist, and it resolves an unknown one against the host
+                        // rather than guessing. A bare `#/ledgers` resolves to Tasks.
+                        sub={sub}
+                        onOpenLedger={(slug) =>
+                          navigate("ledgers", slug ?? undefined)
+                        }
+                        // A board card leaves for its own screen. The board renders
+                        // here; the card's timeline, plan, discussion and attempts stay
+                        // where they already work.
+                        onOpenCard={(id, mode) =>
+                          navigate("tasks", id, {
+                            [LEDGER_VIEW_PARAM]:
+                              mode === "list" ? "list" : null,
+                          })
+                        }
+                        // Issue #464: the board learns that work appeared. The same
+                        // counter the chat's in-flight strip reads, so a card opened from
+                        // chat lands on the board without a reload.
+                        taskEventTick={taskEventTick}
+                        // Issue #883: a paused card is blocked until every approval its
+                        // turn parked is decided, and neither the ledger's rows nor the
+                        // task store carries them. This is the feed the sidebar badge
+                        // already polls, so the card says what it is waiting on without a
+                        // second request.
+                        approvals={feed.approvals}
+                        now={feed.now}
+                        // Issue #1891: a blocked card decides in place rather than only
+                        // reporting that it is blocked. The same four maps the run drawer
+                        // receives, owned here for the same reason — an operator who
+                        // decides on the board, steps over to Approvals and comes back
+                        // must not find a card that forgot what they did. `decided` is
+                        // fed by the `approval_resolved` frame as well as by this
+                        // console's own resolves, so a decision taken on the page settles
+                        // on the board with no reload.
+                        //
+                        // This replaces `onReviewApprovals`: the card's own "View
+                        // details" is an `href` built with `withHostParam`, which lands
+                        // the same `#/approvals/<taskId>` in the hash — surviving a
+                        // refresh and the Back button — without a callback to route it.
+                        decidingApprovals={decidingApprovals}
+                        decidedApprovals={decidedApprovals}
+                        failedApprovals={failedApprovals}
+                        onDecideApproval={(approval, verdict, scope, blocker) =>
+                          void decideApproval(approval, verdict, scope, blocker)
+                        }
+                        // The switcher's in-place wizard declared a new list — re-read
+                        // the shared list so it shows up in the menu (and Manage
+                        // Lists, which reads the same instance) with no reload.
+                        onListsChanged={ledgerNav.refresh}
+                      />
+                    )}
+                    {/*
             `#/team/<agentId>` only. Bare `#/team` is rewritten to `#/company`
             below (issue #1141) — the grid it used to render is the Company
             page's Cards half now, and two addresses drawing the same grid is
@@ -4091,203 +4335,257 @@ export function AppShell({
             only this view knows which ids exist, and the detail screen resolves
             an unknown one against the host rather than guessing here.
           */}
-          {view === "team" && (
-            <TeamView
-              client={client}
-              company={company}
-              sub={sub}
-              onOpenAgent={(agentId, options) =>
-                agentId
-                  ? // Issue #1989: `?edit` lands on the detail page with its
-                    // edit form already open, which is where the reduced
-                    // Add-teammate dialog sends a teammate it has just created
-                    // — the copilot that drafts their description and persona
-                    // lives inside that form. `undefined` otherwise, so every
-                    // other way of opening a teammate keeps exactly the
-                    // navigation it had.
-                    navigate("team", agentId, options?.edit ? { edit: "" } : undefined)
-                  : navigate("company")
-              }
-              // Setup just staffed the company, so the roster read is stale.
-              refreshKey={teamBuilt}
-              // Skipping setup must not be a dead end: an unstaffed company keeps
-              // a visible way back in.
-              onRunSetup={() => setSetupForced(true)}
-              // A desk chip on a teammate's detail page opens that desk (issue #1440).
-              onNavigateToDesk={(deskId) => navigate("company", deskId)}
-            />
-          )}
-          {view === "workspace" && (
-            <Suspense
-              fallback={<RouteLoading title="Workspace" label="Loading workspace…" />}
-            >
-              <WorkspaceView
-                client={client}
-                company={company}
-                // Issue #327: live writes, so a note an agent creates or a
-                // deliverable the publish drain lands shows up without a
-                // refresh.
-                event={workspaceEvent}
-                refreshTick={workspaceRefreshTick}
-                // Issue #552: the Artifacts tab's "Open in workspace" link
-                // sets `#/workspace/<nodeId>`, and `useHashView` hands the
-                // second segment back unvalidated — only this view knows
-                // which node ids exist, so it resolves an unknown one against
-                // the host rather than this shell guessing here.
-                initialNodeId={sub}
-              />
-            </Suspense>
-          )}
-          {view === "brain" && (
-            <Suspense fallback={<RouteLoading title="Brain" label="Loading what your company remembers…" />}>
-              {/* `#/company/brain/<page>` — Overview, Upload or Settings.
+                    {view === "team" && (
+                      <TeamView
+                        client={client}
+                        company={company}
+                        sub={sub}
+                        onOpenAgent={(agentId, options) =>
+                          agentId
+                            ? // Issue #1989: `?edit` lands on the detail page with its
+                              // edit form already open, which is where the reduced
+                              // Add-teammate dialog sends a teammate it has just created
+                              // — the copilot that drafts their description and persona
+                              // lives inside that form. `undefined` otherwise, so every
+                              // other way of opening a teammate keeps exactly the
+                              // navigation it had.
+                              navigate(
+                                "team",
+                                agentId,
+                                options?.edit ? { edit: "" } : undefined,
+                              )
+                            : navigate("company")
+                        }
+                        // Setup just staffed the company, so the roster read is stale.
+                        refreshKey={teamBuilt}
+                        // Skipping setup must not be a dead end: an unstaffed company keeps
+                        // a visible way back in.
+                        onRunSetup={() => setSetupForced(true)}
+                        // A desk chip on a teammate's detail page opens that desk (issue #1440).
+                        onNavigateToDesk={(deskId) =>
+                          navigate("company", deskId)
+                        }
+                      />
+                    )}
+                    {view === "workspace" && (
+                      <Suspense
+                        fallback={
+                          <RouteLoading
+                            title="Workspace"
+                            label="Loading workspace…"
+                          />
+                        }
+                      >
+                        <WorkspaceView
+                          client={client}
+                          company={company}
+                          // Issue #327: live writes, so a note an agent creates or a
+                          // deliverable the publish drain lands shows up without a
+                          // refresh.
+                          event={workspaceEvent}
+                          refreshTick={workspaceRefreshTick}
+                          // Issue #552: the Artifacts tab's "Open in workspace" link
+                          // sets `#/workspace/<nodeId>`, and `useHashView` hands the
+                          // second segment back unvalidated — only this view knows
+                          // which node ids exist, so it resolves an unknown one against
+                          // the host rather than this shell guessing here.
+                          initialNodeId={sub}
+                        />
+                      </Suspense>
+                    )}
+                    {view === "brain" && (
+                      <Suspense
+                        fallback={
+                          <RouteLoading
+                            title="Brain"
+                            label="Loading what your company remembers…"
+                          />
+                        }
+                      >
+                        {/* `#/company/brain/<page>` — Overview, Upload or Settings.
                   Unvalidated here, as every sub-dispatching route is: only the
                   view knows which of its pages exist. */}
-              <MemoryView client={client} company={company} sub={sub} />
-            </Suspense>
-          )}
-          {view === "approvals" && (
-            <ApprovalsView
-              client={client}
-              company={company}
-              feed={feed}
-              // Issue #883: `#/approvals/<taskId>` narrows the queue to one
-              // card, so "Review" on a blocked card lands on its approvals
-              // rather than on a page the operator has to search. Same
-              // unvalidated second segment every other sub-page gets — only
-              // this view knows whether the id matches anything parked, so it
-              // does that check itself and says so when it does not.
-              sub={sub}
-              chatChannelByThread={chatChannelByThread}
-              onResolved={noteSystem}
-              onGoToConversation={() => setView("chat")}
-              // Issue #1211: mark this id as "mine" before the resolve POST
-              // goes out, so the SSE echo for it — which can arrive before the
-              // POST settles — is not toasted a second time.
-              onDecideStart={(approvalId) => ownApprovalDecisionsRef.current.add(approvalId)}
-            />
-          )}
-          {view === "observatory" && (
-          <Suspense
-            fallback={
-              // Matches `ObservatoryView`'s own rule for the same reason
-              // `RouteLoading`'s doc gives: the loading state has to settle on
-              // the name the loaded header will actually show, or the title
-              // flips the moment the chunk lands.
-              <RouteLoading title={sub ? "Run" : "Observatory"} label="Loading observatory…" />
-            }
-          >
-            <ObservatoryView
-              client={client}
-              company={company}
-              // `#/observatory/<workflowRunId>` — the run to inspect, or null
-              // for the index. Unvalidated here for the reason every other
-              // sub-page is: only the view knows which run ids exist.
-              runId={sub}
-              // One tick for both signals a re-read should follow: a workflow
-              // run moved, or a workflow node started or settled (a node's turn
-              // streams no frames of its own, so the boundary is the signal).
-              eventTick={workflowRunTick + backgroundTurnTick}
-            />
-          </Suspense>
-        )}
-        {view === "workflows" && (
-            <Suspense
-              fallback={
-                // Static, not sub-aware: the loaded header's "Workflows" /
-                // "Runs" split reads `indexTab`, a tab this boundary cannot
-                // see (persisted client-side, not carried by the route) — see
-                // `RouteLoading`'s own doc for why a guess here would be worse
-                // than no bar.
-                <RouteLoading title="Automations" label="Loading canvas…" />
-              }
-            >
-              <WorkflowsView
-                client={client}
-                company={company}
-                // Issue #339: `#/workflows/<workflowId>` names the graph to open
-                // on the canvas, so a finished task card can link to the
-                // workflow it built or ran. Same unvalidated second segment
-                // every other sub-page gets — only this view knows which
-                // workflow ids exist, so it does that check itself.
-                sub={sub}
-                runEventTick={workflowRunTick}
-                runEvents={workflowRunEvents}
-                listEventTick={workflowListTick}
-                // Issue #1002: a run that parked cards can be unblocked from
-                // the run drawer, without leaving the run to find the rows in a
-                // flat queue. The SAME feed the Approvals page and the sidebar
-                // badge read, handed over unfiltered — this is a second reader
-                // of one queue, so the page still lists every row and the badge
-                // still counts every row.
-                //
-                // The four maps below are the same console-local state the
-                // inline chat card is given, owned here for the same reason: an
-                // operator who decides in the drawer, steps over to Approvals
-                // and comes back must not find a card that forgot what they did.
-                // Their `decided` half is fed by the `approval_resolved` frame
-                // as well as by this console's own resolves, which is what makes
-                // a decision taken on the page settle in the drawer with no
-                // reload.
-                approvals={feed.approvals}
-                approvalsNow={feed.now}
-                decidingApprovals={decidingApprovals}
-                decidedApprovals={decidedApprovals}
-                failedApprovals={failedApprovals}
-                onDecideApproval={(approval, verdict, scope, blocker) =>
-                  void decideApproval(approval, verdict, scope, blocker)
-                }
-              />
-            </Suspense>
-          )}
-          {view === "pages" && (
-            <Suspense fallback={<RouteLoading title="Pages" label="Loading pages…" />}>
-              <PagesView client={client} company={company} />
-            </Suspense>
-          )}
-          {view === "finances" && (
-            <Suspense
-              fallback={
-                // Names the section itself while its own lazy chunk is still
-                // in flight — before `FinanceSection` has even mounted to run
-                // its own per-subpage Suspense (which already uses
-                // `RouteLoading` with this same static title, one level in).
-                <RouteLoading
-                  title={financeFallbackTitle(sub)}
-                  label={`Loading ${financeFallbackTitle(sub).toLowerCase()}…`}
-                />
-              }
-            >
-              {/* Dispatch only: its three pages are nested rows on Company's
+                        <MemoryView
+                          client={client}
+                          company={company}
+                          sub={sub}
+                        />
+                      </Suspense>
+                    )}
+                    {view === "approvals" && (
+                      <ApprovalsView
+                        client={client}
+                        company={company}
+                        feed={feed}
+                        // Issue #883: `#/approvals/<taskId>` narrows the queue to one
+                        // card, so "Review" on a blocked card lands on its approvals
+                        // rather than on a page the operator has to search. Same
+                        // unvalidated second segment every other sub-page gets — only
+                        // this view knows whether the id matches anything parked, so it
+                        // does that check itself and says so when it does not.
+                        sub={sub}
+                        chatChannelByThread={chatChannelByThread}
+                        onResolved={noteSystem}
+                        onGoToConversation={() => setView("chat")}
+                        // Issue #1211: mark this id as "mine" before the resolve POST
+                        // goes out, so the SSE echo for it — which can arrive before the
+                        // POST settles — is not toasted a second time.
+                        onDecideStart={(approvalId) =>
+                          ownApprovalDecisionsRef.current.add(approvalId)
+                        }
+                      />
+                    )}
+                    {view === "observatory" && (
+                      <Suspense
+                        fallback={
+                          // Matches `ObservatoryView`'s own rule for the same reason
+                          // `RouteLoading`'s doc gives: the loading state has to settle on
+                          // the name the loaded header will actually show, or the title
+                          // flips the moment the chunk lands.
+                          <RouteLoading
+                            title={sub ? "Run" : "Observatory"}
+                            label="Loading observatory…"
+                          />
+                        }
+                      >
+                        <ObservatoryView
+                          client={client}
+                          company={company}
+                          // `#/observatory/<workflowRunId>` — the run to inspect, or null
+                          // for the index. Unvalidated here for the reason every other
+                          // sub-page is: only the view knows which run ids exist.
+                          runId={sub}
+                          // One tick for both signals a re-read should follow: a workflow
+                          // run moved, or a workflow node started or settled (a node's turn
+                          // streams no frames of its own, so the boundary is the signal).
+                          eventTick={workflowRunTick + backgroundTurnTick}
+                        />
+                      </Suspense>
+                    )}
+                    {view === "workflows" && (
+                      <Suspense
+                        fallback={
+                          // Static, not sub-aware: the loaded header's "Workflows" /
+                          // "Runs" split reads `indexTab`, a tab this boundary cannot
+                          // see (persisted client-side, not carried by the route) — see
+                          // `RouteLoading`'s own doc for why a guess here would be worse
+                          // than no bar.
+                          <RouteLoading
+                            title="Automations"
+                            label="Loading canvas…"
+                          />
+                        }
+                      >
+                        <WorkflowsView
+                          client={client}
+                          company={company}
+                          // Issue #339: `#/workflows/<workflowId>` names the graph to open
+                          // on the canvas, so a finished task card can link to the
+                          // workflow it built or ran. Same unvalidated second segment
+                          // every other sub-page gets — only this view knows which
+                          // workflow ids exist, so it does that check itself.
+                          sub={sub}
+                          runEventTick={workflowRunTick}
+                          runEvents={workflowRunEvents}
+                          listEventTick={workflowListTick}
+                          // Issue #1002: a run that parked cards can be unblocked from
+                          // the run drawer, without leaving the run to find the rows in a
+                          // flat queue. The SAME feed the Approvals page and the sidebar
+                          // badge read, handed over unfiltered — this is a second reader
+                          // of one queue, so the page still lists every row and the badge
+                          // still counts every row.
+                          //
+                          // The four maps below are the same console-local state the
+                          // inline chat card is given, owned here for the same reason: an
+                          // operator who decides in the drawer, steps over to Approvals
+                          // and comes back must not find a card that forgot what they did.
+                          // Their `decided` half is fed by the `approval_resolved` frame
+                          // as well as by this console's own resolves, which is what makes
+                          // a decision taken on the page settle in the drawer with no
+                          // reload.
+                          approvals={feed.approvals}
+                          approvalsNow={feed.now}
+                          decidingApprovals={decidingApprovals}
+                          decidedApprovals={decidedApprovals}
+                          failedApprovals={failedApprovals}
+                          onDecideApproval={(
+                            approval,
+                            verdict,
+                            scope,
+                            blocker,
+                          ) =>
+                            void decideApproval(
+                              approval,
+                              verdict,
+                              scope,
+                              blocker,
+                            )
+                          }
+                        />
+                      </Suspense>
+                    )}
+                    {view === "pages" && (
+                      <Suspense
+                        fallback={
+                          <RouteLoading title="Pages" label="Loading pages…" />
+                        }
+                      >
+                        <PagesView client={client} company={company} />
+                      </Suspense>
+                    )}
+                    {view === "finances" && (
+                      <Suspense
+                        fallback={
+                          // Names the section itself while its own lazy chunk is still
+                          // in flight — before `FinanceSection` has even mounted to run
+                          // its own per-subpage Suspense (which already uses
+                          // `RouteLoading` with this same static title, one level in).
+                          <RouteLoading
+                            title={financeFallbackTitle(sub)}
+                            label={`Loading ${financeFallbackTitle(sub).toLowerCase()}…`}
+                          />
+                        }
+                      >
+                        {/* Dispatch only: its three pages are nested rows on Company's
                   section rail now, not a second `w-60` rail inside this pane
                   (issue #2130, and #1383 for what two rails cost). */}
-              <FinanceSection client={client} company={company} sub={sub} />
-            </Suspense>
-          )}
-          {view === "connections" && (
-            <ConnectionsSection client={client} company={company} sub={sub} />
-          )}
-          {view === "settings" && (
-            <SettingsSection
-              client={client}
-              company={company}
-              feed={feed}
-              sub={sub}
-              // The same tick the `#/observatory/<runId>` route below is given:
-              // the run index renders on this section's rail now, and it watches
-              // the same two signals.
-              eventTick={workflowRunTick + backgroundTurnTick}
-              onFlag={() => setFeedbackOpen(true)}
-              onResetCompany={onResetCompany}
-            />
-          )}
-          {view === "feedback" && <FeedbackView client={client} company={company} />}
-          {view === "not-found" && <UnknownRouteView address={sub} />}
-          </SectionContentRail>
-        </ContentSurface>
-        </AgentProfileProvider>
+                        <FinanceSection
+                          client={client}
+                          company={company}
+                          sub={sub}
+                        />
+                      </Suspense>
+                    )}
+                    {view === "connections" && (
+                      <ConnectionsSection
+                        client={client}
+                        company={company}
+                        sub={sub}
+                      />
+                    )}
+                    {view === "settings" && (
+                      <SettingsSection
+                        client={client}
+                        company={company}
+                        feed={feed}
+                        sub={sub}
+                        // The same tick the `#/observatory/<runId>` route below is given:
+                        // the run index renders on this section's rail now, and it watches
+                        // the same two signals.
+                        eventTick={workflowRunTick + backgroundTurnTick}
+                        onFlag={() => setFeedbackOpen(true)}
+                        onResetCompany={onResetCompany}
+                      />
+                    )}
+                    {view === "feedback" && (
+                      <FeedbackView client={client} company={company} />
+                    )}
+                    {view === "not-found" && <UnknownRouteView address={sub} />}
+                  </SectionContentRail>
+                </ContentSurface>
+              </AgentProfileProvider>
 
-        {/* The mobile "Toggle sidebar" row was here, at the foot of the inset.
+              {/* The mobile "Toggle sidebar" row was here, at the foot of the inset.
             It reserved its own row rather than floating, which is what issue
             #1265 asked for after a `fixed` trigger kept winning the hit-test in
             the bottom-left corner — but it left the way back to navigation at
@@ -4295,23 +4593,23 @@ export function AppShell({
             The trigger is in the title row now, in the same slot the desktop's
             collapse glyph uses and as its exact complement. It floats over
             nothing, so #1265 stays answered. */}
-      </SidebarInset>
-      </div>
+            </SidebarInset>
+          </div>
 
-      <FeedbackDialog
-        client={client}
-        company={company}
-        open={feedbackOpen}
-        onOpenChange={setFeedbackOpen}
-      />
+          <FeedbackDialog
+            client={client}
+            company={company}
+            open={feedbackOpen}
+            onOpenChange={setFeedbackOpen}
+          />
 
-      <TourController
-        company={company}
-        setView={setView}
-        hold={setupOpen}
-        suppressWelcome={setupCompleted}
-      />
-      </RoomRailSlotProvider>
+          <TourController
+            company={company}
+            setView={setView}
+            hold={setupOpen}
+            suppressWelcome={setupCompleted}
+          />
+        </RoomRailSlotProvider>
       </SidebarProvider>
     </ConsoleProvider>
   );

@@ -1,5 +1,13 @@
 import { type MouseEvent, useState } from "react";
-import { Check, Loader2, Minus, PartyPopper, Plug, UserCog, Workflow } from "lucide-react";
+import {
+  Check,
+  Loader2,
+  Minus,
+  PartyPopper,
+  Plug,
+  UserCog,
+  Workflow,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import type { OpenCompanyClient } from "@/api/client";
@@ -52,7 +60,9 @@ const COMPANY_NAME_MAX_CHARS = 200;
  */
 export function clampToCompanyNameLimit(value: string): string {
   const points = Array.from(value);
-  return points.length <= COMPANY_NAME_MAX_CHARS ? value : points.slice(0, COMPANY_NAME_MAX_CHARS).join("");
+  return points.length <= COMPANY_NAME_MAX_CHARS
+    ? value
+    : points.slice(0, COMPANY_NAME_MAX_CHARS).join("");
 }
 
 interface GateStep {
@@ -191,7 +201,8 @@ export function OnboardingGate({
         // where the gate is not in the way and the browser's own behaviour is
         // correct. Never hijack those.
         if (event.defaultPrevented || event.button !== 0) return;
-        if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
+          return;
         const anchor = (event.target as Element | null)?.closest?.("a");
         const href = anchor?.getAttribute("href");
         if (!anchor || !href?.startsWith("#")) return;
@@ -221,15 +232,19 @@ export function OnboardingGate({
             Let&apos;s get your company running
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
-            Three quick steps, in any order. Once all three are done, this screen never
-            comes back.
+            Three quick steps, in any order. Once all three are done, this
+            screen never comes back — and you can skip it for good below.
           </p>
         </div>
       </header>
 
       <main className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-3 overflow-y-auto px-6 py-6 sm:px-10">
         {steps.map((step) => (
-          <section key={step.id} className="rounded-xl border bg-card" data-testid={`gate-step-${step.id}`}>
+          <section
+            key={step.id}
+            className="rounded-xl border bg-card"
+            data-testid={`gate-step-${step.id}`}
+          >
             <button
               type="button"
               className={cn(
@@ -238,7 +253,9 @@ export function OnboardingGate({
               )}
               disabled={step.done || step.waived}
               aria-expanded={active === step.id}
-              onClick={() => setActive((cur) => (cur === step.id ? null : step.id))}
+              onClick={() =>
+                setActive((cur) => (cur === step.id ? null : step.id))
+              }
             >
               <span
                 aria-hidden
@@ -259,16 +276,22 @@ export function OnboardingGate({
               </span>
               <span className="min-w-0 flex-1">
                 <span className="block text-sm font-medium">{step.label}</span>
-                <span className="block text-xs text-muted-foreground">{step.hint}</span>
+                <span className="block text-xs text-muted-foreground">
+                  {step.hint}
+                </span>
               </span>
               {step.done && (
-                <span className="shrink-0 text-xs font-medium text-status-done-text">Done</span>
+                <span className="shrink-0 text-xs font-medium text-status-done-text">
+                  Done
+                </span>
               )}
               {step.waived && (
                 // Never "Done" — the step did not complete, the founder
                 // answered it as far as this build allows, and saying otherwise
                 // would be the console lying about the company's own state.
-                <span className="shrink-0 text-xs font-medium text-muted-foreground">Skipped</span>
+                <span className="shrink-0 text-xs font-medium text-muted-foreground">
+                  Skipped
+                </span>
               )}
             </button>
 
@@ -306,9 +329,31 @@ export function OnboardingGate({
 
       <footer className="border-t px-6 py-4 sm:px-10">
         <div className="mx-auto flex max-w-4xl items-center justify-end">
-          <Button variant="ghost" size="sm" onClick={onSkip} data-testid="gate-skip">
-            Skip for now
-          </Button>
+          {/*
+            "for good", not "for now". This used to write a `sessionStorage`
+            marker, so the gate came back on the next tab — defensible while
+            every step was finishable, and not once step 3 was. `WorkflowStep`
+            has no waiver of its own (the integration step grew one for bugs
+            B-001/B-020), and `workflow_run_succeeded` only reads true for a real
+            run that reached `Succeeded` — a run parked on an approval leaves the
+            step honestly unticked with nothing the founder can do about it here.
+            An unfinishable checklist that re-prompts forever is the trap; this
+            is the way out of it. Following a link out of the gate is still
+            session-scoped — see `leaveGateFor` in `app-shell.tsx`.
+          */}
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-muted-foreground">
+              You can finish these later from the console.
+            </span>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onSkip}
+              data-testid="gate-skip"
+            >
+              Skip setup
+            </Button>
+          </div>
         </div>
       </footer>
     </div>
@@ -339,7 +384,9 @@ function NameStep({
       toast.success("Company name set.");
       onDone();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Could not set the name.");
+      toast.error(
+        err instanceof ApiError ? err.message : "Could not set the name.",
+      );
     } finally {
       setBusy(false);
     }
@@ -363,7 +410,11 @@ function NameStep({
         />
       </div>
       <Button disabled={busy || !trimmed} onClick={() => void confirm()}>
-        {busy ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
+        {busy ? (
+          <Loader2 className="size-4 animate-spin" />
+        ) : (
+          <Check className="size-4" />
+        )}
         Confirm name
       </Button>
     </div>

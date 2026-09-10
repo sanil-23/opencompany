@@ -300,7 +300,8 @@ export function shouldHoldShellPending(
   // (bugs B-001/B-020). Holding the shell for a role that cannot change the
   // outcome would put a founder who has answered everything they can back on a
   // loader on every fresh tab — a quieter version of the same trap.
-  if (outstandingGateSteps(input.status, input.waived ?? []).length === 0) return false;
+  if (outstandingGateSteps(input.status, input.waived ?? []).length === 0)
+    return false;
 
   // The company is not (yet) activated and the admin role is still
   // unresolved: `shouldShowOnboardingGate` cannot rule the gate in or out
@@ -312,8 +313,7 @@ export function shouldHoldShellPending(
 
 /** What a failed `/auth/me` read (behind `isGateAdmin` in `AppShell`) resolves to. */
 export type GateAdminCheckOutcome =
-  | { settled: true; isAdmin: boolean }
-  | { settled: false };
+  { settled: true; isAdmin: boolean } | { settled: false };
 
 /**
  * Classifies a `fetchMe` failure for the gate's admin check (PR #1875 review
@@ -335,7 +335,9 @@ export type GateAdminCheckOutcome =
  * that never reached the host) is not an answer about *who this user is* —
  * `settled: false` tells the caller to retry rather than guess.
  */
-export function resolveGateAdminCheckError(error: unknown): GateAdminCheckOutcome {
+export function resolveGateAdminCheckError(
+  error: unknown,
+): GateAdminCheckOutcome {
   if (error instanceof ApiError && error.status === 401) {
     return { settled: true, isAdmin: false };
   }
@@ -343,9 +345,7 @@ export function resolveGateAdminCheckError(error: unknown): GateAdminCheckOutcom
 }
 
 /** What a failed `GET {scope}/activation` read (behind `useActivationGate`) resolves to. */
-export type ActivationReadOutcome =
-  | { settled: true }
-  | { settled: false };
+export type ActivationReadOutcome = { settled: true } | { settled: false };
 
 /**
  * Classifies a `getActivation` failure for `useActivationGate`'s first read
@@ -369,7 +369,9 @@ export type ActivationReadOutcome =
  * is activated* — `settled: false` tells the caller to retry rather than
  * guess, sooner than the regular poll cadence.
  */
-export function resolveActivationReadError(error: unknown): ActivationReadOutcome {
+export function resolveActivationReadError(
+  error: unknown,
+): ActivationReadOutcome {
   if (error instanceof ApiError && error.status === 404) {
     return { settled: true };
   }

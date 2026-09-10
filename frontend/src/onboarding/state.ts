@@ -17,7 +17,8 @@ import { type LocalScope, scopedKey } from "@/connections/types";
 // Plain `scopedKey`, not `scopedKeyAdoptingLegacy`: this flag has no
 // pre-connection predecessor to adopt — the funnel it gates did not exist
 // before connections did — so there is nothing to migrate.
-const KEY = (scope: LocalScope): string => scopedKey("oc-onboarding-gate-skip", scope);
+const KEY = (scope: LocalScope): string =>
+  scopedKey("oc-onboarding-gate-skip", scope);
 
 /** Records that the operator dismissed the gate without finishing it. */
 export function markGateSkipped(scope: LocalScope): void {
@@ -148,7 +149,11 @@ export function clearGateDismissed(scope: LocalScope): void {
 export type GateStepId = "name" | "integration" | "workflow";
 
 /** Every step id, in the order the gate itself lists them. */
-const GATE_STEP_IDS: readonly GateStepId[] = ["name", "integration", "workflow"];
+const GATE_STEP_IDS: readonly GateStepId[] = [
+  "name",
+  "integration",
+  "workflow",
+];
 
 /**
  * One `localStorage` key PER STEP, not one key holding all three in a JSON
