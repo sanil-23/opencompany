@@ -4531,18 +4531,14 @@ impl HarnessPool {
         // Whether this turn said anything through a speech tool. Owned here so
         // it outlives the task-local scope below: the tool sets it inside the
         // turn, and the reply path reads it after.
-        let spoke_flag = crate::runtime::delegation::new_speech_flag();
-        // What the turn asked to say to its channel, collected in call order.
-        // Drained after the turn and folded into its reply, so a post reaches
-        // the journal through the path that carries steps, mentions and the
-        // live frame — see `delegation::TURN_UTTERANCES`.
-        let utterances = crate::runtime::delegation::new_utterance_sink();
+        // What this turn says through the speech tools. Owned here so it
+        // outlives the task-local scope below: the tools write it inside the
+        // turn, and the reply path reads it after.
+        let speech = crate::runtime::delegation::new_turn_speech();
         let (outcome, turn_costs) = crate::runtime::delegation::with_task_hint(
             crate::runtime::delegation::operator_words(message).to_string(),
-            crate::runtime::delegation::with_speech_tracking(
-            spoke_flag.clone(),
-            crate::runtime::delegation::with_utterance_sink(
-            utterances.clone(),
+            crate::runtime::delegation::with_turn_speech(
+            speech.clone(),
             crate::runtime::delegation::with_turn_conversation(
                 turn_chat,
                 deps.approval_requests.turn_scoped(agent.run_with_steer(
@@ -4555,7 +4551,6 @@ impl HarnessPool {
                     // have a conversation and stream nothing.
                     chat,
                 )),
-            ),
             ),
             ),
         )
