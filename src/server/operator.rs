@@ -4967,8 +4967,7 @@ async fn agent_session_response(
     let Some(record) = runtime.store().load(runtime.id()).await? else {
         return Ok(Json(Vec::new()));
     };
-    let channels =
-        crate::server::chat_history::agent_channels(&record, agent_id);
+    let channels = crate::server::chat_history::agent_channels(&record, agent_id);
 
     // One page per channel, then merged by sequence. Each page is already
     // bounded by `limit`, so the merge is bounded by `channels × limit` before

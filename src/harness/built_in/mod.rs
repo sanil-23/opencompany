@@ -1533,9 +1533,7 @@ impl CompanyAgent {
             // channel does not claim a conversation this turn was not in.
             let mut bound = self.bound_chat.lock().await;
             if bound.is_some() {
-                tracing::debug!(
-                    "[harness] unthreaded turn — dropping the chat binding"
-                );
+                tracing::debug!("[harness] unthreaded turn — dropping the chat binding");
                 *bound = None;
             }
             // And the conversational session restarts after it.
