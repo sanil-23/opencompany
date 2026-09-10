@@ -117,7 +117,16 @@ export function OnboardingGate({
   waived?: readonly GateStepId[];
   /** Called after an in-gate action that may have moved the funnel. */
   onRefresh: () => void;
-  /** "Skip for now" — de-emphasized, and always available (issue #1844). */
+  /**
+   * "Skip setup" — de-emphasized, always available (issue #1844), and now
+   * durable.
+   *
+   * The shell writes a per-company `localStorage` marker for this, unlike the
+   * session marker every in-gate link writes: step 3 has no waiver, so a
+   * founder whose workflow run parks on an approval had no answer to give and
+   * met the same unfinishable checklist on every new tab. See `skipGate` in
+   * `app-shell.tsx` and the dismissal half of `onboarding/state.ts`.
+   */
   onSkip: () => void;
   /**
    * Stands the gate down and navigates to a console route (bug B-006).
