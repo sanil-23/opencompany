@@ -1367,7 +1367,14 @@ impl CompanyAgent {
             // history" is what let an unrelated task's raw tool output survive
             // a re-seed, because the clear below was skipped for an agent that
             // had plenty of history and merely no watermark yet.
-            let mut reseed = chat_only;
+            //
+            // A session with no watermark is a re-seed too, and is decided here
+            // rather than left to `prepare_delta`'s `ColdStart`: the delta is
+            // only asked for when the journal and the company record are both
+            // wired, and a host without them would otherwise never re-seed at
+            // all — leaving whatever was last in the live history to answer the
+            // next chat turn.
+            let mut reseed = chat_only || session.watermark.is_none();
             if !reseed && let (Some(request), Some(company)) = (&chat_seed, turn_company.as_ref()) {
                 match request
                     .session_delta(company, &self.agent_id, &session)
