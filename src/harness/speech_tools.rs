@@ -200,7 +200,12 @@ impl Tool for PostTool {
         })
     }
     fn permission_level(&self) -> PermissionLevel {
-        PermissionLevel::Safe
+        // Speaking is not an effect on the world outside this company, and the
+        // approval bridge classifies by tool NAME rather than by this level
+        // anyway (see `built_in::policy`). Declared `None` for the same reason
+        // `request_approval` is: a turn that has to ask permission to answer
+        // cannot answer.
+        PermissionLevel::None
     }
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
         let Some(channel) = self.0.channel() else {
@@ -258,7 +263,12 @@ impl Tool for DmTool {
         })
     }
     fn permission_level(&self) -> PermissionLevel {
-        PermissionLevel::Safe
+        // Speaking is not an effect on the world outside this company, and the
+        // approval bridge classifies by tool NAME rather than by this level
+        // anyway (see `built_in::policy`). Declared `None` for the same reason
+        // `request_approval` is: a turn that has to ask permission to answer
+        // cannot answer.
+        PermissionLevel::None
     }
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
         let Some(channel) = self.0.channel() else {
@@ -313,7 +323,12 @@ impl Tool for DmTool {
                 if let Ok(Some(record)) = self.0.store.load(&self.0.company).await {
                     let unknown: Vec<&String> = peers
                         .iter()
-                        .filter(|id| record.resolve_teammate(id).is_none())
+                        .filter(|id| {
+                            matches!(
+                                record.resolve_teammate_key(id),
+                                crate::ports::types::TeammateResolution::Unknown
+                            )
+                        })
                         .collect();
                     if !unknown.is_empty() {
                         let names = unknown
@@ -362,7 +377,12 @@ impl Tool for CloseTool {
         })
     }
     fn permission_level(&self) -> PermissionLevel {
-        PermissionLevel::Safe
+        // Speaking is not an effect on the world outside this company, and the
+        // approval bridge classifies by tool NAME rather than by this level
+        // anyway (see `built_in::policy`). Declared `None` for the same reason
+        // `request_approval` is: a turn that has to ask permission to answer
+        // cannot answer.
+        PermissionLevel::None
     }
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
         let Some(channel) = self.0.channel() else {
