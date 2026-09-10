@@ -4939,7 +4939,7 @@ pub struct AgentSessionMessageDto {
 ///
 /// The console could fetch `chat/history` per desk and merge. It must not: the
 /// set of channels an agent can read is decided by
-/// [`agent_channels`](crate::harness::built_in::agent_session::agent_channels),
+/// [`agent_channels`](crate::server::chat_history::agent_channels),
 /// and that function is also what decides the agent's **own** session. Asking
 /// it here is what keeps the page from claiming an agent saw something it did
 /// not — one function, two readers, no drift.
@@ -4968,7 +4968,7 @@ async fn agent_session_response(
         return Ok(Json(Vec::new()));
     };
     let channels =
-        crate::harness::built_in::agent_session::agent_channels(&record, agent_id);
+        crate::server::chat_history::agent_channels(&record, agent_id);
 
     // One page per channel, then merged by sequence. Each page is already
     // bounded by `limit`, so the merge is bounded by `channels × limit` before
