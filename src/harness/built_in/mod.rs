@@ -35,6 +35,10 @@
 //! offline [`MockProvider`](provider::MockProvider) does not, so test turns stay
 //! inert.
 
+/// One agent, one session: the watermark that replaced the per-chat
+/// clear-and-reseed, and the cue block that carries a channel's identity into a
+/// merged transcript. See [`agent_session`].
+pub mod agent_session;
 pub mod approval_tool;
 /// Issue #775: the fail-closed shell audit wrapper — one intent line appended
 /// (and fsynced) *before* a command runs, refusing the command outright when
@@ -54,10 +58,6 @@ pub mod chargebee;
 /// inert on this same turn shape — see [`chat_only_guard`]'s module docs for
 /// why the two do not overlap.
 mod chat_only_guard;
-/// One agent, one session: the watermark that replaced the per-chat
-/// clear-and-reseed, and the cue block that carries a channel's identity into a
-/// merged transcript. See [`agent_session`].
-pub mod agent_session;
 pub mod chat_seed;
 mod checkpoint;
 pub mod composio;
@@ -1349,10 +1349,11 @@ impl CompanyAgent {
             let cold = session.watermark.is_none() || agent.history().is_empty();
 
             let mut reseed = cold;
-            if !cold
-                && let (Some(request), Some(company)) = (&chat_seed, turn_company.as_ref())
-            {
-                match request.session_delta(company, &self.agent_id, &session).await {
+            if !cold && let (Some(request), Some(company)) = (&chat_seed, turn_company.as_ref()) {
+                match request
+                    .session_delta(company, &self.agent_id, &session)
+                    .await
+                {
                     Some(agent_session::SessionPlan::Delta {
                         envelopes,
                         next_state,
@@ -4538,20 +4539,20 @@ impl HarnessPool {
         let (outcome, turn_costs) = crate::runtime::delegation::with_task_hint(
             crate::runtime::delegation::operator_words(message).to_string(),
             crate::runtime::delegation::with_turn_speech(
-            speech.clone(),
-            crate::runtime::delegation::with_turn_conversation(
-                turn_chat,
-                deps.approval_requests.turn_scoped(agent.run_with_steer(
-                    &augmented,
-                    steer,
-                    stream_ctx,
-                    run_sink.clone(),
-                    chat_seed_request,
-                    // The caller's own, not read off `live` (#1890 I). A turn can
-                    // have a conversation and stream nothing.
-                    chat,
-                )),
-            ),
+                speech.clone(),
+                crate::runtime::delegation::with_turn_conversation(
+                    turn_chat,
+                    deps.approval_requests.turn_scoped(agent.run_with_steer(
+                        &augmented,
+                        steer,
+                        stream_ctx,
+                        run_sink.clone(),
+                        chat_seed_request,
+                        // The caller's own, not read off `live` (#1890 I). A turn can
+                        // have a conversation and stream nothing.
+                        chat,
+                    )),
+                ),
             ),
         )
         .await;

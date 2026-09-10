@@ -141,7 +141,11 @@ pub fn agent_channels(record: &CompanyRecord, agent_id: &str) -> Vec<Channel> {
     let mut seen = std::collections::HashSet::new();
     let mut channels = Vec::new();
 
-    let manifest = record.manifest.group_chats.iter().map(|chat| chat.id.clone());
+    let manifest = record
+        .manifest
+        .group_chats
+        .iter()
+        .map(|chat| chat.id.clone());
     let overlay = record.overlay_desks.iter().map(|desk| desk.id.clone());
     for desk_id in manifest.chain(overlay) {
         if !seen.insert(desk_id.clone()) {

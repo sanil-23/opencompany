@@ -380,9 +380,7 @@ pub fn build_agent(
     // there is nothing for them to do and registering them would advertise a
     // voice the host cannot give. A company in that configuration keeps the
     // return-text path, which is the same fallback an un-called tool gets.
-    if speech_enabled
-        && let Some(events) = deps.events.clone()
-    {
+    if speech_enabled && let Some(events) = deps.events.clone() {
         tools.extend(crate::harness::speech_tools::speech_belt(
             crate::harness::speech_tools::SpeechContext::new(
                 company.clone(),
