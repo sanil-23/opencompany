@@ -2146,6 +2146,83 @@ mod tests {
         }
     }
 
+    /// Build one agent with `[speech]` on or off and a journal wired, and
+    /// return its live tool names.
+    ///
+    /// The journal is the half `built_tool_names` leaves out (`events: None`),
+    /// and it is not optional here: the speech tools **are** the append, so a
+    /// host with no `EventLog` registers none of them by design.
+    fn built_tool_names_with_speech(speech_enabled: bool) -> Vec<String> {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut deps = pin_deps(dir.path().to_path_buf());
+        deps.events = Some(Arc::new(crate::store::FsEventLog::new(dir.path())));
+        let manifest_agent = ManifestAgent {
+            id: "designer".to_string(),
+            name: None,
+            role: "Designer".to_string(),
+            description: None,
+            avatar: None,
+            tier: None,
+            harness: None,
+            tools: None,
+            skills: Vec::new(),
+            delegates_to: Vec::new(),
+            inbox: None,
+            memory: None,
+            context: None,
+            budget_usd_daily: None,
+            prompt: None,
+            prompt_files: Vec::new(),
+            prompt_files_resolved: Vec::new(),
+            classes: Vec::new(),
+            ledgers: None,
+            can_declare_ledgers: true,
+            model: None,
+        };
+        let agent = build_agent(
+            &CompanyId::new("acme"),
+            "Acme",
+            &manifest_agent,
+            ApprovalPolicy::new(&Policy::default(), None),
+            &deps,
+            &["*".to_string()],
+            &[],
+            &[],
+            None,
+            false,
+            speech_enabled,
+        )
+        .expect("agent builds");
+        let mut names: Vec<String> = agent.tools().iter().map(|t| t.name().to_string()).collect();
+        names.sort();
+        names
+    }
+
+    /// `[speech] enabled` is what puts a voice on the belt, and nothing else is.
+    ///
+    /// Pinned by name because the whole knob is "does this company talk by
+    /// calling a tool", and a company that did not ask for it must keep the
+    /// belt it had — an agent that suddenly grows four tools it was never told
+    /// about is a behaviour change nobody opted into.
+    #[test]
+    fn speech_tools_are_registered_only_when_the_manifest_asks() {
+        let off = built_tool_names_with_speech(false);
+        for tool in crate::harness::speech_tools::SPEECH_TOOLS {
+            assert!(
+                !off.contains(&tool.to_string()),
+                "{tool} must not be on the belt of a company that did not ask for it: {off:?}"
+            );
+        }
+
+        let on = built_tool_names_with_speech(true);
+        for tool in crate::harness::speech_tools::SPEECH_TOOLS {
+            assert!(
+                on.contains(&tool.to_string()),
+                "{tool} must be on the belt when `[speech] enabled`: {on:?}"
+            );
+        }
+    }
+
     /// Build one agent under `grants` and return its live tool names, sorted, so
     /// a snapshot compares byte-stably against a literal.
     fn built_tool_names(grants: &[&str], is_orchestrator: bool) -> Vec<String> {
