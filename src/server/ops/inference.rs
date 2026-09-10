@@ -2382,6 +2382,61 @@ base_url = "https://byo.example/v1"
         }
     }
 
+    /// Saving the managed brain has to be *visible*, not merely stored.
+    ///
+    /// The write always landed — `PUT` persisted `managed` verbatim — but every
+    /// read reported the resolved kind, and `normalize_provider` folds the
+    /// managed alias onto `openrouter`. The console seeds its provider select
+    /// from this field verbatim (which is what keeps the select and the header
+    /// beside it from naming different providers), so the operator pressed Save,
+    /// got "Inference updated", and watched the card go straight back to
+    /// OpenRouter — taking the Connect-TinyHumans button, which only the managed
+    /// route renders, with it.
+    ///
+    /// A save that cannot be observed is indistinguishable from one that did not
+    /// happen, so this asserts the round trip on both the mutation response and
+    /// a fresh read, from a company already saved on another provider.
+    #[tokio::test]
+    async fn switching_to_managed_reads_back_as_managed_rather_than_its_alias() {
+        let home_dir = home();
+        let home = home_dir.path().to_path_buf();
+        let state = state_with_company(&home).await;
+
+        // Start somewhere else, so "unchanged" and "reverted to OpenRouter"
+        // cannot pass for the same answer.
+        let (status, _, raw) = send(
+            &state,
+            "PUT",
+            "/api/v1/company/inference",
+            Some(json!({ "provider": "openrouter" })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{raw}");
+
+        let (status, resp, raw) = send(
+            &state,
+            "PUT",
+            "/api/v1/company/inference",
+            Some(json!({ "provider": "managed" })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{raw}");
+        assert_eq!(
+            resp["status"]["provider"], "managed",
+            "the save answers with the choice that was made"
+        );
+
+        let (_, dto, raw) = send(&state, "GET", "/api/v1/company/inference", None).await;
+        assert_eq!(
+            dto["provider"], "managed",
+            "and it survives a reload: {raw}"
+        );
+        // Resolution is untouched — this is a read-back fix, not a routing one.
+        assert_eq!(dto["slug"], "subscription");
+        assert_eq!(dto["proxied"], true);
+        assert_eq!(dto["source"], "runtime");
+    }
+
     #[tokio::test]
     async fn invalid_provider_config_is_rejected() {
         let home_dir = home();
