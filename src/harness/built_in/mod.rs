@@ -1359,6 +1359,22 @@ impl CompanyAgent {
             // residue of an unrelated task. That is the same trade the three
             // other reductions on this path already make.
             let chat_only = crate::runtime::delegation::is_chat_only_turn();
+            // A turn that brings its own context carries nothing of its own.
+            //
+            // `history_seed: false` is the hive episode's flag, and its
+            // documented reason applies with more force to a continuous
+            // session than it did to a seed: a deliberating turn is handed an
+            // attributed, **visibility-filtered** transcript by the episode
+            // prompt, and live history would hand the same desk's lines back
+            // unattributed and in the assistant role. A blind opening round
+            // stops being blind, `^N` citations lose the attribution they are
+            // read against, and — the case that actually broke — a second
+            // episode in one cycle inherits the first one's already-carried
+            // vote, which is precisely what `EpisodeScope` exists to prevent.
+            //
+            // So the history is emptied and nothing is seeded in its place.
+            // The prompt is the context, entire.
+            let brings_own_context = !chat.history_seed;
             //
             // A session with no watermark is handled one level down:
             // `prepare_delta` answers `ColdStart` for it, which lands on the
@@ -1374,8 +1390,18 @@ impl CompanyAgent {
             // wired, and a host without them would otherwise never re-seed at
             // all — leaving whatever was last in the live history to answer the
             // next chat turn.
-            let mut reseed = chat_only || session.watermark.is_none();
-            if !reseed && let (Some(request), Some(company)) = (&chat_seed, turn_company.as_ref()) {
+            let mut reseed = !brings_own_context && (chat_only || session.watermark.is_none());
+            if brings_own_context {
+                if !agent.history().is_empty() {
+                    agent.clear_history();
+                }
+                overrides.suppress_transcript_autoload = true;
+                *session = agent_session::AgentSessionState::default();
+            }
+            if !reseed
+                && !brings_own_context
+                && let (Some(request), Some(company)) = (&chat_seed, turn_company.as_ref())
+            {
                 match request
                     .session_delta(company, &self.agent_id, &session)
                     .await
