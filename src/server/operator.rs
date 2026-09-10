@@ -60,6 +60,18 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/companies/{id}", get(company_status))
         .route("/api/v1/companies/{id}/chat", post(operator_chat))
         .route("/api/v1/companies/{id}/chat/history", get(chat_history))
+        // One agent's whole session: every line it said and heard, across every
+        // channel it can read, in journal order. Registered explicitly rather
+        // than through `scoped` because the two forms take different path
+        // tuples — `(id, agent_id)` against `(agent_id)`.
+        .route(
+            "/api/v1/companies/{id}/agents/{agent_id}/session",
+            get(agent_session),
+        )
+        .route(
+            "/api/v1/company/agents/{agent_id}/session",
+            get(agent_session_single),
+        )
         .route(
             "/api/v1/companies/{id}/chat/attribution-audit",
             get(attribution_audit),
@@ -4900,6 +4912,123 @@ async fn chat_history_single(
     let runtime = sole(&state)?;
     let id = runtime.id().clone();
     chat_history_response(&state, &id, runtime, &headers, peer, query).await
+}
+
+/// One line of an agent's session, as the console renders it.
+///
+/// A `ChatHistoryMessageDto` plus where it was said. The reuse is the point:
+/// the console's `fromHistory` already maps every field of that type, including
+/// the referral and aside collapses, so the session view renders an
+/// agent-to-agent exchange with the components that already exist rather than
+/// with a second set that would drift from them.
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSessionMessageDto {
+    /// The line itself.
+    #[serde(flatten)]
+    pub message: ChatHistoryMessageDto,
+    /// The channel it was said on, as the rail names it (`#general`, `dm`).
+    pub session_channel: String,
+    /// The desk id behind that label, so a row can link to its conversation.
+    pub session_channel_id: String,
+}
+
+/// `GET {scope}/agents/{agent_id}/session` — everything one agent said and heard.
+///
+/// # Why this is one route and not "read the desks yourself"
+///
+/// The console could fetch `chat/history` per desk and merge. It must not: the
+/// set of channels an agent can read is decided by
+/// [`agent_channels`](crate::harness::built_in::agent_session::agent_channels),
+/// and that function is also what decides the agent's **own** session. Asking
+/// it here is what keeps the page from claiming an agent saw something it did
+/// not — one function, two readers, no drift.
+///
+/// # The operator sees more than the agent does, deliberately
+///
+/// Projected with the caller's own [`Viewer`], so an operator reads private
+/// asides in full while the agent's session has them narrowed by
+/// `Audience::admits`. That asymmetry is the documented rule: privacy here is a
+/// deliberation device between agents and never a security boundary.
+async fn agent_session_response(
+    state: &AppState,
+    company: &CompanyId,
+    runtime: Arc<CompanyRuntime>,
+    headers: &HeaderMap,
+    peer: Option<std::net::SocketAddr>,
+    agent_id: &str,
+    query: ChatHistoryQuery,
+) -> Result<Json<Vec<AgentSessionMessageDto>>, crate::server::Rejection> {
+    let (viewer, is_admin) = history_viewer(headers, state, company, peer).await?;
+    let limit = query
+        .limit
+        .unwrap_or(CHAT_HISTORY_PAGE_LIMIT)
+        .min(CHAT_HISTORY_PAGE_LIMIT);
+    let Some(record) = runtime.store().load(runtime.id()).await? else {
+        return Ok(Json(Vec::new()));
+    };
+    let channels =
+        crate::harness::built_in::agent_session::agent_channels(&record, agent_id);
+
+    // One page per channel, then merged by sequence. Each page is already
+    // bounded by `limit`, so the merge is bounded by `channels × limit` before
+    // the tail cut below — and an agent sits on a handful of desks, not a
+    // hundred.
+    let mut rows: Vec<AgentSessionMessageDto> = Vec::new();
+    for channel in &channels {
+        let messages = history_for_desk(
+            &runtime,
+            &channel.id,
+            &channel.name,
+            &viewer,
+            query.before,
+            limit,
+            is_admin,
+        )
+        .await?;
+        for message in messages {
+            rows.push(AgentSessionMessageDto {
+                message: ChatHistoryMessageDto::from(message),
+                session_channel: channel.label.clone(),
+                session_channel_id: channel.id.clone(),
+            });
+        }
+    }
+    // Journal order, oldest first — the order the agent itself experienced.
+    // `id` is the sequence the row was journaled under, so it sorts numerically
+    // rather than lexically; a string sort would put [10] before [9].
+    rows.sort_by_key(|row| row.message.id.parse::<u64>().unwrap_or(0));
+    rows.dedup_by(|a, b| a.message.id == b.message.id);
+    if rows.len() > limit {
+        rows.drain(..rows.len() - limit);
+    }
+    Ok(Json(rows))
+}
+
+/// `GET /api/v1/companies/{id}/agents/{agent_id}/session`.
+async fn agent_session(
+    State(state): State<AppState>,
+    Path((id, agent_id)): Path<(String, String)>,
+    headers: HeaderMap,
+    crate::server::graphql::auth::MaybePeer(peer): crate::server::graphql::auth::MaybePeer,
+    Query(query): Query<ChatHistoryQuery>,
+) -> Result<Json<Vec<AgentSessionMessageDto>>, crate::server::Rejection> {
+    let company = CompanyId::new(&id);
+    let runtime = lookup(&state, &id)?;
+    agent_session_response(&state, &company, runtime, &headers, peer, &agent_id, query).await
+}
+
+/// `GET /api/v1/company/agents/{agent_id}/session` (single-company alias).
+async fn agent_session_single(
+    State(state): State<AppState>,
+    Path(agent_id): Path<String>,
+    headers: HeaderMap,
+    crate::server::graphql::auth::MaybePeer(peer): crate::server::graphql::auth::MaybePeer,
+    Query(query): Query<ChatHistoryQuery>,
+) -> Result<Json<Vec<AgentSessionMessageDto>>, crate::server::Rejection> {
+    let runtime = sole(&state)?;
+    let id = runtime.id().clone();
+    agent_session_response(&state, &id, runtime, &headers, peer, &agent_id, query).await
 }
 
 /// The wire shape of `GET {scope}/chat/attribution-audit` (issue #885).
