@@ -609,7 +609,7 @@ export function InferenceSection({
    * catalog effect has to notice. Hoisted here because that effect runs before
    * `wouldSaveProxied` is computed.
    */
-  const savedIsProxied = !(status?.provider === "openrouter" && status.keyConfigured);
+  const savedIsProxied = status?.proxied ?? true;
 
   /**
    * Whether typing a key has pointed the draft at a *different endpoint* than
