@@ -376,6 +376,26 @@ fn is_managed_choice(provider: &str) -> bool {
     matches!(provider.trim(), LEGACY_MANAGED | "tinyhumans")
 }
 
+/// The provider kind **as the operator chose it**, before [`normalize_provider`]
+/// folds the managed alias into `openrouter`.
+///
+/// [`normalize_provider`] answers "where does this config resolve to", which is
+/// the right question on every request path and the wrong one for the console:
+/// the managed route and a plain `openrouter` route resolve identically, so
+/// normalizing on the way *out* made "Managed (TinyHumans)" unselectable —
+/// saving it stored `managed`, reading it back reported `openrouter`, and the
+/// card's provider select (seeded from that answer verbatim) snapped straight
+/// back to OpenRouter along with the Connect-TinyHumans button that only the
+/// managed route offers. This is the read-back half of that pair: the operator's
+/// own word for the route, canonicalized to [`LEGACY_MANAGED`] so the console has
+/// exactly one spelling to render, and never used to decide an endpoint.
+pub fn selected_kind(provider: &str) -> &str {
+    if is_managed_choice(provider) {
+        return LEGACY_MANAGED;
+    }
+    normalize_provider(provider)
+}
+
 /// OpenRouter's OpenAI-compatible base URL — used when the `openrouter`
 /// provider names no explicit `base_url`.
 pub const OPENROUTER_BASE_URL: &str = "https://openrouter.ai/api/v1";
@@ -436,8 +456,15 @@ pub struct RuntimeInference {
 /// redacts the credential.
 #[derive(Clone, Debug)]
 pub struct InferenceDecl {
-    /// Provider slug — one of [`INFERENCE_PROVIDERS`].
+    /// Provider slug — one of [`INFERENCE_PROVIDERS`]. Normalized: the managed
+    /// alias has already been folded into `openrouter` here, because this is
+    /// the field every resolution and attribution path reads.
     pub provider: String,
+    /// The kind the operator actually selected, before normalization — see
+    /// [`selected_kind`]. Differs from [`Self::provider`] only for the managed
+    /// route, and exists so the console can render and re-offer the choice that
+    /// was made rather than the one it resolves to.
+    selected_provider: String,
     /// Resolved OpenAI-compatible base URL (never empty for a valid config).
     pub base_url: String,
     /// Abstract-tier → concrete model id. Empty means every tier passes
@@ -463,6 +490,15 @@ pub struct InferenceDecl {
 }
 
 impl InferenceDecl {
+    /// The provider kind as the operator selected it — [`Self::provider`] for
+    /// every route but the managed one, which reports `managed`.
+    ///
+    /// For display and for re-offering the choice only. Anything deciding an
+    /// endpoint, a credential or an attribution wants [`Self::provider`].
+    pub fn selected_provider(&self) -> &str {
+        &self.selected_provider
+    }
+
     /// The outbound credential, unresolved. Callers on the request path want
     /// [`bearer`](Self::bearer); this is for status and fingerprinting.
     pub fn credential(&self) -> &Credential {
@@ -669,6 +705,7 @@ pub fn decl_for_probe(
     env_default: Option<&EnvDefault>,
 ) -> InferenceDecl {
     let provider = provider.trim().to_string();
+    let selected_provider = selected_kind(&provider).to_string();
     let (base_url, credential, proxied) = resolve_endpoint(
         &provider,
         base_url,
@@ -677,6 +714,7 @@ pub fn decl_for_probe(
     );
     InferenceDecl {
         provider,
+        selected_provider,
         base_url,
         models: BTreeMap::new(),
         source: InferenceSource::Runtime,
@@ -917,6 +955,7 @@ pub async fn resolve_effective_scoped(
 ) -> Result<Option<InferenceDecl>> {
     // 1. Runtime override (console) wins.
     if let Some(runtime) = load_runtime_config_scoped(company, secrets, scope).await? {
+        let selected_provider = selected_kind(&runtime.provider).to_string();
         let provider = normalize_provider(&runtime.provider).to_string();
         reject_unknown_provider(&provider, "the stored runtime inference config")?;
         let key = load_key_scoped(company, secrets, None, scope).await?;
@@ -924,6 +963,7 @@ pub async fn resolve_effective_scoped(
             resolve_endpoint(&provider, runtime.base_url.as_deref(), key, env_default);
         return Ok(Some(InferenceDecl {
             provider,
+            selected_provider,
             base_url,
             models: runtime.models,
             source: InferenceSource::Runtime,
@@ -935,8 +975,9 @@ pub async fn resolve_effective_scoped(
 
     // 2. Manifest `[inference]`.
     if manifest.is_set() {
-        let provider =
-            normalize_provider(manifest.provider.as_deref().unwrap_or_default()).to_string();
+        let declared = manifest.provider.as_deref().unwrap_or_default();
+        let selected_provider = selected_kind(declared).to_string();
+        let provider = normalize_provider(declared).to_string();
         reject_unknown_provider(&provider, "`[inference].provider`")?;
         let key =
             load_key_scoped(company, secrets, manifest.api_key_secret.as_deref(), scope).await?;
@@ -944,6 +985,7 @@ pub async fn resolve_effective_scoped(
             resolve_endpoint(&provider, manifest.base_url.as_deref(), key, env_default);
         return Ok(Some(InferenceDecl {
             provider,
+            selected_provider,
             base_url,
             models: manifest.models.clone(),
             source: InferenceSource::Manifest,
@@ -969,6 +1011,9 @@ pub async fn resolve_effective_scoped(
             resolve_endpoint(DEFAULT_PROVIDER, None, key, Some(env));
         return Ok(Some(InferenceDecl {
             provider: DEFAULT_PROVIDER.to_string(),
+            // Nothing was selected at all, so the console has nothing of the
+            // operator's to echo back — the default is the honest answer.
+            selected_provider: DEFAULT_PROVIDER.to_string(),
             base_url,
             models: BTreeMap::new(),
             source: InferenceSource::Default,
