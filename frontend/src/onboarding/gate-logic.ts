@@ -54,26 +54,6 @@ export interface GateDecisionInput {
   /** Whether "skip for now" was clicked earlier in this tab's session. */
   skippedThisSession: boolean;
   /**
-   * Whether the founder pressed **Skip setup** — a durable, per-company "stop
-   * asking me" (`onboarding/state.ts`'s dismissal half).
-   *
-   * Separate from `skippedThisSession` because the two are set by different
-   * actions that mean different things: following a link out of the gate sets
-   * the session marker (the founder is going to *do* a step, and the gate is
-   * still owed afterwards), while this is set only by the footer button.
-   *
-   * It exists because step 3 has no waiver. `IntegrationStep` grew one for bugs
-   * B-001/B-020 — an unfinishable step plus a session-scoped skip is a checklist
-   * that reappears forever — and `workflow_run_succeeded` is the same shape of
-   * condition with no equivalent escape: a run parked on an approval leaves the
-   * step honestly unticked, and nothing in the gate lets the founder answer it.
-   * This is that answer.
-   *
-   * Optional, so every existing caller and test keeps compiling with the
-   * pre-dismissal meaning — omitted is "not dismissed", the old behaviour.
-   */
-  dismissed?: boolean;
-  /**
    * Whether the signed-in user is this company's admin — `null` before that
    * read has landed (PR #1875 review finding).
    *
@@ -117,12 +97,6 @@ export function shouldShowOnboardingGate(input: GateDecisionInput): boolean {
   // words) — an operator who dismissed it must never be trapped back in it
   // until they navigate again, even if a poll landed in between.
   if (input.skippedThisSession) return false;
-
-  // "Skip setup" is durable and outranks everything below for the same reason
-  // the session skip does — more so, because it was said once and meant for
-  // good. Checked before the reads land so a dismissed founder never waits on a
-  // round trip for a gate that cannot render.
-  if (input.dismissed) return false;
 
   // Staffing runs first. A company with nobody on the roster has no workflow
   // an operator authored to run, so asking them to clear step 3 here would be
@@ -256,11 +230,6 @@ export function shouldHoldShellPending(
   input: GateDecisionInput & { retrying: boolean; setupChecked: boolean },
 ): boolean {
   if (input.skippedThisSession) return false;
-  // Nothing left to hold the shell for: `shouldShowOnboardingGate` can no
-  // longer return true on this company however the pending reads resolve, so
-  // holding would put a founder who already answered back on a loader on every
-  // fresh tab — a quieter version of the trap this dismissal removes.
-  if (input.dismissed) return false;
   // A confirmed non-admin can never see the gate (`shouldShowOnboardingGate`'s
   // own guard) — nothing to hold the shell pending for, regardless of what
   // either read below is still resolving.
@@ -300,8 +269,7 @@ export function shouldHoldShellPending(
   // (bugs B-001/B-020). Holding the shell for a role that cannot change the
   // outcome would put a founder who has answered everything they can back on a
   // loader on every fresh tab — a quieter version of the same trap.
-  if (outstandingGateSteps(input.status, input.waived ?? []).length === 0)
-    return false;
+  if (outstandingGateSteps(input.status, input.waived ?? []).length === 0) return false;
 
   // The company is not (yet) activated and the admin role is still
   // unresolved: `shouldShowOnboardingGate` cannot rule the gate in or out
@@ -313,7 +281,8 @@ export function shouldHoldShellPending(
 
 /** What a failed `/auth/me` read (behind `isGateAdmin` in `AppShell`) resolves to. */
 export type GateAdminCheckOutcome =
-  { settled: true; isAdmin: boolean } | { settled: false };
+  | { settled: true; isAdmin: boolean }
+  | { settled: false };
 
 /**
  * Classifies a `fetchMe` failure for the gate's admin check (PR #1875 review
@@ -335,9 +304,7 @@ export type GateAdminCheckOutcome =
  * that never reached the host) is not an answer about *who this user is* —
  * `settled: false` tells the caller to retry rather than guess.
  */
-export function resolveGateAdminCheckError(
-  error: unknown,
-): GateAdminCheckOutcome {
+export function resolveGateAdminCheckError(error: unknown): GateAdminCheckOutcome {
   if (error instanceof ApiError && error.status === 401) {
     return { settled: true, isAdmin: false };
   }
@@ -345,7 +312,9 @@ export function resolveGateAdminCheckError(
 }
 
 /** What a failed `GET {scope}/activation` read (behind `useActivationGate`) resolves to. */
-export type ActivationReadOutcome = { settled: true } | { settled: false };
+export type ActivationReadOutcome =
+  | { settled: true }
+  | { settled: false };
 
 /**
  * Classifies a `getActivation` failure for `useActivationGate`'s first read
@@ -369,9 +338,7 @@ export type ActivationReadOutcome = { settled: true } | { settled: false };
  * is activated* — `settled: false` tells the caller to retry rather than
  * guess, sooner than the regular poll cadence.
  */
-export function resolveActivationReadError(
-  error: unknown,
-): ActivationReadOutcome {
+export function resolveActivationReadError(error: unknown): ActivationReadOutcome {
   if (error instanceof ApiError && error.status === 404) {
     return { settled: true };
   }

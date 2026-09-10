@@ -13,8 +13,6 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { ChargebeeForm } from "@/views/finance/ChargebeeForm";
-import { ChargebeeCreditsBanner } from "@/views/finance/ChargebeeCreditsBanner";
-import { ChargebeePitch } from "@/views/finance/ChargebeePitch";
 import { ConnectionPanel } from "@/views/finance/ConnectionPanel";
 import { chargebeeHealth, startsExpanded } from "@/views/finance/health";
 import { grantNamespace } from "@/components/grant-namespace";
@@ -28,14 +26,7 @@ interface Props {
 }
 
 /** The statuses Chargebee accepts as an invoice filter. */
-const STATUSES = [
-  "",
-  "paid",
-  "payment_due",
-  "posted",
-  "not_paid",
-  "voided",
-] as const;
+const STATUSES = ["", "paid", "payment_due", "posted", "not_paid", "voided"] as const;
 
 /**
  * Finance → Invoicing: the Chargebee connection and what customers owe.
@@ -79,10 +70,7 @@ export function InvoicingView({ client, company }: Props) {
   const invoiceRequest = useRef(0);
 
   const [invoices, setInvoices] = useState<Invoice[] | null>(null);
-  const [listError, setListError] = useState<{
-    code: string;
-    message: string;
-  } | null>(null);
+  const [listError, setListError] = useState<{ code: string; message: string } | null>(null);
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState("");
   const [customerEmail, setCustomerEmail] = useState("");
@@ -95,16 +83,7 @@ export function InvoicingView({ client, company }: Props) {
       setStatusError(null);
       if (!expandedSeeded.current) {
         expandedSeeded.current = true;
-        // An unconnected company now meets `ChargebeePitch` instead of a
-        // credential form, and the form is what its "I already have a site"
-        // button opens — so the panel opening itself underneath the pitch would
-        // pre-empt that click and put two competing starting points on one
-        // screen. `startsExpanded` is unchanged and still right for the wallet
-        // page, which has no pitch in front of it.
-        const seeded = chargebeeHealth(next);
-        setExpanded(
-          startsExpanded(seeded) && seeded.state !== "not_configured",
-        );
+        setExpanded(startsExpanded(chargebeeHealth(next)));
       }
     } catch (err) {
       setStatusError(err instanceof Error ? err.message : String(err));
@@ -180,9 +159,7 @@ export function InvoicingView({ client, company }: Props) {
         {header}
         <div className="w-full px-4 py-6">
           <Alert variant="destructive" data-testid="invoicing-status-error">
-            <AlertDescription>
-              Could not load the Chargebee connection: {statusError}
-            </AlertDescription>
+            <AlertDescription>Could not load the Chargebee connection: {statusError}</AlertDescription>
           </Alert>
         </div>
       </div>
@@ -202,33 +179,11 @@ export function InvoicingView({ client, company }: Props) {
 
   const health = chargebeeHealth(status);
   const usable = health.state === "connected" || health.state === "not_granted";
-  /*
-    Whether this company has yet to decide on Chargebee at all.
-
-    `not_configured` is the only state the pitch belongs in. `not_in_build` is a
-    host that cannot run Chargebee however persuasive the page is — pitching a
-    migration there would sell something this binary cannot deliver — and the
-    other two states are companies that already migrated, who get the one-line
-    credits strip instead. See `health.ts` for the four.
-  */
-  const undecided = health.state === "not_configured";
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-testid="invoicing-view">
       {header}
       <div className="min-h-0 w-full flex-1 space-y-6 overflow-y-auto px-4 py-6">
-        {/*
-          The decision, then the machinery. A company that has not connected
-          gets the case for Chargebee first and the credential form behind a
-          button; one that has connected gets its invoices, with the reward it
-          earned reduced to a single line. Neither ever sees the other's
-          surface — see `ChargebeePitch` and `ChargebeeCreditsBanner`.
-        */}
-        {undecided ? (
-          <ChargebeePitch onConnect={() => setExpanded(true)} />
-        ) : (
-          <ChargebeeCreditsBanner />
-        )}
 
         <ConnectionPanel
           title="Chargebee"
@@ -247,8 +202,7 @@ export function InvoicingView({ client, company }: Props) {
                 // Re-read on success so the panel's own verdict moves off
                 // "not granted" — a button that works and leaves the warning
                 // standing reads exactly like one that did not.
-                if (await grantNamespace(client, company, "chargebee"))
-                  await loadStatus();
+                if (await grantNamespace(client, company, "chargebee")) await loadStatus();
               } finally {
                 setGranting(false);
               }
@@ -269,169 +223,120 @@ export function InvoicingView({ client, company }: Props) {
           />
         </ConnectionPanel>
 
-        {/*
-          No invoice table while the company is still deciding. It can only ever
-          render its own `not_configured` error here — "Connect Chargebee above"
-          — which is a second, weaker copy of what the pitch is already saying,
-          under a row of filters that filter nothing and a Send-invoice button
-          that cannot send one. An empty table is not honest neutrality; it is
-          three dead controls.
-        */}
-        {undecided ? null : (
-          <Card>
-            <CardContent className="space-y-4">
-              <div className="flex flex-wrap items-end gap-3">
-                <div className="space-y-1">
-                  <label
-                    className="text-xs text-muted-foreground"
-                    htmlFor="inv-filter"
-                  >
-                    Status
-                  </label>
-                  <select
-                    id="inv-filter"
-                    data-testid="invoice-status-filter"
-                    className="h-9 rounded-md border border-input bg-transparent px-3 text-sm"
-                    value={filter}
-                    onChange={(e) => setFilter(e.target.value)}
-                  >
-                    {STATUSES.map((value) => (
-                      <option key={value || "all"} value={value}>
-                        {value === "" ? "All" : invoiceStatus(value).label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="min-w-48 flex-1 space-y-1">
-                  <label
-                    className="text-xs text-muted-foreground"
-                    htmlFor="inv-customer"
-                  >
-                    Customer email
-                  </label>
-                  <input
-                    id="inv-customer"
-                    data-testid="invoice-customer-filter"
-                    className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
-                    placeholder="Any"
-                    value={customerEmail}
-                    onChange={(e) => setCustomerEmail(e.target.value)}
-                  />
-                </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void loadInvoices()}
-                  disabled={loading}
+        <Card>
+          <CardContent className="space-y-4">
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="space-y-1">
+                <label className="text-xs text-muted-foreground" htmlFor="inv-filter">
+                  Status
+                </label>
+                <select
+                  id="inv-filter"
+                  data-testid="invoice-status-filter"
+                  className="h-9 rounded-md border border-input bg-transparent px-3 text-sm"
+                  value={filter}
+                  onChange={(e) => setFilter(e.target.value)}
                 >
-                  <RefreshCw
-                    className={cn("mr-2 size-3.5", loading && "animate-spin")}
-                  />
-                  Refresh
-                </Button>
-                <Button
-                  size="sm"
-                  onClick={() => setSending(true)}
-                  disabled={!usable}
-                  data-testid="invoice-new"
-                >
-                  Send invoice
-                </Button>
+                  {STATUSES.map((value) => (
+                    <option key={value || "all"} value={value}>
+                      {value === "" ? "All" : invoiceStatus(value).label}
+                    </option>
+                  ))}
+                </select>
               </div>
+              <div className="min-w-48 flex-1 space-y-1">
+                <label className="text-xs text-muted-foreground" htmlFor="inv-customer">
+                  Customer email
+                </label>
+                <input
+                  id="inv-customer"
+                  data-testid="invoice-customer-filter"
+                  className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
+                  placeholder="Any"
+                  value={customerEmail}
+                  onChange={(e) => setCustomerEmail(e.target.value)}
+                />
+              </div>
+              <Button variant="outline" size="sm" onClick={() => void loadInvoices()} disabled={loading}>
+                <RefreshCw className={cn("mr-2 size-3.5", loading && "animate-spin")} />
+                Refresh
+              </Button>
+              <Button size="sm" onClick={() => setSending(true)} disabled={!usable} data-testid="invoice-new">
+                Send invoice
+              </Button>
+            </div>
 
-              {listError ? (
-                <Alert
-                  variant={
-                    listError.code === "provider_error"
-                      ? "destructive"
-                      : "default"
-                  }
-                  data-testid="invoice-list-error"
-                >
-                  <AlertDescription>
-                    {listError.code === "not_configured"
-                      ? "Connect Chargebee above to see this company's invoices."
-                      : listError.code === "not_in_build"
-                        ? "This host was built without Chargebee support, so there are no invoices to read."
-                        : listError.message}
-                  </AlertDescription>
-                </Alert>
-              ) : null}
+            {listError ? (
+              <Alert
+                variant={listError.code === "provider_error" ? "destructive" : "default"}
+                data-testid="invoice-list-error"
+              >
+                <AlertDescription>
+                  {listError.code === "not_configured"
+                    ? "Connect Chargebee above to see this company's invoices."
+                    : listError.code === "not_in_build"
+                      ? "This host was built without Chargebee support, so there are no invoices to read."
+                      : listError.message}
+                </AlertDescription>
+              </Alert>
+            ) : null}
 
-              {invoices?.length === 0 ? (
-                <p
-                  className="py-6 text-center text-sm text-muted-foreground"
-                  data-testid="invoice-empty"
-                >
-                  No invoices match.
-                </p>
-              ) : null}
+            {invoices?.length === 0 ? (
+              <p className="py-6 text-center text-sm text-muted-foreground" data-testid="invoice-empty">
+                No invoices match.
+              </p>
+            ) : null}
 
-              {invoices?.length ? (
-                <ul className="divide-y" data-testid="invoice-list">
-                  {invoices.map((invoice) => {
-                    const state = invoiceStatus(invoice.status);
-                    return (
-                      <li
-                        key={invoice.id}
-                        className="flex flex-wrap items-center gap-3 py-2.5"
+            {invoices?.length ? (
+              <ul className="divide-y" data-testid="invoice-list">
+                {invoices.map((invoice) => {
+                  const state = invoiceStatus(invoice.status);
+                  return (
+                    <li key={invoice.id} className="flex flex-wrap items-center gap-3 py-2.5">
+                      <span className="font-mono text-xs text-muted-foreground">{invoice.id}</span>
+                      <span className="min-w-0 flex-1 truncate text-sm">{invoice.customer_id}</span>
+                      <span className="text-sm font-medium tabular-nums">
+                        {fromMinorUnits(invoice.total_in_minor_units, invoice.currency_code)}
+                      </span>
+                      <Badge
+                        variant="outline"
+                        className={cn(
+                          state.tone === "done" && "text-status-done-text",
+                          state.tone === "failed" && "text-status-failed-text",
+                          state.tone === "pending" && "text-status-blocked-text",
+                        )}
                       >
-                        <span className="font-mono text-xs text-muted-foreground">
-                          {invoice.id}
-                        </span>
-                        <span className="min-w-0 flex-1 truncate text-sm">
-                          {invoice.customer_id}
-                        </span>
-                        <span className="text-sm font-medium tabular-nums">
-                          {fromMinorUnits(
-                            invoice.total_in_minor_units,
-                            invoice.currency_code,
-                          )}
-                        </span>
-                        <Badge
-                          variant="outline"
-                          className={cn(
-                            state.tone === "done" && "text-status-done-text",
-                            state.tone === "failed" &&
-                              "text-status-failed-text",
-                            state.tone === "pending" &&
-                              "text-status-blocked-text",
-                          )}
-                        >
-                          {state.label}
-                        </Badge>
-                        {/* Chargebee reports the due date in Unix SECONDS. The
+                        {state.label}
+                      </Badge>
+                      {/* Chargebee reports the due date in Unix SECONDS. The
                           `* 1000` is the difference between "due 3 Sep" and
                           "due 20 Jan 1970". */}
-                        <span className="w-28 shrink-0 text-right text-xs text-muted-foreground">
-                          {invoice.due_date
-                            ? `due ${new Date(
-                                invoice.due_date * 1000,
-                              ).toLocaleDateString(undefined, {
-                                month: "short",
-                                day: "numeric",
-                              })}`
-                            : ""}
-                        </span>
-                        {invoice.payment_url ? (
-                          <a
-                            href={invoice.payment_url}
-                            target="_blank"
-                            rel="noreferrer noopener"
-                            className="text-muted-foreground hover:text-foreground"
-                            aria-label={`Payment page for ${invoice.id}`}
-                          >
-                            <ExternalLink className="size-3.5" />
-                          </a>
-                        ) : null}
-                      </li>
-                    );
-                  })}
-                </ul>
-              ) : null}
-            </CardContent>
-          </Card>
-        )}
+                      <span className="w-28 shrink-0 text-right text-xs text-muted-foreground">
+                        {invoice.due_date
+                          ? `due ${new Date(invoice.due_date * 1000).toLocaleDateString(undefined, {
+                              month: "short",
+                              day: "numeric",
+                            })}`
+                          : ""}
+                      </span>
+                      {invoice.payment_url ? (
+                        <a
+                          href={invoice.payment_url}
+                          target="_blank"
+                          rel="noreferrer noopener"
+                          className="text-muted-foreground hover:text-foreground"
+                          aria-label={`Payment page for ${invoice.id}`}
+                        >
+                          <ExternalLink className="size-3.5" />
+                        </a>
+                      ) : null}
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : null}
+          </CardContent>
+        </Card>
       </div>
 
       <SendInvoiceDialog
