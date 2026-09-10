@@ -2317,9 +2317,22 @@ base_url = "https://byo.example/v1"
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{raw}");
-        // The legacy name aliases through to what it now means.
-        assert_eq!(resp["status"]["provider"], "openrouter");
-        assert_eq!(resp["status"]["slug"], "openrouter");
+        // The choice is echoed back as it was made. This used to read
+        // `"openrouter"` — the alias resolved — which is what made the managed
+        // route unselectable from the console: the card seeds its provider
+        // select straight from this field, so saving `managed` and reading back
+        // `openrouter` snapped the select (and the managed-only Connect button)
+        // back to OpenRouter every time. Where it resolves to is still reported,
+        // on the two fields that answer that question.
+        assert_eq!(resp["status"]["provider"], "managed");
+        assert_eq!(
+            resp["status"]["slug"], "openrouter",
+            "attribution follows the endpoint, not the label"
+        );
+        assert_eq!(
+            resp["status"]["proxied"], false,
+            "a key of its own is what takes a managed company off the subscription"
+        );
         assert_eq!(resp["status"]["source"], "runtime");
         assert_eq!(resp["status"]["keyConfigured"], true);
         // A key means the tenant's own OpenRouter account pays.
@@ -2355,6 +2368,15 @@ base_url = "https://byo.example/v1"
 
         let (_, dto, raw) = send(&state, "GET", "/api/v1/company/inference", None).await;
         assert_eq!(dto["keyConfigured"], false);
+        // The selection outlives the key: clearing the credential is not a way
+        // of un-choosing the route, and a plain read has to report the same
+        // thing the write did or the console will drift from it on reload.
+        assert_eq!(dto["provider"], "managed");
+        assert_eq!(
+            dto["proxied"], true,
+            "with the key gone it is back on the subscription"
+        );
+        assert_eq!(dto["slug"], "subscription");
         for token in [TOKEN, ROTATED] {
             assert!(!raw.contains(token), "GET leaked a token: {raw}");
         }
