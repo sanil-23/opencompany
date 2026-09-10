@@ -50,7 +50,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use crate::ports::EventLog;
-use crate::ports::types::{CompanyEvent, CompanyId, CompanyRecord, EventSeq, StoredEvent};
+use crate::ports::types::{CompanyEvent, CompanyId, CompanyRecord, EventSeq};
 use crate::server::chat_history;
 
 /// How many raw journal events one delta walk may read before giving up and
@@ -104,7 +104,7 @@ impl AgentSessionState {
         // case, where a delta is a contiguous run.
         loop {
             let next = match self.watermark {
-                Some(mark) => EventSeq::from(mark.value() + 1),
+                Some(mark) => EventSeq::new(mark.value() + 1),
                 None => match self.present_above_watermark.iter().next().copied() {
                     Some(first) => first,
                     None => return,
@@ -176,7 +176,7 @@ pub fn agent_channels(record: &CompanyRecord, agent_id: &str) -> Vec<Channel> {
     // The company's own line. Not a desk (issue #1743) unless a blueprint
     // declared one under a General spelling, in which case the loop above
     // already claimed it and this is a no-op.
-    let general = crate::ports::DEFAULT_DESK.to_string();
+    let general = tinyhivemind_core::chat::GENERAL_DESK.to_string();
     if seen.insert(general.clone()) {
         channels.push(Channel {
             label: "#general".to_string(),

@@ -594,7 +594,7 @@ fn prefix_every_line(label: &str, text: &str) -> String {
 /// lock on a path whose whole design note is that it must not do avoidable I/O.
 /// An id is stable, unique and already unforgeable (see [`OPERATOR_LABEL`]);
 /// a colleague's screen name is neither of the last two.
-fn operator_label(by: &Option<crate::ports::types::Actor>) -> String {
+pub(super) fn operator_label(by: &Option<crate::ports::types::Actor>) -> String {
     match by {
         Some(actor) if actor.kind == crate::ports::types::ActorKind::User => actor.id.clone(),
         _ => OPERATOR_LABEL.to_string(),
