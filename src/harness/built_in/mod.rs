@@ -4530,6 +4530,7 @@ impl HarnessPool {
         // briefings, which are not what anybody asked for.
         let (outcome, turn_costs) = crate::runtime::delegation::with_task_hint(
             crate::runtime::delegation::operator_words(message).to_string(),
+            crate::runtime::delegation::with_speech_tracking(
             crate::runtime::delegation::with_turn_conversation(
                 turn_chat,
                 deps.approval_requests.turn_scoped(agent.run_with_steer(
@@ -4542,6 +4543,7 @@ impl HarnessPool {
                     // have a conversation and stream nothing.
                     chat,
                 )),
+            ),
             ),
         )
         .await;
