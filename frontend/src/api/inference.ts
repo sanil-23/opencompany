@@ -57,8 +57,12 @@ export interface InferenceStatus {
    * `keyConfigured`: that derivation only held while `provider` was the
    * resolved kind, and would now read a managed company with its own OpenRouter
    * key as riding a subscription it does not.
+   *
+   * Optional because a host predating this field answers without it, and this
+   * console talks to hosts it did not ship with. Absent means "ask the old
+   * way" — see `savedIsProxied` in `InferenceSection` — not "not proxied".
    */
-  proxied: boolean;
+  proxied?: boolean;
   /** Telemetry slug: `managed` | `openrouter` | `byok` | `ollama`. */
   slug: string;
   /** Resolved OpenAI-compatible base URL. */

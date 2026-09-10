@@ -615,9 +615,17 @@ export function InferenceSection({
    * own OpenRouter key arrived here spelled `openrouter`; now that the field
    * carries the operator's selection, the same expression would call that
    * company proxied and send it to top-up links for an account its turns are not
-   * billed to. `true` before status loads, matching what it answered then.
+   * billed to.
+   *
+   * The old derivation survives as the fallback, and is still exactly right
+   * there: a host that does not send `proxied` is a host predating both fields,
+   * so its `provider` *is* the resolved kind and the restatement holds against
+   * it. This console reaches remote hosts it did not ship with (the host
+   * switcher, the ssh connector), so that case is a real one rather than a
+   * defensive `??`. `true` before status loads, as before.
    */
-  const savedIsProxied = status?.proxied ?? true;
+  const savedIsProxied =
+    status?.proxied ?? !(status?.provider === "openrouter" && status.keyConfigured);
 
   /**
    * Whether typing a key has pointed the draft at a *different endpoint* than
