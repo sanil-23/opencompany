@@ -32,6 +32,22 @@ async function pickProvider(page: Page, label: string) {
 }
 
 /**
+ * Switching provider asks before overwriting a draft's Base URL and model
+ * fields. Whether it asks depends on what the previous save left in the form,
+ * which is not what every spec is about — this answers the prompt when it
+ * appears and says nothing when it does not.
+ */
+async function confirmReplaceIfAsked(page: Page) {
+  const replace = page.getByRole("button", { name: "Replace fields" });
+  await replace
+    .waitFor({ state: "visible", timeout: 2_000 })
+    .then(() => replace.click())
+    .catch(() => {
+      /* the draft was clean, so there was nothing to replace */
+    });
+}
+
+/**
  * A fresh browser context has no tour state, so the first-run welcome dialog
  * opens over the console and swallows clicks. Skip it when it shows up.
  */
@@ -347,6 +363,97 @@ test("typing an OpenRouter passthrough id one keystroke at a time is not strippe
   const target = "openrouter/anthropic/claude-sonnet-5";
   await chatInput.pressSequentially(target, { delay: 20 });
   await expect(chatInput).toHaveValue(target);
+
+  // Leave the shared E2E company on its committed default for later specs.
+  await page.getByRole("button", { name: "Reset to default" }).click();
+  await expect(
+    page.getByText("Reverted to the committed manifest (or managed) configuration."),
+  ).toBeVisible({ timeout: 30_000 });
+});
+
+test("switching to the managed brain and saving stays on managed, with its Connect button", async ({
+  page,
+}) => {
+  // The save always landed; there was no way to see that it had. `PUT
+  // …/inference` stored `managed` verbatim, but the status route reported the
+  // *resolved* kind — and `normalize_provider` folds the managed alias onto
+  // `openrouter` — so every read-back said "openrouter". `seedFromStatus` takes
+  // that value verbatim (deliberately: it is what keeps the select and the
+  // header beside it from naming different providers), so the select snapped
+  // back to OpenRouter the instant the save returned, and the
+  // Connect-TinyHumans button, which renders only for `provider === "managed"`,
+  // went with it. Two symptoms, one cause: the host reported where the config
+  // resolves to where the console asked what was chosen.
+  //
+  // A unit test cannot catch this — the wrong value is produced by the host and
+  // consumed by the card, and each half is individually correct. Only a real
+  // save against a real host closes the loop.
+  await page.route("**/company/credential", async (route) => {
+    // The Connect button also needs a host with a hub wired (`hubLink`), which
+    // the E2E host has no reason to have. That is a separate precondition from
+    // the one under test, so it is supplied here rather than left to decide
+    // whether this spec can run.
+    if (route.request().method() !== "GET") return route.fallback();
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        configured: false,
+        source: "none",
+        notice: "pw-e2e fixture",
+        hubLink: true,
+      }),
+    });
+  });
+
+  await openConnections(page);
+  await expect(page.locator("#inference-provider")).toBeVisible({ timeout: 30_000 });
+
+  // Start from a *saved* OpenRouter company, so "still stuck with OpenRouter"
+  // is a state this test could actually be stuck in rather than the default it
+  // happens to open on.
+  await pickProvider(page, "OpenRouter");
+  await confirmReplaceIfAsked(page);
+  await page.getByTestId("inference-save").click();
+  await expect(
+    page.getByText(/Inference updated\.|Inference saved — restart the company/),
+  ).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("inference-current-provider")).toHaveText("OpenRouter");
+
+  // Now the switch under test.
+  await pickProvider(page, "Managed (TinyHumans)");
+  await confirmReplaceIfAsked(page);
+  await page.getByTestId("inference-save").click();
+  await expect(
+    page.getByText(/Inference updated\.|Inference saved — restart the company/),
+  ).toBeVisible({ timeout: 30_000 });
+
+  // The host reports the selection back.
+  const saved = await page.request.get("/api/v1/company/inference");
+  expect(saved.ok()).toBeTruthy();
+  const body = await saved.json();
+  expect(body.provider).toBe("managed");
+  // …and still reports where it resolves to, on the field that answers that
+  // question. `managed` with no key of its own rides the subscription, which is
+  // the fact the console used to reconstruct from `provider` and can no longer.
+  expect(body.slug).toBe("subscription");
+  expect(body.proxied).toBe(true);
+
+  // Both halves of the card agree, and neither has snapped back.
+  await expect(page.getByTestId("inference-current-provider")).toHaveText("Managed (TinyHumans)");
+  await expect(page.locator("#inference-provider")).toContainText("Managed (TinyHumans)");
+
+  // The managed-only Connect button is on screen — the second reported symptom,
+  // and the reason it had gone: it never rendered because `provider` was never
+  // `"managed"` for longer than the round trip.
+  await expect(page.getByTestId("connect-tinyhumans")).toBeVisible();
+
+  // A reload proves it is stored, not just held in the component's state.
+  await page.reload();
+  await expect(page.getByTestId("inference-current-provider")).toHaveText("Managed (TinyHumans)", {
+    timeout: 30_000,
+  });
+  await expect(page.locator("#inference-provider")).toContainText("Managed (TinyHumans)");
+  await expect(page.getByTestId("connect-tinyhumans")).toBeVisible();
 
   // Leave the shared E2E company on its committed default for later specs.
   await page.getByRole("button", { name: "Reset to default" }).click();
