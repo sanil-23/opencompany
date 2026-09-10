@@ -2789,6 +2789,10 @@ export function RoomView({
                   // Thread-panel receipts are out of v1 (issue #1934): excluded here
                   // the same way `liveSteps` is when a thread is open.
                   receipt={openThreadId ? undefined : receipt}
+                  // Who the host expects to answer, for the leg that has no
+                  // receipt to read: a reload keeps the open-turn row and
+                  // nothing else, and the row is what carries this.
+                  turnAgentId={openTurn?.agentId}
                   agentNames={agentNames}
                   onOpenThread={setOpenThreadId}
                   onReact={react}

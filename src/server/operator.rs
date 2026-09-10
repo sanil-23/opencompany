@@ -3178,6 +3178,31 @@ async fn drain_bounded(
     }
 }
 
+/// Who a chat turn addressed to `desk` is expected to be answered by.
+///
+/// Recorded on the turn's row so a console with no receipt can still name the
+/// teammate. A chat turn used to record the DESK here — `for_chat(.., desk,
+/// desk)` — so every one of them read `agent_id == chat_id` ("main" for
+/// General). The console's rich receipt names whoever the first live frame
+/// named, but a receipt is client state: a reload throws it away, re-arms from
+/// `/runs` alone, and could then render only a bare "Working…" — no name, no
+/// clock, nothing to distinguish a turn in flight from a console that lost it.
+///
+/// The same ladder [`crate::runtime::cycle`]'s small-talk fast path runs, which
+/// is itself "the same resolution the harness brain's `responder_for` runs", so
+/// the name on the row is the voice the turn will actually answer in.
+///
+/// **Optimistic, and the callers depend on it being cheap.** This is the sync,
+/// record-only seam — no inference — so the brain's per-message rung may still
+/// pick a different seat; the turn's first live frame supersedes whatever is
+/// recorded here. A company with nobody resolvable falls back to `desk`, which
+/// is precisely the old behaviour, so the change can only add a name.
+fn chat_turn_responder(record: &crate::ports::types::CompanyRecord, desk: &str) -> String {
+    crate::runtime::delegation_tools::chat_responder(record, desk)
+        .or_else(|| crate::company::orchestrator_id(&record.effective_agents()).map(str::to_string))
+        .unwrap_or_else(|| desk.to_string())
+}
+
 async fn accept_chat_turn(
     runtime: &Arc<CompanyRuntime>,
     id: &CompanyId,
@@ -3271,6 +3296,12 @@ async fn accept_chat_turn(
         .await;
 
     let turn_id = crate::ports::generate_id();
+    // A record this read cannot load leaves the turn recorded exactly as it was
+    // before: the desk's own id, which is what `for_chat` was passed twice.
+    let responder = match runtime.store().load(id).await {
+        Ok(Some(record)) => chat_turn_responder(&record, desk),
+        _ => desk.to_string(),
+    };
     let turn_id = match runtime
         .runs()
         .create_run(
@@ -3289,7 +3320,8 @@ async fn accept_chat_turn(
             // before the host has assigned this message a seq. Rooting it at
             // its own seq would key the two legs differently and the reload
             // leg would stop matching the arm.
-            crate::ports::runs::NewRun::for_chat(turn_id.clone(), desk, desk).in_thread(parent),
+            crate::ports::runs::NewRun::for_chat(turn_id.clone(), desk, responder)
+                .in_thread(parent),
         )
         .await
     {
@@ -7345,6 +7377,94 @@ mode = "full"
              [[group_chat]]\nid = \"studio\"\nname = \"Studio\"\nmembers = [\"ceo\"]\n",
         )
         .unwrap()
+    }
+
+    /// A bare record carrying `manifest`, for resolvers that read nothing else.
+    fn record_with(manifest: CompanyManifest) -> CompanyRecord {
+        CompanyRecord {
+            overlay_desk_hive: Vec::new(),
+            overlay_retired_agents: Vec::new(),
+            overlay_agent_edits: Vec::new(),
+            id: CompanyId::new("acme"),
+            manifest,
+            ledger: Vec::new(),
+            lifecycle: "running".to_string(),
+            overlay_agents: Vec::new(),
+            overlay_desk_members: Vec::new(),
+            overlay_desk_order: Vec::new(),
+            overlay_desks: Vec::new(),
+            overlay_workflows: Vec::new(),
+            overlay_budgets: Vec::new(),
+            overlay_policy: None,
+            overlay_tool_grants: None,
+            overlay_desk_tools: Default::default(),
+            disabled_workflows: Vec::new(),
+            template_provenance: None,
+            setup: None,
+            name_confirmed: false,
+            activation_completed_at: None,
+            created_at_millis: None,
+        }
+    }
+
+    /// The name a chat turn's row carries.
+    ///
+    /// Reproduced against a live company before this was written: a turn sent to
+    /// `#general` recorded `agent_id == chat_id == "main"`. A console that
+    /// reloaded mid-turn therefore had a durable row, a live turn, and nobody to
+    /// name — so its re-armed indicator could say only a bare "Working…", which
+    /// reads exactly like a console that has lost the turn.
+    #[test]
+    fn a_chat_turn_records_who_answers_rather_than_the_desk_it_was_sent_to() {
+        let record = record_with(desk_manifest());
+        assert_eq!(
+            chat_turn_responder(&record, "studio"),
+            "ceo",
+            "a desk's turn is answered by the desk's lead, and that is the name \
+             the reload leg has to render"
+        );
+        assert_ne!(
+            chat_turn_responder(&record, "studio"),
+            "studio",
+            "recording the desk is the regression: it is what made every chat \
+             row read `agent_id == chat_id`"
+        );
+    }
+
+    /// A DM addresses the teammate directly — its thread id *is* a roster id —
+    /// so the row names that teammate rather than falling through to the
+    /// orchestrator.
+    #[test]
+    fn a_direct_message_records_the_teammate_it_addresses() {
+        let record = record_with(desk_manifest());
+        assert_eq!(chat_turn_responder(&record, "eng"), "eng");
+    }
+
+    /// Every spelling of the company's own line folds to one answer, so the
+    /// indicator does not name a different teammate depending on how the
+    /// console happened to address General.
+    #[test]
+    fn every_general_spelling_records_the_same_answer() {
+        let record = record_with(desk_manifest());
+        let folded: Vec<String> = ["", "main", "general", "General"]
+            .into_iter()
+            .map(|spelling| chat_turn_responder(&record, spelling))
+            .collect();
+        assert!(
+            folded.windows(2).all(|pair| pair[0] == pair[1]),
+            "the General spellings disagreed about who answers: {folded:?}"
+        );
+    }
+
+    /// The floor. A company with nobody to name records the desk — which is
+    /// precisely what every chat turn recorded before this change, so the worst
+    /// case is the old behaviour rather than a row naming a teammate that does
+    /// not exist.
+    #[test]
+    fn a_company_with_no_roster_records_the_desk_exactly_as_before() {
+        let empty: CompanyManifest =
+            toml::from_str("[company]\nname = \"Acme\"\n").expect("a roster-less manifest");
+        assert_eq!(chat_turn_responder(&record_with(empty), "studio"), "studio");
     }
 
     /// Builds an app state whose sole company carries `manifest`.
