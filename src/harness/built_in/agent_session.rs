@@ -712,7 +712,7 @@ members = ["copy"]
             mine: false,
             text: "warmer".to_string(),
         };
-        assert!(render_cues(&[mine.clone()]).is_none());
+        assert!(render_cues(std::slice::from_ref(&mine)).is_none());
         let rendered = render_cues(&[mine, theirs]).expect("a peer line is cued");
         assert!(rendered.contains("[#Brand · copy] warmer"), "{rendered}");
         assert!(!rendered.contains("on it"), "{rendered}");
