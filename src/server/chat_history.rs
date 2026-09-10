@@ -297,7 +297,10 @@ pub fn agent_channels(record: &CompanyRecord, agent_id: &str) -> Vec<Channel> {
     // DM or orphan its history (issue #364).
     for (label, id) in [
         ("dm", agent_id.to_string()),
-        ("dm", format!("{}{agent_id}", crate::runtime::assignee::DM_PREFIX)),
+        (
+            "dm",
+            format!("{}{agent_id}", crate::runtime::assignee::DM_PREFIX),
+        ),
     ] {
         if seen.insert(id.clone()) {
             channels.push(Channel {
