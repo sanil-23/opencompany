@@ -1305,42 +1305,92 @@ impl CompanyAgent {
         // chat-only reductions cannot clobber each other.
         let mut overrides = oh::agent::harness::session::TurnOverrides::default();
 
-        // Per-conversation history isolation. One `Agent` is reused for every
-        // chat of this `(company, agent_id)` pair, so its in-memory `history`
-        // would otherwise replay a prior thread's transcript into an unrelated
-        // one — the operator opens a new chat, types "hi", and the reply is
-        // grounded in the previous task. Bind the agent to the incoming chat
-        // thread: on a switch, clear the history and re-seed from THAT thread's
-        // own durable transcript. Runs inside the `agent` critical section,
-        // which already serialises this agent's turns.
+        // One agent, one session (see `agent_session`).
+        //
+        // This used to be per-conversation history isolation: one `Agent` is
+        // reused for every chat of this `(company, agent_id)` pair, and its
+        // in-memory `history` was CLEARED and re-seeded from the incoming
+        // desk's own transcript whenever the chat changed. That kept two
+        // conversations from bleeding into each other, and it also meant an
+        // agent had no continuous existence — it could not notice that the
+        // question just asked in a DM is the one it answered on a desk an hour
+        // ago, because between the two it had been emptied.
+        //
+        // The session is now continuous. Instead of clearing, the agent is
+        // handed the rows it has **not yet seen**, across every channel it can
+        // read, each cued with where it was said. `agent_session` owns the
+        // watermark and the cue rendering; this block is the seam that asks it.
+        //
+        // What is NOT given up is who may read what: `agent_session` applies
+        // the aside audience narrowing, so a private exchange this agent is not
+        // party to still never reaches it. Channel isolation is deliberately
+        // dropped; audience isolation is not.
+        //
+        // Runs inside the `agent` critical section, which already serialises
+        // this agent's turns.
+        let mut session_cues: Option<String> = None;
         if let Some(incoming) = turn_chat_id.as_deref() {
             let incoming_root = thread_root;
             let mut bound = self.bound_chat.lock().await;
             let switched = bound.as_ref().map(|(chat, root)| (chat.as_str(), *root))
                 != Some((incoming, incoming_root));
-            if switched {
-                tracing::debug!(
-                    from = bound.as_ref().map(|(chat, _)| chat.as_str()).unwrap_or("<none>"),
-                    from_thread = ?bound.as_ref().and_then(|(_, root)| *root),
-                    to = incoming,
-                    to_thread = ?incoming_root,
-                    "[harness] chat switched — resetting agent history and re-binding to the incoming thread"
-                );
-                agent.clear_history();
-                // Prefer OpenCompany's own EventLog-derived seed (issue #1840).
-                // OpenHuman never writes a file transcript for an OC `chat_id`, so
-                // `seed_resume_from_thread_transcript` always misses and the reply
-                // starts blind (the #1725/#1730 regression). Project it HERE, now
-                // that `switched` is confirmed true — not by the caller for every
-                // turn — because the projection walks the company journal and is
-                // costly on the filesystem backend (`chat_seed::build_chat_seed`'s
-                // docs); building it unconditionally meant every ordinary
-                // same-desk reply paid for a journal scan its `switched == false`
-                // branch below would just throw away (codex review finding). This
-                // still runs inside the same `bound_chat`-locked section as the
-                // switch decision, so it is exactly as atomic as the eager build
-                // was — no turn can observe a `switched` verdict this projection
-                // doesn't match.
+            let mut session = self.session.lock().await;
+
+            // Cold boot: this process has never run a turn for this agent, so
+            // there is no session to continue and nothing to compute a delta
+            // against. Seed the recent window exactly as before.
+            let cold = session.watermark.is_none() || agent.history().is_empty();
+
+            let mut reseed = cold;
+            if !cold
+                && let (Some(request), Some(company)) = (&chat_seed, turn_company.as_ref())
+            {
+                match request.session_delta(company, &self.agent_id, &session).await {
+                    Some(agent_session::SessionPlan::Delta {
+                        envelopes,
+                        next_state,
+                    }) => {
+                        // Commit only AFTER the rows are in hand — the ordering
+                        // is `agent_session`'s contract. Committing first would
+                        // let a failed turn leave the session believing it read
+                        // something it never saw.
+                        session_cues = agent_session::render_cues(&envelopes);
+                        tracing::debug!(
+                            chat = incoming,
+                            delivered = envelopes.len(),
+                            cued = session_cues.is_some(),
+                            "[harness] session delta — continuing without clearing history"
+                        );
+                        *session = next_state;
+                    }
+                    Some(agent_session::SessionPlan::Reinitialize { reason }) => {
+                        tracing::debug!(
+                            chat = incoming,
+                            ?reason,
+                            "[harness] session delta unavailable — falling back to the recent-window seed"
+                        );
+                        reseed = true;
+                    }
+                    // No journal wired on this host: nothing to continue from,
+                    // and nothing to re-seed from either. Leave the session as
+                    // it is and let the turn run on its accumulated history.
+                    None => {}
+                }
+            }
+
+            if reseed {
+                if !cold {
+                    // A re-seed is the one path that still empties the session.
+                    // It happens when the agent has been away longer than the
+                    // delta walk can bound (`GapTooLarge` / `TooManyUnseen`),
+                    // where a recent window is honestly better context than a
+                    // partial replay of a history it can no longer reconstruct.
+                    agent.clear_history();
+                }
+                // OpenCompany's own EventLog-derived seed (issue #1840).
+                // OpenHuman never writes a file transcript for an OC `chat_id`,
+                // so `seed_resume_from_thread_transcript` always misses and the
+                // reply starts blind (the #1725/#1730 regression).
                 let seed = match (&chat_seed, turn_company.as_ref()) {
                     // `self.agent_id` is the viewer the seed is attributed
                     // against (issue #1956): this agent's own prior replies stay
@@ -1381,11 +1431,11 @@ impl CompanyAgent {
                         }
                     }
                 };
-                // On a switch the agent-latest transcript is the WRONG thread, so
-                // never let the turn's fallback auto-resume run: our explicit
-                // correct-thread seed (or a transcript hit) has already set
-                // `cached_transcript_messages`; a miss must start fresh, NOT reload
-                // the previous chat's transcript and re-leak it (the exact
+                // After a re-seed the agent-latest transcript is the WRONG
+                // thread, so never let the turn's fallback auto-resume run: our
+                // explicit correct-thread seed (or a transcript hit) has already
+                // set `cached_transcript_messages`; a miss must start fresh, NOT
+                // reload the previous chat's transcript and re-leak it (the exact
                 // screenshot bug). Keep this true regardless of which seed path ran.
                 overrides.suppress_transcript_autoload = true;
                 tracing::debug!(
@@ -1393,32 +1443,33 @@ impl CompanyAgent {
                     seeded,
                     "[harness] thread-transcript re-seed result"
                 );
-                *bound = Some((incoming.to_string(), incoming_root));
+                // The session restarts at this turn's own message: everything
+                // older is now in the seed, and the next delta must not hand it
+                // back.
+                *session = agent_session::AgentSessionState::default();
+                if let Some(seq) = chat.message_seq {
+                    session.watermark = Some(seq);
+                }
             }
+
+            let _ = switched;
+            *bound = Some((incoming.to_string(), incoming_root));
         } else {
             // Unthreaded turn (a dispatched background task or a workflow
             // agent node): it still runs against this agent's shared,
             // in-memory `history` — the same field a chat turn reads and
             // extends — but carries no chat thread to bind that history to.
-            // Left alone, `bound_chat` keeps pointing at whichever chat was
-            // bound before this turn ran, so if the operator's next message
-            // lands on that same thread, `switched` above reads `false` and
-            // skips the clear-and-reseed entirely, silently grounding the
-            // reply in whatever this background turn just appended (the
-            // cross-context leak review found). Invalidate the binding so
-            // the next chat-routed turn is *always* treated as a switch,
-            // regardless of which thread it lands on.
             //
-            // Deliberately does NOT clear `history` here: a single
-            // background task can span several unthreaded turns in a row
-            // (e.g. a steered continuation), and those legitimately depend
-            // on the history accumulated between them. The clear already
-            // happens on the switch branch above, the next time a chat turn
-            // actually claims the binding.
+            // Before the session was continuous this invalidated the binding so
+            // the next chat turn would always be treated as a switch and clear.
+            // There is no clear to arrange any more: a background turn is
+            // simply more session, and the next chat turn continues through the
+            // same watermark. The binding is still dropped so the ambient
+            // channel does not claim a conversation this turn was not in.
             let mut bound = self.bound_chat.lock().await;
             if bound.is_some() {
                 tracing::debug!(
-                    "[harness] unthreaded turn — invalidating chat binding so the next chat turn rebinds"
+                    "[harness] unthreaded turn — dropping the chat binding; the session continues"
                 );
                 *bound = None;
             }
