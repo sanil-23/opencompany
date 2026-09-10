@@ -4033,60 +4033,70 @@ tokio::task_local! {
     /// still be heard — going silent because a model forgot a tool call is not
     /// an acceptable failure mode — so the fallback is gated on this flag
     /// rather than on the manifest knob alone.
-    static TURN_SPOKE: std::sync::Arc<std::sync::atomic::AtomicBool>;
+    static TURN_SPEECH: std::sync::Arc<TurnSpeech>;
 }
 
-/// A fresh, un-spoken flag for one turn.
+/// What one turn said through the speech tools.
+///
+/// One shared record rather than two task-locals: nesting a fourth
+/// `task_local!` scope around the turn future pushed type inference past its
+/// recursion limit, and two flags that are always set and read together were
+/// never two facts anyway.
+#[derive(Debug, Default)]
+pub struct TurnSpeech {
+    /// Whether the turn said anything at all through a speech tool — including
+    /// a `desk_dm`, which journals itself and so leaves no utterance here.
+    spoke: std::sync::atomic::AtomicBool,
+    /// What it asked to say to its whole channel, in call order.
+    ///
+    /// `desk_post` and `desk_close` do **not** append. The crate's own rule is
+    /// that *"a tool call is a request to speak — the host appends, the host
+    /// decides"*, and the host that appends is the reply path that has always
+    /// appended: it carries the folded steps, the live SSE frame, the resolved
+    /// mentions and the board-card correlation, none of which a tool holds.
+    ///
+    /// `desk_dm` is the exception and journals directly, because a narrowed
+    /// audience is not something a turn's single reply can express.
+    utterances: std::sync::Mutex<Vec<String>>,
+}
+
+impl TurnSpeech {
+    /// Whether this turn was heard.
+    pub fn spoke(&self) -> bool {
+        self.spoke.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// The channel-visible lines, in call order.
+    pub fn utterances(&self) -> Vec<String> {
+        self.utterances
+            .lock()
+            .map(|lines| lines.clone())
+            .unwrap_or_default()
+    }
+}
+
+/// A fresh, silent record for one turn.
 ///
 /// Shared rather than task-local-owned because the two readers are on opposite
-/// sides of the scope: the tool sets it *inside* the turn, and the caller that
-/// decides whether to journal the return text reads it *after* the turn has
-/// returned and the task-local is gone.
-pub fn new_speech_flag() -> std::sync::Arc<std::sync::atomic::AtomicBool> {
-    std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false))
+/// sides of the scope: the tools write it *inside* the turn, and the reply path
+/// reads it *after* the turn has returned and the task-local is gone.
+pub fn new_turn_speech() -> std::sync::Arc<TurnSpeech> {
+    std::sync::Arc::new(TurnSpeech::default())
 }
 
-/// Runs `fut` with `flag` as this turn's "has spoken" record.
-pub(crate) async fn with_speech_tracking<F: std::future::Future>(
-    flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+/// Runs `fut` with `speech` as this turn's speech record.
+pub(crate) async fn with_turn_speech<F: std::future::Future>(
+    speech: std::sync::Arc<TurnSpeech>,
     fut: F,
 ) -> F::Output {
-    TURN_SPOKE.scope(flag, fut).await
+    TURN_SPEECH.scope(speech, fut).await
 }
 
 /// Records that this turn has said something through a speech tool.
 pub fn mark_turn_spoke() {
-    let _ = TURN_SPOKE.try_with(|spoke| {
-        spoke.store(true, std::sync::atomic::Ordering::Relaxed);
+    let _ = TURN_SPEECH.try_with(|speech| {
+        speech.spoke.store(true, std::sync::atomic::Ordering::Relaxed);
     });
-}
-
-tokio::task_local! {
-    /// What this turn has asked to say to its whole channel, in call order.
-    ///
-    /// `desk_post` and `desk_close` do **not** append. The crate's own rule is
-    /// that *"a tool call is a request to speak — the host appends, the host
-    /// decides"*, and here the host that appends is the reply path that has
-    /// always appended: it carries the folded steps, the live SSE frame, the
-    /// mention resolution and the board-card correlation, none of which a tool
-    /// holds. So a post is collected here and becomes the turn's reply.
-    ///
-    /// `desk_dm` is the exception and journals directly, because a narrowed
-    /// audience is not something a turn's single reply can express.
-    static TURN_UTTERANCES: std::sync::Arc<std::sync::Mutex<Vec<String>>>;
-}
-
-/// A fresh, empty utterance collector for one turn.
-pub fn new_utterance_sink() -> std::sync::Arc<std::sync::Mutex<Vec<String>>> {
-    std::sync::Arc::new(std::sync::Mutex::new(Vec::new()))
-}
-
-/// Runs `fut` with `sink` collecting this turn's channel-visible utterances.
-pub(crate) async fn with_utterance_sink<F: std::future::Future>(
-    sink: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
-    fut: F,
-) -> F::Output {
-    TURN_UTTERANCES.scope(sink, fut).await
 }
 
 /// Records one channel-visible utterance for this turn.
@@ -4094,16 +4104,18 @@ pub(crate) async fn with_utterance_sink<F: std::future::Future>(
 /// Returns whether it was collected: `false` outside a tracked turn, which
 /// tells the caller to fall back to appending it itself.
 pub fn collect_utterance(text: String) -> bool {
-    TURN_UTTERANCES
-        .try_with(|sink| {
-            if let Ok(mut lines) = sink.lock() {
+    TURN_SPEECH
+        .try_with(|speech| {
+            if let Ok(mut lines) = speech.utterances.lock() {
                 lines.push(text);
+                speech.spoke.store(true, std::sync::atomic::Ordering::Relaxed);
                 return true;
             }
             false
         })
         .unwrap_or(false)
 }
+
 
 /// Run `fut` with the current turn's channel set (issue #1890 F).
 pub(crate) async fn with_turn_conversation<F: std::future::Future>(
