@@ -363,6 +363,27 @@ pub fn build_agent(
             deps.store.clone(),
         )));
     }
+    // Talking as a tool call (`[speech] enabled`). Off unless the manifest says
+    // so, and on every roster agent's belt when it is — speaking is not a
+    // capability one teammate has and another does not, so there is no grant
+    // for it to be scoped by, exactly as with the two intrinsic tools above.
+    //
+    // Needs the journal: these tools ARE the append, so without an `EventLog`
+    // there is nothing for them to do and registering them would advertise a
+    // voice the host cannot give. A company in that configuration keeps the
+    // return-text path, which is the same fallback an un-called tool gets.
+    if manifest.speech.enabled
+        && let Some(events) = deps.events.clone()
+    {
+        tools.extend(crate::harness::speech_tools::speech_belt(
+            crate::harness::speech_tools::SpeechContext::new(
+                company.clone(),
+                manifest_agent.id.clone(),
+                events,
+                deps.store.clone(),
+            ),
+        ));
+    }
     // Installed-MCP-registry surface (`mcp_registry_list_tools` /
     // `mcp_registry_tool_call`) — distinct from the per-server `mcp:<name>`
     // bridge below, and reaching further: `mcp_registry_tool_call` invokes an
