@@ -54,6 +54,10 @@ pub mod chargebee;
 /// inert on this same turn shape — see [`chat_only_guard`]'s module docs for
 /// why the two do not overlap.
 mod chat_only_guard;
+/// One agent, one session: the watermark that replaced the per-chat
+/// clear-and-reseed, and the cue block that carries a channel's identity into a
+/// merged transcript. See [`agent_session`].
+pub mod agent_session;
 pub mod chat_seed;
 mod checkpoint;
 pub mod composio;
