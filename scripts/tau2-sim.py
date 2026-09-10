@@ -86,7 +86,7 @@ DOMAINS = {
         },
         "desks": {
             "order_ops": ["cancellations", "amendments"],
-            "returns": ["exchanges", "refunds"],
+            "returns": ["exchanges", "refunds", "triage"],
         },
         "collection": "orders",
         "key": "order_id",
