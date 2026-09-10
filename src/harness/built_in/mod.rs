@@ -4528,9 +4528,14 @@ impl HarnessPool {
         // cut on a byte boundary. `operator_words` for the reason its own docs
         // give — `message` here is the composed text and carries the cycle's
         // briefings, which are not what anybody asked for.
+        // Whether this turn said anything through a speech tool. Owned here so
+        // it outlives the task-local scope below: the tool sets it inside the
+        // turn, and the reply path reads it after.
+        let spoke_flag = crate::runtime::delegation::new_speech_flag();
         let (outcome, turn_costs) = crate::runtime::delegation::with_task_hint(
             crate::runtime::delegation::operator_words(message).to_string(),
             crate::runtime::delegation::with_speech_tracking(
+            spoke_flag.clone(),
             crate::runtime::delegation::with_turn_conversation(
                 turn_chat,
                 deps.approval_requests.turn_scoped(agent.run_with_steer(

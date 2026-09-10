@@ -4033,25 +4033,32 @@ tokio::task_local! {
     /// still be heard — going silent because a model forgot a tool call is not
     /// an acceptable failure mode — so the fallback is gated on this flag
     /// rather than on the manifest knob alone.
-    static TURN_SPOKE: std::cell::Cell<bool>;
+    static TURN_SPOKE: std::sync::Arc<std::sync::atomic::AtomicBool>;
 }
 
-/// Runs `fut` with a fresh "has not spoken yet" flag for this turn.
-pub(crate) async fn with_speech_tracking<F: std::future::Future>(fut: F) -> F::Output {
-    TURN_SPOKE.scope(std::cell::Cell::new(false), fut).await
+/// A fresh, un-spoken flag for one turn.
+///
+/// Shared rather than task-local-owned because the two readers are on opposite
+/// sides of the scope: the tool sets it *inside* the turn, and the caller that
+/// decides whether to journal the return text reads it *after* the turn has
+/// returned and the task-local is gone.
+pub fn new_speech_flag() -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+    std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false))
+}
+
+/// Runs `fut` with `flag` as this turn's "has spoken" record.
+pub(crate) async fn with_speech_tracking<F: std::future::Future>(
+    flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    fut: F,
+) -> F::Output {
+    TURN_SPOKE.scope(flag, fut).await
 }
 
 /// Records that this turn has said something through a speech tool.
 pub fn mark_turn_spoke() {
-    let _ = TURN_SPOKE.try_with(|spoke| spoke.set(true));
-}
-
-/// Whether this turn has already spoken through a speech tool.
-///
-/// `false` outside a tracked turn, which is every path that predates speech —
-/// and is the answer that keeps those paths journaling their return text.
-pub fn turn_spoke() -> bool {
-    TURN_SPOKE.try_with(std::cell::Cell::get).unwrap_or(false)
+    let _ = TURN_SPOKE.try_with(|spoke| {
+        spoke.store(true, std::sync::atomic::Ordering::Relaxed);
+    });
 }
 
 /// Run `fut` with the current turn's channel set (issue #1890 F).
