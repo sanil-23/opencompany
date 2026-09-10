@@ -366,7 +366,6 @@ pub fn render_cues(envelopes: &[Envelope]) -> Option<String> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::company::types::{Agent as ManifestAgent, CompanyManifest, GroupChat};
     use crate::ports::types::StoredEvent;
     use async_trait::async_trait;
     use futures::stream::{self, BoxStream};
@@ -438,38 +437,60 @@ mod test {
     }
 
     /// A company where `designer` sits on `#brand` and `copy` does not.
+    ///
+    /// Built from TOML rather than by struct literal, on the same reasoning
+    /// `hivemind::test::record` uses: the manifest this exercises is the one an
+    /// operator writes, and a literal would let a field drift out of the parse
+    /// path without any test noticing.
     fn record() -> CompanyRecord {
-        let mut manifest = CompanyManifest::default();
-        manifest.agents = vec![
-            ManifestAgent {
-                id: "designer".to_string(),
-                role: "Designer".to_string(),
-                ..Default::default()
-            },
-            ManifestAgent {
-                id: "copy".to_string(),
-                role: "Writer".to_string(),
-                ..Default::default()
-            },
-        ];
-        manifest.group_chats = vec![
-            GroupChat {
-                id: "brand".to_string(),
-                name: "Brand".to_string(),
-                members: vec!["designer".to_string()],
-                ..Default::default()
-            },
-            GroupChat {
-                id: "finance".to_string(),
-                name: "Finance".to_string(),
-                members: vec!["copy".to_string()],
-                ..Default::default()
-            },
-        ];
+        let manifest: crate::company::CompanyManifest = toml::from_str(
+            r#"
+[company]
+name = "Acme"
+
+[[agent]]
+id = "designer"
+role = "Designer"
+
+[[agent]]
+id = "copy"
+role = "Writer"
+
+[[group_chat]]
+id = "brand"
+name = "Brand"
+members = ["designer"]
+
+[[group_chat]]
+id = "finance"
+name = "Finance"
+members = ["copy"]
+"#,
+        )
+        .expect("test manifest parses");
         CompanyRecord {
             id: CompanyId::new("acme"),
             manifest,
-            ..Default::default()
+            ledger: Vec::new(),
+            lifecycle: "running".to_string(),
+            overlay_agents: Vec::new(),
+            overlay_desk_members: Vec::new(),
+            overlay_desk_order: Vec::new(),
+            overlay_desks: Vec::new(),
+            overlay_desk_hive: Vec::new(),
+            overlay_retired_agents: Vec::new(),
+            overlay_agent_edits: Vec::new(),
+            overlay_workflows: Vec::new(),
+            overlay_budgets: Vec::new(),
+            overlay_policy: None,
+            overlay_tool_grants: None,
+            overlay_desk_tools: Default::default(),
+            disabled_workflows: Vec::new(),
+            template_provenance: None,
+            setup: None,
+            name_confirmed: false,
+            activation_completed_at: None,
+            created_at_millis: None,
         }
     }
 
