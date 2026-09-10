@@ -1343,11 +1343,6 @@ impl CompanyAgent {
                 != Some((incoming, incoming_root));
             let mut session = self.session.lock().await;
 
-            // Cold boot: this process has never run a turn for this agent, so
-            // there is no session to continue and nothing to compute a delta
-            // against. Seed the recent window exactly as before.
-            let cold = session.watermark.is_none() || agent.history().is_empty();
-
             // A chat-only turn keeps its reduction (#1725 / #1730).
             //
             // The fast path already runs a greeting with no tools, no memory
@@ -1364,7 +1359,15 @@ impl CompanyAgent {
             // residue of an unrelated task. That is the same trade the three
             // other reductions on this path already make.
             let chat_only = crate::runtime::delegation::is_chat_only_turn();
-            let mut reseed = cold || chat_only;
+            //
+            // A session with no watermark is handled one level down:
+            // `prepare_delta` answers `ColdStart` for it, which lands on the
+            // same re-seed. Deliberately NOT folded into a `cold` flag here —
+            // an earlier revision did, and conflating "no watermark" with "no
+            // history" is what let an unrelated task's raw tool output survive
+            // a re-seed, because the clear below was skipped for an agent that
+            // had plenty of history and merely no watermark yet.
+            let mut reseed = chat_only;
             if !reseed && let (Some(request), Some(company)) = (&chat_seed, turn_company.as_ref()) {
                 match request
                     .session_delta(company, &self.agent_id, &session)
@@ -1403,12 +1406,17 @@ impl CompanyAgent {
             }
 
             if reseed {
-                if !cold {
-                    // A re-seed is the one path that still empties the session.
-                    // It happens when the agent has been away longer than the
-                    // delta walk can bound (`GapTooLarge` / `TooManyUnseen`),
-                    // where a recent window is honestly better context than a
-                    // partial replay of a history it can no longer reconstruct.
+                // A re-seed is the one path that still empties the session. It
+                // happens on a chat-only turn, on a cold start, and when the
+                // agent has been away longer than the delta walk can bound
+                // (`GapTooLarge` / `TooManyUnseen`) — where a recent window is
+                // honestly better context than a partial replay of a history it
+                // can no longer reconstruct.
+                //
+                // Guarded on the history itself rather than on any derived
+                // "is this cold" flag: what makes the clear necessary is that
+                // there IS something to clear, and nothing else.
+                if !agent.history().is_empty() {
                     agent.clear_history();
                 }
                 // OpenCompany's own EventLog-derived seed (issue #1840).
