@@ -12500,6 +12500,7 @@ description = "Builds the product."
             &[],
             None,
             is_orchestrator,
+            /* speech_enabled */ false,
         )
         .expect("agent builds");
         agent.tools().iter().map(|t| t.name().to_string()).collect()
@@ -12623,6 +12624,7 @@ description = "Builds the product."
             &[],
             None,
             true,
+            /* speech_enabled */ false,
         )
         .expect("agent builds");
         let args = serde_json::json!({});

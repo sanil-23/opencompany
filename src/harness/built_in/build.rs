@@ -2197,6 +2197,7 @@ mod tests {
             &[],
             None,
             is_orchestrator,
+            /* speech_enabled */ false,
         )
         .expect("agent builds");
         let mut names: Vec<String> = agent.tools().iter().map(|t| t.name().to_string()).collect();
@@ -2249,6 +2250,7 @@ mod tests {
             &[],
             None,
             false,
+            /* speech_enabled */ false,
         )
         .expect("agent builds");
         let mut names: Vec<String> = agent.tools().iter().map(|t| t.name().to_string()).collect();
@@ -2300,6 +2302,7 @@ mod tests {
             &[],
             None,
             false,
+            /* speech_enabled */ false,
         )
         .expect("agent builds");
         toolbelt::native_capabilities_on_belt(agent.tools())
@@ -2377,6 +2380,7 @@ mod tests {
             &[],
             None,
             false,
+            /* speech_enabled */ false,
         )
         .expect("agent builds");
         let mut names: Vec<String> = agent.tools().iter().map(|t| t.name().to_string()).collect();
@@ -2476,6 +2480,7 @@ mod tests {
             &[],
             None,
             false,
+            /* speech_enabled */ false,
         )
         .expect("agent builds");
         let mut names: Vec<String> = agent.tools().iter().map(|t| t.name().to_string()).collect();
@@ -2522,6 +2527,7 @@ mod tests {
             &[],
             None,
             false,
+            /* speech_enabled */ false,
         )
         .expect("agent builds");
         let mut names: Vec<String> = agent.tools().iter().map(|t| t.name().to_string()).collect();
@@ -3042,6 +3048,7 @@ mod tests {
             &[],
             None,
             false,
+            /* speech_enabled */ false,
         )
         .expect("agent builds");
 
@@ -3311,6 +3318,7 @@ mod tests {
             &[],
             None,
             false,
+            /* speech_enabled */ false,
         )
         .expect("agent builds");
 
@@ -3439,6 +3447,7 @@ mod tests {
                 &[],
                 None,
                 is_orchestrator,
+                /* speech_enabled */ false,
             )
             .expect("agent builds")
             .agent_config()
