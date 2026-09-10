@@ -1,0 +1,453 @@
+//! One agent, one session.
+//!
+//! # What changed, and why
+//!
+//! Before this module, an agent had no continuous existence. One
+//! [`oh::agent::Agent`] is held per `(company, agent_id)`, but
+//! [`CompanyAgent::run_with_steer`](super::CompanyAgent::run_with_steer)
+//! called `clear_history()` every time the incoming chat differed from the
+//! bound one and re-seeded a window of *that desk's* transcript. So an agent
+//! that answered you in a DM and then answered on `#general` was, from its own
+//! point of view, two entities that happened to share a name: it could not
+//! notice that the question just asked in the DM is the one it answered on the
+//! desk an hour ago, and it could not hold a thought between rooms.
+//!
+//! This module is the replacement. The session is never cleared. Each turn the
+//! agent is handed the rows it has **not yet seen**, across **every** channel
+//! it can read, each stamped with where it came from.
+//!
+//! # The watermark, not a mailbox
+//!
+//! There is no queue and no per-agent inbox. `tinyhivemind` refuses to have one
+//! — `NoDispatchReason::SelfMention`, `NoReferralReason::SelfMention` and
+//! `UtteranceRejection::SelfRecipient` all decline self-addressing by name —
+//! because the architecture is stigmergic: work leaves an attributed trace in a
+//! shared, globally sequenced log, and the trace is the stimulus for the next
+//! turn. Continuity is a **watermark the host owns**.
+//!
+//! [`AgentSessionState`] is that watermark, modelled on
+//! `tinyhivemind::sharing::SharingState` **minus its `conversation` field**.
+//! That field is what makes the vendored type return
+//! `ReinitializeReason::ConversationChanged` on a channel switch — the exact
+//! behaviour this module exists to remove — so the shape is reused and the key
+//! is not.
+//!
+//! # Channel isolation is dropped; audience isolation is not
+//!
+//! Merging the channels is deliberate, and it gives up the isolation
+//! `#1725` / `#1730` / `#1890` installed. What replaces it is the **cue**: every
+//! delivered row is prefixed with the channel it was said on, per line, through
+//! the same [`prefix_every_line`](super::chat_seed) machinery that already
+//! defends attribution against forgery.
+//!
+//! What is **not** given up is who may read what. An aside this agent is not
+//! party to still never reaches it: [`Audience::admits`] is applied here with
+//! `Viewer::Agent`, exactly as `EpisodeDriver` applies it. Privacy between
+//! agents is a deliberation device and never a security boundary — an operator
+//! reads everything — but a peer agent's narrowing is real and stays.
+
+use std::collections::BTreeSet;
+use std::sync::Arc;
+
+use crate::ports::EventLog;
+use crate::ports::types::{CompanyEvent, CompanyId, CompanyRecord, EventSeq, StoredEvent};
+use crate::server::chat_history;
+
+/// How many raw journal events one delta walk may read before giving up and
+/// asking for a full re-seed.
+///
+/// Mirrors `tinyhivemind::session::SCAN_LIMIT`. The walk counts **raw** rows,
+/// not delivered ones, so an agent on one quiet desk in a busy company crosses
+/// this sooner than its own traffic suggests — which is why crossing it is a
+/// re-seed rather than an error.
+pub const SESSION_SCAN_LIMIT: usize = 2048;
+
+/// The most rows one delta hands over.
+///
+/// A turn that would be handed more than this has been away long enough that
+/// the recent window is a better context than a partial replay, so it re-seeds
+/// instead. Mirrors `tinyhivemind::session::SESSION_WINDOW` at desk scale,
+/// widened because this window spans every channel rather than one.
+pub const SESSION_DELTA_LIMIT: usize = 60;
+
+/// How many events are read per journal page during the walk.
+const EVENT_PAGE: usize = 256;
+
+/// What this agent has already accepted, company-wide.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct AgentSessionState {
+    /// Exclusive lower boundary: every row at or below this has been handed
+    /// over. `None` before the first delivery, which is the cold-boot case.
+    pub watermark: Option<EventSeq>,
+    /// Rows above the watermark already accepted through another path — the
+    /// agent's own reply to the turn in flight, chiefly. Bounded by
+    /// [`SESSION_DELTA_LIMIT`]; a state that would exceed it advances the
+    /// watermark instead.
+    pub present_above_watermark: BTreeSet<EventSeq>,
+}
+
+impl AgentSessionState {
+    /// Whether `seq` has already been handed to this agent.
+    fn already_seen(&self, seq: EventSeq) -> bool {
+        match self.watermark {
+            Some(mark) if seq <= mark => true,
+            _ => self.present_above_watermark.contains(&seq),
+        }
+    }
+
+    /// Records `seq` as delivered, compacting the present set into the
+    /// watermark whenever it can.
+    fn accept(&mut self, seq: EventSeq) {
+        self.present_above_watermark.insert(seq);
+        // Compaction: while the row directly above the watermark is present,
+        // the watermark can swallow it. Keeps the set small in the ordinary
+        // case, where a delta is a contiguous run.
+        loop {
+            let next = match self.watermark {
+                Some(mark) => EventSeq::from(mark.value() + 1),
+                None => match self.present_above_watermark.iter().next().copied() {
+                    Some(first) => first,
+                    None => return,
+                },
+            };
+            if self.present_above_watermark.remove(&next) {
+                self.watermark = Some(next);
+            } else {
+                return;
+            }
+        }
+    }
+}
+
+/// One channel this agent can read.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Channel {
+    /// The desk id the journal stores rows under.
+    pub id: String,
+    /// The desk's display name — `chat_history::owns` matches either.
+    pub name: String,
+    /// How the cue names this channel to the agent.
+    pub label: String,
+}
+
+/// Every channel this agent can read: each desk it sits on, its own DM, and
+/// the company's General line.
+///
+/// Enumerated the way [`CompanyRecord::agent_desk_tools`] enumerates desks —
+/// manifest desks first, then operator-created overlay desks, deduplicated —
+/// so a teammate seated through the console is in its own session exactly as a
+/// manifest member is.
+pub fn agent_channels(record: &CompanyRecord, agent_id: &str) -> Vec<Channel> {
+    let mut seen = std::collections::HashSet::new();
+    let mut channels = Vec::new();
+
+    let manifest = record.manifest.group_chats.iter().map(|chat| chat.id.clone());
+    let overlay = record.overlay_desks.iter().map(|desk| desk.id.clone());
+    for desk_id in manifest.chain(overlay) {
+        if !seen.insert(desk_id.clone()) {
+            continue;
+        }
+        if !record
+            .effective_desk_members(&desk_id)
+            .iter()
+            .any(|member| member == agent_id)
+        {
+            continue;
+        }
+        let name = desk_display_name(record, &desk_id);
+        channels.push(Channel {
+            label: format!("#{}", name),
+            id: desk_id,
+            name,
+        });
+    }
+
+    // This agent's own direct line. Keyed on the id, never the name — renaming
+    // somebody must not move their DM or orphan its history (issue #364).
+    let dm = format!("{}{agent_id}", crate::runtime::assignee::DM_PREFIX);
+    if seen.insert(dm.clone()) {
+        channels.push(Channel {
+            label: "dm".to_string(),
+            name: dm.clone(),
+            id: dm,
+        });
+    }
+
+    // The company's own line. Not a desk (issue #1743) unless a blueprint
+    // declared one under a General spelling, in which case the loop above
+    // already claimed it and this is a no-op.
+    let general = crate::ports::DEFAULT_DESK.to_string();
+    if seen.insert(general.clone()) {
+        channels.push(Channel {
+            label: "#general".to_string(),
+            name: general.clone(),
+            id: general,
+        });
+    }
+
+    channels
+}
+
+/// The desk's display name, falling back to its id.
+fn desk_display_name(record: &CompanyRecord, desk_id: &str) -> String {
+    record
+        .manifest
+        .group_chats
+        .iter()
+        .find(|chat| chat.id == desk_id)
+        .map(|chat| chat.name.clone())
+        .or_else(|| {
+            record
+                .overlay_desks
+                .iter()
+                .find(|desk| desk.id == desk_id)
+                .map(|desk| desk.name.clone())
+        })
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or_else(|| desk_id.to_string())
+}
+
+/// One row on its way into the session.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Envelope {
+    /// Where in the journal it sits.
+    pub seq: EventSeq,
+    /// The channel it was said on, as the cue names it.
+    pub channel: String,
+    /// Who said it.
+    pub author: String,
+    /// Whether this agent is the author — its own lines are not cued as input.
+    pub mine: bool,
+    /// What was said.
+    pub text: String,
+}
+
+/// What a turn should do about the rows it has not seen.
+#[derive(Clone, Debug)]
+pub enum SessionPlan {
+    /// Hand these over, then commit `next_state` once the turn has accepted
+    /// them. The ordering is the contract: committing first would let a failed
+    /// turn leave the session believing it read something it never saw.
+    Delta {
+        envelopes: Vec<Envelope>,
+        next_state: AgentSessionState,
+    },
+    /// The walk could not reach the watermark inside its bounds, or the agent
+    /// has no session yet. Fall back to the recent-window seed.
+    Reinitialize { reason: ReinitializeReason },
+}
+
+/// Why a delta could not be prepared.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ReinitializeReason {
+    /// No watermark yet — this is the agent's first turn in this process.
+    ColdStart,
+    /// The watermark was not crossed inside [`SESSION_SCAN_LIMIT`] raw rows.
+    GapTooLarge,
+    /// More unseen rows than [`SESSION_DELTA_LIMIT`]; the recent window is the
+    /// better context.
+    TooManyUnseen,
+}
+
+/// The rows this agent may read and has not yet been handed, oldest first.
+///
+/// `before` is exclusive and is this turn's own message: the turn appends that
+/// itself, so seeding it here would duplicate it on the wire.
+pub async fn prepare_delta(
+    events: &Arc<dyn EventLog>,
+    company: &CompanyId,
+    record: &CompanyRecord,
+    agent_id: &str,
+    state: &AgentSessionState,
+    before: Option<EventSeq>,
+) -> SessionPlan {
+    let Some(watermark) = state.watermark else {
+        return SessionPlan::Reinitialize {
+            reason: ReinitializeReason::ColdStart,
+        };
+    };
+
+    let channels = agent_channels(record, agent_id);
+    let mut newest_first: Vec<Envelope> = Vec::new();
+    let mut scanned: usize = 0;
+    let mut cursor = before;
+    let mut crossed = false;
+
+    loop {
+        if scanned >= SESSION_SCAN_LIMIT {
+            break;
+        }
+        let page = match events.read_before(company, cursor, EVENT_PAGE).await {
+            Ok(page) => page,
+            Err(error) => {
+                tracing::warn!(
+                    company = %company,
+                    agent = agent_id,
+                    %error,
+                    "[agent-session] journal read failed; re-seeding instead of continuing"
+                );
+                return SessionPlan::Reinitialize {
+                    reason: ReinitializeReason::GapTooLarge,
+                };
+            }
+        };
+        if page.is_empty() {
+            // The log ended before the watermark. Nothing older can arrive, so
+            // everything above it has been collected — treat that as crossed
+            // rather than as a gap.
+            crossed = true;
+            break;
+        }
+        scanned += page.len();
+        cursor = page.last().map(|event| event.seq);
+
+        for stored in page {
+            if stored.seq <= watermark {
+                crossed = true;
+                break;
+            }
+            if state.already_seen(stored.seq) {
+                continue;
+            }
+            let Some(channel) = channel_for(&channels, &stored.event) else {
+                continue;
+            };
+            if !readable_by(agent_id, &stored.event) {
+                continue;
+            }
+            let Some((author, mine, text)) = body_of(agent_id, &stored.event) else {
+                continue;
+            };
+            if text.trim().is_empty() {
+                continue;
+            }
+            newest_first.push(Envelope {
+                seq: stored.seq,
+                channel,
+                author,
+                mine,
+                text,
+            });
+            if newest_first.len() > SESSION_DELTA_LIMIT {
+                return SessionPlan::Reinitialize {
+                    reason: ReinitializeReason::TooManyUnseen,
+                };
+            }
+        }
+        if crossed {
+            break;
+        }
+    }
+
+    if !crossed {
+        return SessionPlan::Reinitialize {
+            reason: ReinitializeReason::GapTooLarge,
+        };
+    }
+
+    newest_first.reverse();
+    let mut next_state = state.clone();
+    for envelope in &newest_first {
+        next_state.accept(envelope.seq);
+    }
+    // The turn's own message is accepted too: the turn appends it, so the next
+    // delta must not hand it back.
+    if let Some(seq) = before {
+        next_state.accept(seq);
+    }
+    SessionPlan::Delta {
+        envelopes: newest_first,
+        next_state,
+    }
+}
+
+/// Which of this agent's channels owns `event`, if any.
+fn channel_for(channels: &[Channel], event: &CompanyEvent) -> Option<String> {
+    channels
+        .iter()
+        .find(|channel| chat_history::owns(&channel.id, &channel.name, event))
+        .map(|channel| channel.label.clone())
+}
+
+/// Whether `agent_id` may read this row at all.
+///
+/// The **only** narrowing this module applies, and it is not about channels: an
+/// `AgentReply` carrying a non-empty `audience` is a private aside, and a peer
+/// outside it reads the row elided rather than in full. Applied here so a
+/// session can never be handed something the desk projection would withhold.
+fn readable_by(agent_id: &str, event: &CompanyEvent) -> bool {
+    match event {
+        CompanyEvent::AgentReply {
+            agent_id: author,
+            audience,
+            ..
+        } => {
+            audience.is_empty()
+                || author == agent_id
+                || audience.iter().any(|member| member == agent_id)
+        }
+        _ => true,
+    }
+}
+
+/// The conversational body of `event`, or `None` for a row that carries none.
+fn body_of(agent_id: &str, event: &CompanyEvent) -> Option<(String, bool, String)> {
+    match event {
+        CompanyEvent::OperatorMessage {
+            text,
+            attachments,
+            by,
+            ..
+        } => Some((
+            super::chat_seed::operator_label(by),
+            false,
+            crate::brain::medulla::effects::with_attachment_refs(text, attachments),
+        )),
+        CompanyEvent::AgentReply {
+            agent_id: author,
+            text,
+            ..
+        } => Some((author.clone(), author == agent_id, text.clone())),
+        // `owns` also admits `DeskTaskCompleted`, a structural marker with no
+        // conversational body. Not a turn; not delivered.
+        _ => None,
+    }
+}
+
+/// Renders a delta as the cue block prepended to a turn's message.
+///
+/// # Why a cued turn and not a tool result
+///
+/// The reference implementation this shape was taken from is deliberately
+/// asymmetric: **outbound is a tool call, inbound is a plain turn carrying a
+/// text cue** (`[inbound]`, `[agent]`, `[routine]`, `[Group chat: "…"]`). That
+/// is the right way round here too, and cheaper: OpenHuman's resume path
+/// already speaks `(role, content)`, so a cued turn needs no new plumbing,
+/// whereas a synthesised tool result would need a fabricated call id with no
+/// matching call and would confuse [`fold_steps`](super::steps::fold_steps).
+///
+/// Returns `None` for an empty delta, so an ordinary same-channel reply pays
+/// nothing for this.
+pub fn render_cues(envelopes: &[Envelope], agent_id: &str) -> Option<String> {
+    let lines: Vec<String> = envelopes
+        .iter()
+        .filter(|envelope| !envelope.mine)
+        .map(|envelope| {
+            format!(
+                "[{} · {}] {}",
+                envelope.channel,
+                envelope.author,
+                envelope.text.trim()
+            )
+        })
+        .collect();
+    if lines.is_empty() {
+        return None;
+    }
+    let _ = agent_id;
+    Some(format!(
+        "While you were away, this was said elsewhere in the company. It is \
+         context, not a request — answer the message at the end of this turn.\n\n{}\n",
+        lines.join("\n")
+    ))
+}
