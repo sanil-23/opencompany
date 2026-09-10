@@ -911,6 +911,18 @@ pub fn build_agent(
     // write, and what it does is not guessable from the fact that it renders.
     persona.push_str(MENTION_BRIEF);
 
+    // How this company talks, when it talks by calling a tool.
+    //
+    // Placed high, beside the mention brief, because it is a rule about every
+    // reply rather than a note about one namespace — and because the failure it
+    // prevents is silent: an agent that never learns about `desk_post` just
+    // answers in text, the reply path journals it, and nothing reports that the
+    // feature did nothing. Gated on the same flag that wired the tools, so the
+    // brief can never describe a voice this agent was not given.
+    if speech_enabled {
+        persona.push_str(&crate::harness::speech_tools::speech_brief());
+    }
+
     // A short, STATIC brief — never a tree snapshot. A snapshot baked into the
     // system prompt would be stale the moment the operator edits a note, which
     // is exactly what hitting the store per call avoids.

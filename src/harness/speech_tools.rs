@@ -598,6 +598,35 @@ impl Tool for ReadTool {
     }
 }
 
+/// The prompt brief for a company that speaks by calling a tool.
+///
+/// # A tool granted, unmentioned and never called
+///
+/// That is the failure this repo has already named twice — `shell` wired since
+/// Cell A and described in no brief, `ledger` granted and never used — and
+/// speech is the worst case of it, because the fallback is *silent*. An agent
+/// that never learns about `desk_post` simply answers in text, the reply path
+/// journals it, and nothing anywhere reports that the feature did nothing. It
+/// was observed doing exactly that on the first live run of this change.
+///
+/// The tool descriptions cannot carry this on their own. They say "this is the
+/// only way to speak", but they say it from inside a list of forty tools, and a
+/// system prompt that never mentions speaking at all outranks them.
+pub fn speech_brief() -> String {
+    format!(
+        "\n\n## Saying things\n\
+         This company talks by calling a tool. Text you write outside a tool call is your own \
+         thinking and reaches nobody — it is not sent, and nobody sees it.\n\
+         - `{POST_TOOL}` — say one thing to the whole channel. Call it exactly once, at the end \
+         of your turn. This is how you answer.\n\
+         - `{DM_TOOL}` — say one thing to named teammates instead of the whole channel, when you \
+         need to settle something without spending the room's attention.\n\
+         - `{CLOSE_TOOL}` — say one last thing AND report the work finished. Only when it \
+         genuinely is: a result somebody still has to check is not finished.\n\
+         - `{READ_TOOL}` — read further back in this channel than you were handed.\n"
+    )
+}
+
 /// Every speech tool, built for one agent.
 pub fn speech_belt(context: SpeechContext) -> Vec<Box<dyn Tool>> {
     vec![
