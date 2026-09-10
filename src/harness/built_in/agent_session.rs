@@ -51,7 +51,7 @@ use std::sync::Arc;
 
 use crate::ports::EventLog;
 use crate::ports::types::{CompanyEvent, CompanyId, CompanyRecord, EventSeq};
-use crate::server::chat_history::{self, Channel};
+use crate::server::chat_history::{self, Channel, agent_channels};
 
 /// How many raw journal events one delta walk may read before giving up and
 /// asking for a full re-seed.
