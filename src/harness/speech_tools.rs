@@ -607,3 +607,188 @@ pub fn speech_belt(context: SpeechContext) -> Vec<Box<dyn Tool>> {
         Box::new(ReadTool(context)),
     ]
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::ports::types::StoredEvent;
+    use futures::stream::{self, BoxStream};
+    use std::sync::Mutex;
+
+    /// A log that records what was appended, so a test can ask what actually
+    /// reached the journal rather than what the tool said it did.
+    struct RecordingLog(Mutex<Vec<CompanyEvent>>);
+
+    #[async_trait]
+    impl EventLog for RecordingLog {
+        async fn append(&self, _id: &CompanyId, event: CompanyEvent) -> crate::Result<EventSeq> {
+            let mut appended = self.0.lock().expect("test log lock");
+            appended.push(event);
+            Ok(EventSeq::new(appended.len() as u64))
+        }
+        async fn read_from(
+            &self,
+            _id: &CompanyId,
+            _seq: EventSeq,
+            _limit: usize,
+        ) -> crate::Result<Vec<StoredEvent>> {
+            Ok(Vec::new())
+        }
+        fn subscribe(
+            &self,
+            _id: &CompanyId,
+        ) -> BoxStream<'static, crate::ports::events::EventStreamItem> {
+            Box::pin(stream::empty())
+        }
+    }
+
+    fn context() -> (SpeechContext, Arc<RecordingLog>, tempfile::TempDir) {
+        let dir = tempfile::Builder::new()
+            .prefix("speech-tools-")
+            .tempdir()
+            .expect("tempdir");
+        let store: Arc<dyn crate::ports::store::CompanyStore> =
+            Arc::new(crate::store::fs::FsStore::new(dir.path()));
+        let events = Arc::new(RecordingLog(Mutex::new(Vec::new())));
+        let context = SpeechContext::new(
+            CompanyId::new("acme"),
+            "designer".to_string(),
+            events.clone() as Arc<dyn EventLog>,
+            store,
+        );
+        (context, events, dir)
+    }
+
+    /// The contract text is the crate's, not this host's. It is the only place a
+    /// seat is told that text outside a tool call reaches nobody, so a host that
+    /// paraphrased it would be quietly rewriting the rule.
+    #[test]
+    fn the_descriptions_are_the_crates_own() {
+        for name in SPEECH_TOOLS {
+            let ours = crate_description(name);
+            let theirs = speech::tool_specs()
+                .iter()
+                .find(|spec| spec.name == bare(name))
+                .expect("every registered tool is one the crate names")
+                .description;
+            assert_eq!(ours, theirs, "{name} paraphrased the crate");
+        }
+    }
+
+    /// A post is a *request* to speak: it does not append, it is collected and
+    /// the reply path appends it — with the steps, the live frame and the
+    /// mentions a tool does not hold.
+    #[tokio::test]
+    async fn a_post_is_collected_rather_than_journaled() {
+        let (context, events, _dir) = context();
+        let spoken = crate::runtime::delegation::new_turn_speech();
+        let result = crate::runtime::delegation::with_turn_speech(spoken.clone(), async {
+            crate::runtime::delegation::with_turn_conversation(
+                Some("brand".to_string()),
+                PostTool(context).execute(serde_json::json!({ "message": "warmer" })),
+            )
+            .await
+        })
+        .await
+        .expect("the tool runs");
+        assert!(!result.is_error, "{result:?}");
+        assert_eq!(spoken.utterances(), vec!["warmer".to_string()]);
+        assert!(spoken.spoke());
+        assert!(
+            events.0.lock().expect("lock").is_empty(),
+            "a post must not append; the reply path does"
+        );
+    }
+
+    /// A DM is the exception and journals itself, because a narrowed audience is
+    /// not something a turn's single reply can express. The audience carries the
+    /// addressees and never the author — the field's documented shape.
+    #[tokio::test]
+    async fn a_dm_journals_itself_with_its_audience() {
+        let (context, events, _dir) = context();
+        let spoken = crate::runtime::delegation::new_turn_speech();
+        let result = crate::runtime::delegation::with_turn_speech(spoken.clone(), async {
+            crate::runtime::delegation::with_turn_conversation(
+                Some("brand".to_string()),
+                DmTool(context).execute(serde_json::json!({
+                    "to": ["copy"],
+                    "message": "between us: ship it"
+                })),
+            )
+            .await
+        })
+        .await
+        .expect("the tool runs");
+        assert!(!result.is_error, "{result:?}");
+        let appended = events.0.lock().expect("lock");
+        assert_eq!(appended.len(), 1, "{appended:?}");
+        let CompanyEvent::AgentReply {
+            audience,
+            agent_id,
+            chat_id,
+            ..
+        } = &appended[0]
+        else {
+            panic!("expected an AgentReply, got {:?}", appended[0]);
+        };
+        assert_eq!(audience, &vec!["copy".to_string()]);
+        assert_eq!(agent_id, "designer");
+        assert_eq!(chat_id, "brand");
+    }
+
+    /// Self-addressing is refused in three places in the crate and is refused
+    /// here too, at the one point that holds the speaker's own id. A row whose
+    /// audience is only its author is a covert channel with a journal entry.
+    #[tokio::test]
+    async fn a_dm_to_yourself_is_refused() {
+        let (context, events, _dir) = context();
+        let spoken = crate::runtime::delegation::new_turn_speech();
+        let result = crate::runtime::delegation::with_turn_speech(spoken, async {
+            crate::runtime::delegation::with_turn_conversation(
+                Some("brand".to_string()),
+                DmTool(context).execute(serde_json::json!({
+                    "to": ["designer"],
+                    "message": "note to self"
+                })),
+            )
+            .await
+        })
+        .await
+        .expect("the tool runs");
+        assert!(result.is_error, "{result:?}");
+        assert!(events.0.lock().expect("lock").is_empty());
+    }
+
+    /// A turn with no conversation has no channel to speak into. Posting into a
+    /// guessed one would put a line in front of people who were not in the
+    /// exchange, so this refuses rather than defaulting.
+    #[tokio::test]
+    async fn speaking_outside_a_channel_is_refused() {
+        let (context, events, _dir) = context();
+        let result = PostTool(context)
+            .execute(serde_json::json!({ "message": "anyone there?" }))
+            .await
+            .expect("the tool runs");
+        assert!(result.is_error, "{result:?}");
+        assert!(events.0.lock().expect("lock").is_empty());
+    }
+
+    /// An empty message is not silence, it is a mistake — and saying so is
+    /// better than journaling a blank row.
+    #[tokio::test]
+    async fn an_empty_message_is_refused() {
+        let (context, _events, _dir) = context();
+        let spoken = crate::runtime::delegation::new_turn_speech();
+        let result = crate::runtime::delegation::with_turn_speech(spoken.clone(), async {
+            crate::runtime::delegation::with_turn_conversation(
+                Some("brand".to_string()),
+                PostTool(context).execute(serde_json::json!({ "message": "   " })),
+            )
+            .await
+        })
+        .await
+        .expect("the tool runs");
+        assert!(result.is_error, "{result:?}");
+        assert!(!spoken.spoke());
+    }
+}
