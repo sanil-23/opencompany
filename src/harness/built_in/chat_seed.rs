@@ -115,6 +115,38 @@ pub struct ChatSeedRequest {
 }
 
 impl ChatSeedRequest {
+    /// The rows this agent has not yet been handed, across every channel it can
+    /// read (see [`agent_session`](super::agent_session)).
+    ///
+    /// Lives here rather than at the call site because this is the type that
+    /// already carries the journal, the store and the turn's own boundary —
+    /// the three things a delta walk needs — so asking it keeps the harness
+    /// seam one call wide, exactly as [`Self::build`] does for the seed.
+    ///
+    /// `None` when the company record cannot be read: a host with no manifest
+    /// in hand cannot say which desks this agent sits on, and guessing would
+    /// either starve the session or hand it a desk it is not on. The caller
+    /// then leaves the session untouched.
+    pub async fn session_delta(
+        &self,
+        company: &CompanyId,
+        agent_id: &str,
+        state: &super::agent_session::AgentSessionState,
+    ) -> Option<super::agent_session::SessionPlan> {
+        let record = self.store.load(company).await.ok()??;
+        Some(
+            super::agent_session::prepare_delta(
+                &self.events,
+                company,
+                &record,
+                agent_id,
+                state,
+                self.current_message_seq,
+            )
+            .await,
+        )
+    }
+
     /// The attributed projection, mapped onto the `(role, content)` ladder the
     /// agent runtime takes.
     ///

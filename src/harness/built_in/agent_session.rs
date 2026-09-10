@@ -428,7 +428,7 @@ fn body_of(agent_id: &str, event: &CompanyEvent) -> Option<(String, bool, String
 ///
 /// Returns `None` for an empty delta, so an ordinary same-channel reply pays
 /// nothing for this.
-pub fn render_cues(envelopes: &[Envelope], agent_id: &str) -> Option<String> {
+pub fn render_cues(envelopes: &[Envelope]) -> Option<String> {
     let lines: Vec<String> = envelopes
         .iter()
         .filter(|envelope| !envelope.mine)
@@ -444,7 +444,6 @@ pub fn render_cues(envelopes: &[Envelope], agent_id: &str) -> Option<String> {
     if lines.is_empty() {
         return None;
     }
-    let _ = agent_id;
     Some(format!(
         "While you were away, this was said elsewhere in the company. It is \
          context, not a request — answer the message at the end of this turn.\n\n{}\n",
