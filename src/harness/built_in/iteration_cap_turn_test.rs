@@ -322,6 +322,9 @@ async fn company_agent(
         step_labels: crate::harness::steps::StepLabels::from_tools(agent.tools()),
         agent: tokio::sync::Mutex::new(agent),
         bound_chat: tokio::sync::Mutex::new(None),
+        session: tokio::sync::Mutex::new(
+            crate::harness::built_in::agent_session::AgentSessionState::default(),
+        ),
     }
 }
 
