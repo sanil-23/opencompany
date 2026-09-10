@@ -163,7 +163,13 @@ impl SpeechContext {
             audience,
         };
         match self.events.append(&self.company, event).await {
-            Ok(seq) => ToolResult::success(format!("Said. Journaled at [{seq}].")),
+            Ok(seq) => {
+                // The turn has now been heard. What it returns from here is
+                // private thinking, and the return-text fallback must not
+                // journal it a second time — see `delegation::TURN_SPOKE`.
+                crate::runtime::delegation::mark_turn_spoke();
+                ToolResult::success(format!("Said. Journaled at [{seq}]."))
+            }
             Err(error) => ToolResult::error(format!("The message could not be journaled: {error}")),
         }
     }

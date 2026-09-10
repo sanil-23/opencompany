@@ -4018,6 +4018,40 @@ tokio::task_local! {
     /// able to read any thread in any channel would reintroduce through the
     /// back door the leak #1890 A closed at the seed.
     static TURN_CONVERSATION: Option<String>;
+
+    /// Whether the current turn has already SAID something through a speech
+    /// tool (`desk_post` / `desk_dm` / `desk_close`).
+    ///
+    /// A task-local for the same reason `TURN_CONVERSATION` is one: the tool
+    /// that sets it and the code that reads it are on opposite sides of the
+    /// model loop, and neither is constructed per turn.
+    ///
+    /// This is what keeps the return-text fallback from double-posting. With
+    /// `[speech] enabled`, an agent's line reaches the journal through the
+    /// tool; its return text is then private thinking and must not be
+    /// journaled a second time. But an agent that calls NO speech tool must
+    /// still be heard — going silent because a model forgot a tool call is not
+    /// an acceptable failure mode — so the fallback is gated on this flag
+    /// rather than on the manifest knob alone.
+    static TURN_SPOKE: std::cell::Cell<bool>;
+}
+
+/// Runs `fut` with a fresh "has not spoken yet" flag for this turn.
+pub(crate) async fn with_speech_tracking<F: std::future::Future>(fut: F) -> F::Output {
+    TURN_SPOKE.scope(std::cell::Cell::new(false), fut).await
+}
+
+/// Records that this turn has said something through a speech tool.
+pub fn mark_turn_spoke() {
+    let _ = TURN_SPOKE.try_with(|spoke| spoke.set(true));
+}
+
+/// Whether this turn has already spoken through a speech tool.
+///
+/// `false` outside a tracked turn, which is every path that predates speech —
+/// and is the answer that keeps those paths journaling their return text.
+pub fn turn_spoke() -> bool {
+    TURN_SPOKE.try_with(std::cell::Cell::get).unwrap_or(false)
 }
 
 /// Run `fut` with the current turn's channel set (issue #1890 F).
