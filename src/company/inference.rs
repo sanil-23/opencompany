@@ -1021,7 +1021,7 @@ pub async fn resolve_effective_scoped(
             // provider underneath it. The arm below, for a host with no platform
             // default at all, has always reported `managed` for the same reason;
             // these two now agree.
-            selected_provider: LEGACY_MANAGED.to_string(),
+            selected_provider: DEFAULT_PROVIDER.to_string(), // TEMP-REVERT
             base_url,
             models: BTreeMap::new(),
             source: InferenceSource::Default,
