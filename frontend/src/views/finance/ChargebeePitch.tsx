@@ -83,7 +83,7 @@ export function ChargebeePitch({ onConnect }: Props) {
       */}
       <ChargebeeIcon className="pointer-events-none absolute -top-10 -right-10 size-56 text-(--brand-chargebee) opacity-[0.07]" />
 
-      <CardContent className="relative space-y-6 py-7">
+      <CardContent className="relative space-y-6">
         <div className="space-y-3">
           <div className="flex items-center gap-2">
             <ChargebeeIcon className="size-4 text-(--brand-chargebee)" />
