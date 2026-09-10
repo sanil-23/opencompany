@@ -2157,18 +2157,15 @@ mod tests {
         let mut deps = pin_deps(dir.path().to_path_buf());
         deps.events = Some(Arc::new(crate::store::FsEventLog::new(dir.path())));
         let manifest_agent = ManifestAgent {
+            global: false,
             id: "designer".to_string(),
-            name: None,
             role: "Designer".to_string(),
+            name: None,
             description: None,
-            avatar: None,
             tier: None,
             harness: None,
             tools: None,
-            skills: Vec::new(),
             delegates_to: Vec::new(),
-            inbox: None,
-            memory: None,
             context: None,
             budget_usd_daily: None,
             prompt: None,
