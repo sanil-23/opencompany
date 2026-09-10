@@ -648,7 +648,7 @@ mod test {
             .tempdir()
             .expect("tempdir");
         let store: Arc<dyn crate::ports::store::CompanyStore> =
-            Arc::new(crate::store::fs::FsStore::new(dir.path()));
+            Arc::new(crate::store::FsCompanyStore::new(dir.path()));
         let events = Arc::new(RecordingLog(Mutex::new(Vec::new())));
         let context = SpeechContext::new(
             CompanyId::new("acme"),
