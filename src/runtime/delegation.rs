@@ -4095,7 +4095,9 @@ pub(crate) async fn with_turn_speech<F: std::future::Future>(
 /// Records that this turn has said something through a speech tool.
 pub fn mark_turn_spoke() {
     let _ = TURN_SPEECH.try_with(|speech| {
-        speech.spoke.store(true, std::sync::atomic::Ordering::Relaxed);
+        speech
+            .spoke
+            .store(true, std::sync::atomic::Ordering::Relaxed);
     });
 }
 
@@ -4108,14 +4110,15 @@ pub fn collect_utterance(text: String) -> bool {
         .try_with(|speech| {
             if let Ok(mut lines) = speech.utterances.lock() {
                 lines.push(text);
-                speech.spoke.store(true, std::sync::atomic::Ordering::Relaxed);
+                speech
+                    .spoke
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
                 return true;
             }
             false
         })
         .unwrap_or(false)
 }
-
 
 /// Run `fut` with the current turn's channel set (issue #1890 F).
 pub(crate) async fn with_turn_conversation<F: std::future::Future>(
