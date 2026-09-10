@@ -12,6 +12,7 @@ import { defaultTransport, needsCarriedSession } from "./transport";
 import type { StreamHandlers, Transport, TransportResponse } from "./transport";
 import {
   type AgentDetailDto,
+  type AgentSessionMessageDto,
   ApiError,
   type BlockerVerdict,
   type BoardComment,
