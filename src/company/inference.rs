@@ -1011,9 +1011,17 @@ pub async fn resolve_effective_scoped(
             resolve_endpoint(DEFAULT_PROVIDER, None, key, Some(env));
         return Ok(Some(InferenceDecl {
             provider: DEFAULT_PROVIDER.to_string(),
-            // Nothing was selected at all, so the console has nothing of the
-            // operator's to echo back — the default is the honest answer.
-            selected_provider: DEFAULT_PROVIDER.to_string(),
+            // Nothing is declared and the platform's own endpoint is answering:
+            // that *is* the managed route, and it is what the console's
+            // "Managed (TinyHumans)" means. Saying `openrouter` here is the
+            // second way the managed choice used to vanish — the console sends a
+            // keyless managed save as a revert (a managed brain with no key of
+            // its own is the platform default, not an override), so the operator
+            // pressed Save on Managed and this arm answered with the name of the
+            // provider underneath it. The arm below, for a host with no platform
+            // default at all, has always reported `managed` for the same reason;
+            // these two now agree.
+            selected_provider: LEGACY_MANAGED.to_string(),
             base_url,
             models: BTreeMap::new(),
             source: InferenceSource::Default,
@@ -1304,6 +1312,38 @@ mod tests {
             None,
             "the platform credential stays home"
         );
+    }
+
+    /// A company that declares nothing and rides the platform's endpoint is on
+    /// the managed route, and says so.
+    ///
+    /// The console sends a keyless managed save as a *revert* — a managed brain
+    /// with no key of its own is the platform default rather than an override —
+    /// so this arm is what answers the operator immediately after they choose
+    /// "Managed (TinyHumans)" and press Save. Answering `openrouter` (the
+    /// provider underneath the platform endpoint) is the second way that choice
+    /// used to disappear from the card, and the one a stored-override fix alone
+    /// does not reach.
+    #[tokio::test]
+    async fn the_platform_default_reports_itself_as_the_managed_route() {
+        let company = CompanyId::new("acme");
+        let secrets = MemSecrets::default();
+        let env = EnvDefault {
+            base_url: "https://env.example/openai/v1".into(),
+            credential: Credential::from_value("platform-key"),
+        };
+        let decl = resolve_effective(&company, &Inference::default(), Some(&env), &secrets)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(decl.selected_provider(), LEGACY_MANAGED);
+        assert_eq!(
+            decl.provider, DEFAULT_PROVIDER,
+            "and it still resolves to, and is billed as, proxied OpenRouter"
+        );
+        assert!(decl.is_proxied());
+        assert_eq!(decl.telemetry_slug(), "subscription");
+        assert_eq!(decl.source, InferenceSource::Default);
     }
 
     /// The operator's own choice survives the round trip, so a console can echo
