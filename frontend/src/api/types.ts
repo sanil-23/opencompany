@@ -412,6 +412,23 @@ export interface AsideConversationDto {
   lines: AsideLineDto[];
 }
 
+/**
+ * One line of an agent's session: a chat row plus where it was said.
+ *
+ * The session view is one continuous stream across every channel an agent can
+ * read, so a row that does not say which channel it came from is unreadable —
+ * two teammates answering in two desks would interleave with nothing to tell
+ * them apart. Everything else is a plain {@link ChatHistoryMessageDto}, which
+ * is what lets `fromHistory` map it and the room's own components render it,
+ * referral and aside collapses included.
+ */
+export interface AgentSessionMessageDto extends ChatHistoryMessageDto {
+  /** The channel as the rail names it — `#Brand`, `#general`, `dm`. */
+  sessionChannel: string;
+  /** The desk id behind that label, so a row can link to its conversation. */
+  sessionChannelId: string;
+}
+
 export interface ReferredFromDto {
   deskId: string;
   deskName: string;

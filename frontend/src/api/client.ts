@@ -855,6 +855,33 @@ export class OpenCompanyClient {
   }
 
   /**
+   * Everything one agent said and heard, across every channel it can read.
+   *
+   * Not a merge of per-desk `chat/history` calls, and deliberately so: which
+   * channels an agent can read is decided host-side by the same function that
+   * decides the agent's own session, so asking for it here is what keeps the
+   * page from claiming a teammate saw something it did not.
+   *
+   * A host that predates the route answers 404; the caller treats that as "this
+   * host has no session view" rather than as an error, exactly as
+   * {@link readState} does.
+   */
+  agentSession(
+    agentId: string,
+    company?: string | null,
+    options?: { before?: string; limit?: number },
+  ): Promise<AgentSessionMessageDto[]> {
+    const query = new URLSearchParams();
+    if (options?.before) query.set("before", options.before);
+    if (options?.limit !== undefined) query.set("limit", String(options.limit));
+    const qs = query.size > 0 ? `?${query}` : "";
+    return this.request<AgentSessionMessageDto[]>(
+      "GET",
+      `${this.scope(company)}/agents/${encodeURIComponent(agentId)}/session${qs}`,
+    );
+  }
+
+  /**
    * Where the signed-in person has read to, per channel (issue #755).
    *
    * A host that predates this route answers 404; the caller treats that as "no
