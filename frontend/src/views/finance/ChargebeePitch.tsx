@@ -1,8 +1,14 @@
-import { ArrowRight, ExternalLink, FileText, RefreshCw, Sparkles } from "lucide-react";
+import {
+  ArrowRight,
+  ExternalLink,
+  FileText,
+  RefreshCw,
+  Sparkles,
+} from "lucide-react";
 
 import { ChargebeeIcon } from "@/components/chargebee-icon";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import {
@@ -75,9 +81,7 @@ export function ChargebeePitch({ onConnect }: Props) {
         below already names Chargebee at a legible size, and this is the half of
         "highlight Chargebee" that type cannot do.
       */}
-      <ChargebeeIcon
-        className="pointer-events-none absolute -top-10 -right-10 size-56 text-(--brand-chargebee) opacity-[0.07]"
-      />
+      <ChargebeeIcon className="pointer-events-none absolute -top-10 -right-10 size-56 text-(--brand-chargebee) opacity-[0.07]" />
 
       <CardContent className="relative space-y-6 py-7">
         <div className="space-y-3">
@@ -93,9 +97,10 @@ export function ChargebeePitch({ onConnect }: Props) {
             Let your agents run billing end to end.
           </h2>
           <p className="max-w-2xl text-sm text-muted-foreground">
-            Chargebee is the subscription-billing platform behind this company&apos;s invoicing.
-            Connect a site and your teammates can raise an invoice from a conversation, send it, and
-            know when it is paid — without anybody opening a billing console.
+            Chargebee is the subscription-billing platform behind this
+            company&apos;s invoicing. Connect a site and your teammates can
+            raise an invoice from a conversation, send it, and know when it is
+            paid — without anybody opening a billing console.
           </p>
         </div>
 
@@ -110,14 +115,17 @@ export function ChargebeePitch({ onConnect }: Props) {
               // `preview` is deliberately ugly. It is a dashed outline around
               // wording nobody has agreed to, and it exists so a reviewer can
               // never mistake it for the real thing.
-              state === "preview" && "border border-dashed border-(--brand-chargebee)",
+              state === "preview" &&
+                "border border-dashed border-(--brand-chargebee)",
             )}
             data-testid="chargebee-offer"
             data-offer-state={state}
           >
             <Sparkles className="size-4 shrink-0 text-(--brand-chargebee)" />
             <span className="text-sm font-medium">{offer.headline}</span>
-            <span className="text-sm text-muted-foreground">{offer.trigger}.</span>
+            <span className="text-sm text-muted-foreground">
+              {offer.trigger}.
+            </span>
             {state === "preview" ? (
               <Badge variant="outline" className="text-(--brand-chargebee)">
                 Placeholder
@@ -128,12 +136,21 @@ export function ChargebeePitch({ onConnect }: Props) {
 
         <div className="flex flex-wrap items-center gap-3">
           {canStart ? (
-            <Button asChild data-testid="chargebee-start">
-              <a href={CHARGEBEE_SIGNUP_URL} target="_blank" rel="noreferrer noopener">
-                Start on Chargebee
-                <ArrowRight className="size-4" />
-              </a>
-            </Button>
+            // An anchor wearing the button's own variant, which is how this
+            // console renders a link that acts like a primary control (the
+            // Button primitive here has no `asChild`). It must stay an `<a>`:
+            // this leaves the console for another origin, and a `<button>` that
+            // navigates cannot be opened in a new tab or copied.
+            <a
+              className={buttonVariants()}
+              href={CHARGEBEE_SIGNUP_URL}
+              target="_blank"
+              rel="noreferrer noopener"
+              data-testid="chargebee-start"
+            >
+              Start on Chargebee
+              <ArrowRight className="size-4" />
+            </a>
           ) : (
             // Not a link to the generic trial page: see the note above. A
             // control that says why it cannot act is worth more than one that
@@ -142,7 +159,11 @@ export function ChargebeePitch({ onConnect }: Props) {
               Start on Chargebee
             </Button>
           )}
-          <Button variant="outline" onClick={onConnect} data-testid="chargebee-already-have">
+          <Button
+            variant="outline"
+            onClick={onConnect}
+            data-testid="chargebee-already-have"
+          >
             I already have a Chargebee site
           </Button>
           <a
@@ -157,9 +178,13 @@ export function ChargebeePitch({ onConnect }: Props) {
         </div>
 
         {!canStart ? (
-          <p className="text-xs text-muted-foreground" data-testid="chargebee-start-note">
-            The Chargebee signup link has not been configured on this build, so the button above
-            cannot send you anywhere yet. If you already have a site, connect it now.
+          <p
+            className="text-xs text-muted-foreground"
+            data-testid="chargebee-start-note"
+          >
+            The Chargebee signup link has not been configured on this build, so
+            the button above cannot send you anywhere yet. If you already have a
+            site, connect it now.
           </p>
         ) : null}
 
@@ -186,7 +211,10 @@ export function ChargebeePitch({ onConnect }: Props) {
         </div>
 
         {offer ? (
-          <p className="text-xs text-muted-foreground" data-testid="chargebee-offer-fine-print">
+          <p
+            className="text-xs text-muted-foreground"
+            data-testid="chargebee-offer-fine-print"
+          >
             {offer.finePrint}
           </p>
         ) : null}

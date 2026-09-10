@@ -40,7 +40,8 @@ export function ChargebeeCreditsBanner() {
       className={cn(
         "flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg px-3 py-2",
         "bg-[color-mix(in_oklab,var(--brand-chargebee)_10%,var(--card))]",
-        state === "preview" && "border border-dashed border-(--brand-chargebee)",
+        state === "preview" &&
+          "border border-dashed border-(--brand-chargebee)",
       )}
       data-testid="chargebee-credits-banner"
       data-offer-state={state}

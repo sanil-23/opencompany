@@ -77,7 +77,8 @@ export function offerState(
 export const PLACEHOLDER_OFFER: ChargebeeOffer = {
   headline: "500 free agent credits",
   trigger: "when this company sends its first Chargebee invoice",
-  finePrint: "Placeholder terms — not an offer. Set CHARGEBEE_OFFER to publish.",
+  finePrint:
+    "Placeholder terms — not an offer. Set CHARGEBEE_OFFER to publish.",
 };
 
 /** The offer a surface should display, given the state it resolved. */
