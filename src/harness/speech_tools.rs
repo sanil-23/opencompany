@@ -135,11 +135,44 @@ impl SpeechContext {
         crate::runtime::delegation::turn_conversation()
     }
 
+    /// Says one thing to the whole channel.
+    ///
+    /// **Does not append.** The crate's rule is that a tool call is a *request*
+    /// to speak and the host appends — and the host that appends here is the
+    /// reply path that has always appended, because it is the one carrying the
+    /// folded steps, the live SSE frame, the resolved mentions and the
+    /// board-card correlation. A tool holds none of those, so a tool that
+    /// appended directly would produce a bubble poorer than the one the same
+    /// sentence gets today.
+    ///
+    /// Falls back to appending only when there is no sink — a turn run outside
+    /// the harness's tracking scope, where being heard beats being well
+    /// formatted.
+    async fn post_to_channel(&self, chat_id: String, text: String) -> ToolResult {
+        if text.trim().is_empty() {
+            return ToolResult::error(
+                "A message with no text reaches nobody. Say what you mean, or call no tool at all."
+                    .to_string(),
+            );
+        }
+        if crate::runtime::delegation::collect_utterance(text.clone()) {
+            crate::runtime::delegation::mark_turn_spoke();
+            return ToolResult::success(
+                "Said to the channel. It is journaled when this turn ends.".to_string(),
+            );
+        }
+        self.say(chat_id, text, Vec::new()).await
+    }
+
     /// Appends one line to the journal, with the audience the caller resolved.
     ///
     /// `audience` empty is the ordinary desk-visible case. A non-empty one is a
     /// private aside: the author is implicit and is never repeated in the list,
     /// which is the field's documented shape.
+    ///
+    /// This is `desk_dm`'s path, and the fallback for a post with no sink. A
+    /// narrowed audience is not something a turn's single reply can express, so
+    /// a DM has to be its own row.
     async fn say(&self, chat_id: String, text: String, audience: Vec<String>) -> ToolResult {
         if text.trim().is_empty() {
             return ToolResult::error(
@@ -232,7 +265,7 @@ impl Tool for PostTool {
         );
         match call {
             Ok(ToolCall::Speak(Utterance::Post { message })) => {
-                Ok(self.0.say(channel, message, Vec::new()).await)
+                Ok(self.0.post_to_channel(channel, message).await)
             }
             Ok(_) => Ok(ToolResult::error(
                 "`desk_post` says one thing to the channel; it takes no other form.".to_string(),
@@ -409,8 +442,7 @@ impl Tool for CloseTool {
         );
         match call {
             Ok(ToolCall::Speak(Utterance::Close { message })) => {
-                let result = self.0.say(channel, message, Vec::new()).await;
-                Ok(result)
+                Ok(self.0.post_to_channel(channel, message).await)
             }
             Ok(_) => Ok(ToolResult::error(
                 "`desk_close` says one last thing and reports the work finished; it takes no other \
