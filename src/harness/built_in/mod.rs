@@ -1348,8 +1348,24 @@ impl CompanyAgent {
             // against. Seed the recent window exactly as before.
             let cold = session.watermark.is_none() || agent.history().is_empty();
 
-            let mut reseed = cold;
-            if !cold && let (Some(request), Some(company)) = (&chat_seed, turn_company.as_ref()) {
+            // A chat-only turn keeps its reduction (#1725 / #1730).
+            //
+            // The fast path already runs a greeting with no tools, no memory
+            // retrieval and no prior task's goal, on the grounds that a bare
+            // "hi" should not inherit the machinery of the task before it. A
+            // continuous session must not quietly undo that: an agent's live
+            // history carries the **raw tool results** of whatever it was last
+            // doing, and replaying a fetched page into an unrelated greeting is
+            // the exact screenshot bug #1730 closed.
+            //
+            // So a chat-only turn re-seeds instead of continuing. It still
+            // remembers the conversation — the seed is this desk's own
+            // transcript, which is prose — it simply does not carry the agentic
+            // residue of an unrelated task. That is the same trade the three
+            // other reductions on this path already make.
+            let chat_only = crate::runtime::delegation::is_chat_only_turn();
+            let mut reseed = cold || chat_only;
+            if !reseed && let (Some(request), Some(company)) = (&chat_seed, turn_company.as_ref()) {
                 match request
                     .session_delta(company, &self.agent_id, &session)
                     .await
