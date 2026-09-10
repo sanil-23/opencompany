@@ -4555,6 +4555,35 @@ impl HarnessPool {
             ),
         )
         .await;
+        // What the turn said through `desk_post` / `desk_close` becomes its
+        // reply.
+        //
+        // This is the crate's rule applied literally: a tool call is a request
+        // to speak, and the host appends. The appending host is the reply path
+        // below, because it is the one that carries the folded steps, the live
+        // frame, the resolved mentions and the board-card correlation — so a
+        // post routed through it produces the same bubble a plain answer does,
+        // rather than a poorer one written by a tool that holds none of that.
+        //
+        // The return text is discarded when the turn spoke, because with
+        // `[speech]` on it is private thinking (the tool descriptions say so in
+        // as many words). It is kept when the turn did NOT speak: an agent that
+        // forgot to call the tool must still be heard, and going silent for a
+        // missing tool call is not an acceptable failure mode.
+        let mut outcome = outcome;
+        if let Ok(turn) = outcome.as_mut() {
+            let said = speech.utterances();
+            if !said.is_empty() {
+                turn.reply = said.join("\n\n");
+            } else if speech.spoke() {
+                // A `desk_dm`-only turn. The DM is journaled under its own
+                // narrowed audience, and the channel gets nothing — which is
+                // the honest record: the room is told an exchange happened by
+                // the elided row, not by a bubble reprinting private thinking.
+                turn.reply = String::new();
+            }
+        }
+        let outcome = outcome;
         // Issue B-120: bank what the turn spent BEFORE its result is unwrapped.
         //
         // Both consumers of `turn_costs` used to sit below a `?` on this very
