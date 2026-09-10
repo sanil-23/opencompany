@@ -5517,6 +5517,7 @@ pub(crate) fn build_roster(
                 .unwrap_or(&[]),
             effective_instructions.as_deref(),
             is_orchestrator,
+            company.manifest.speech.enabled,
         )?;
         roster.push(Arc::new(CompanyAgent {
             agent_id: manifest_agent.id.clone(),
@@ -5605,6 +5606,7 @@ pub(crate) fn build_roster(
                 .unwrap_or(&[]),
             effective_instructions.as_deref(),
             /* is_orchestrator */ false,
+            company.manifest.speech.enabled,
         )?;
         roster.push(Arc::new(CompanyAgent {
             agent_id: manifest_agent.id.clone(),
