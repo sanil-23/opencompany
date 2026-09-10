@@ -4923,14 +4923,14 @@ async fn chat_history_single(
 /// with a second set that would drift from them.
 #[derive(Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct AgentSessionMessageDto {
+struct AgentSessionMessageDto {
     /// The line itself.
     #[serde(flatten)]
-    pub message: ChatHistoryMessageDto,
+    message: ChatHistoryMessageDto,
     /// The channel it was said on, as the rail names it (`#general`, `dm`).
-    pub session_channel: String,
+    session_channel: String,
     /// The desk id behind that label, so a row can link to its conversation.
-    pub session_channel_id: String,
+    session_channel_id: String,
 }
 
 /// `GET {scope}/agents/{agent_id}/session` — everything one agent said and heard.
