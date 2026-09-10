@@ -51,7 +51,7 @@ use std::sync::Arc;
 
 use crate::ports::EventLog;
 use crate::ports::types::{CompanyEvent, CompanyId, CompanyRecord, EventSeq};
-use crate::server::chat_history;
+use crate::server::chat_history::{self, Channel};
 
 /// How many raw journal events one delta walk may read before giving up and
 /// asking for a full re-seed.
@@ -117,98 +117,6 @@ impl AgentSessionState {
             }
         }
     }
-}
-
-/// One channel this agent can read.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Channel {
-    /// The desk id the journal stores rows under.
-    pub id: String,
-    /// The desk's display name — `chat_history::owns` matches either.
-    pub name: String,
-    /// How the cue names this channel to the agent.
-    pub label: String,
-}
-
-/// Every channel this agent can read: each desk it sits on, its own DM, and
-/// the company's General line.
-///
-/// Enumerated the way [`CompanyRecord::agent_desk_tools`] enumerates desks —
-/// manifest desks first, then operator-created overlay desks, deduplicated —
-/// so a teammate seated through the console is in its own session exactly as a
-/// manifest member is.
-pub fn agent_channels(record: &CompanyRecord, agent_id: &str) -> Vec<Channel> {
-    let mut seen = std::collections::HashSet::new();
-    let mut channels = Vec::new();
-
-    let manifest = record
-        .manifest
-        .group_chats
-        .iter()
-        .map(|chat| chat.id.clone());
-    let overlay = record.overlay_desks.iter().map(|desk| desk.id.clone());
-    for desk_id in manifest.chain(overlay) {
-        if !seen.insert(desk_id.clone()) {
-            continue;
-        }
-        if !record
-            .effective_desk_members(&desk_id)
-            .iter()
-            .any(|member| member == agent_id)
-        {
-            continue;
-        }
-        let name = desk_display_name(record, &desk_id);
-        channels.push(Channel {
-            label: format!("#{}", name),
-            id: desk_id,
-            name,
-        });
-    }
-
-    // This agent's own direct line. Keyed on the id, never the name — renaming
-    // somebody must not move their DM or orphan its history (issue #364).
-    let dm = format!("{}{agent_id}", crate::runtime::assignee::DM_PREFIX);
-    if seen.insert(dm.clone()) {
-        channels.push(Channel {
-            label: "dm".to_string(),
-            name: dm.clone(),
-            id: dm,
-        });
-    }
-
-    // The company's own line. Not a desk (issue #1743) unless a blueprint
-    // declared one under a General spelling, in which case the loop above
-    // already claimed it and this is a no-op.
-    let general = tinyhivemind_core::chat::GENERAL_DESK.to_string();
-    if seen.insert(general.clone()) {
-        channels.push(Channel {
-            label: "#general".to_string(),
-            name: general.clone(),
-            id: general,
-        });
-    }
-
-    channels
-}
-
-/// The desk's display name, falling back to its id.
-fn desk_display_name(record: &CompanyRecord, desk_id: &str) -> String {
-    record
-        .manifest
-        .group_chats
-        .iter()
-        .find(|chat| chat.id == desk_id)
-        .map(|chat| chat.name.clone())
-        .or_else(|| {
-            record
-                .overlay_desks
-                .iter()
-                .find(|desk| desk.id == desk_id)
-                .map(|desk| desk.name.clone())
-        })
-        .filter(|name| !name.trim().is_empty())
-        .unwrap_or_else(|| desk_id.to_string())
 }
 
 /// One row on its way into the session.
