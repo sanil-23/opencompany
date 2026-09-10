@@ -388,7 +388,7 @@ test("switching to the managed brain and saving stays on managed, with its Conne
   // A unit test cannot catch this — the wrong value is produced by the host and
   // consumed by the card, and each half is individually correct. Only a real
   // save against a real host closes the loop.
-  await page.route("**/company/credential", async (route) => {
+  await page.route(/\/credential(\?|$)/, async (route) => {
     // The Connect button also needs a host with a hub wired (`hubLink`), which
     // the E2E host has no reason to have. That is a separate precondition from
     // the one under test, so it is supplied here rather than left to decide
