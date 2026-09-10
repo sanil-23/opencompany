@@ -595,7 +595,13 @@ members = ["copy"]
     #[tokio::test]
     async fn an_aside_this_agent_is_not_party_to_never_arrives() {
         let events = log(vec![
-            reply(1, "brand", "copy", "between us: the client hated it", &["ceo"]),
+            reply(
+                1,
+                "brand",
+                "copy",
+                "between us: the client hated it",
+                &["ceo"],
+            ),
             reply(2, "brand", "copy", "and to you: ship it", &["designer"]),
             op(3, "brand", "where are we?"),
         ]);
