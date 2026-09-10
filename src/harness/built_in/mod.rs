@@ -1482,6 +1482,24 @@ impl CompanyAgent {
             }
         }
 
+        // The text this turn actually runs on: the cue block, then the message.
+        //
+        // Inbound is a **cued turn, not a tool result** — deliberately, and
+        // matching the reference implementation this shape came from, where
+        // outbound is a tool call and inbound is a plain hidden turn carrying a
+        // text cue. It is also the cheaper half: OpenHuman's resume path
+        // already speaks `(role, content)`, so a cued turn needs no new
+        // plumbing, whereas a synthesised tool result would need a fabricated
+        // call id with no matching call and would confuse `fold_steps`.
+        //
+        // Borrowed when there are no cues, which is the ordinary same-channel
+        // reply — that turn pays nothing for this.
+        let turn_text: std::borrow::Cow<'_, str> = match &session_cues {
+            Some(cues) => std::borrow::Cow::Owned(format!("{cues}\n{message}")),
+            None => std::borrow::Cow::Borrowed(message),
+        };
+        let message: &str = turn_text.as_ref();
+
         // Reduced-scope chat turn. When the delegation runner marked this turn
         // chat-only (an explicit "Just chatting" or a high-confidence greeting —
         // see `delegation::with_chat_only_hint`), run it as a cheap conversational
