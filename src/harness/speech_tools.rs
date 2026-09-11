@@ -829,7 +829,7 @@ mod test {
     /// A roster with one desk `designer` sits on and one it does not.
     async fn context_with_desks() -> (SpeechContext, Arc<RecordingLog>, tempfile::TempDir) {
         let (context, events, dir) = context();
-        let manifest: crate::company::types::CompanyManifest = toml::from_str(
+        let manifest: crate::company::CompanyManifest = toml::from_str(
             r#"
 [company]
 name = "Acme"
@@ -862,7 +862,26 @@ members = ["engineer"]
         let record = crate::ports::types::CompanyRecord {
             id: context.company.clone(),
             manifest,
-            ..Default::default()
+            ledger: Vec::new(),
+            lifecycle: "running".to_string(),
+            setup: None,
+            name_confirmed: false,
+            activation_completed_at: None,
+            created_at_millis: None,
+            overlay_agents: Vec::new(),
+            overlay_desk_members: Vec::new(),
+            overlay_desk_order: Vec::new(),
+            overlay_desks: Vec::new(),
+            overlay_desk_hive: Vec::new(),
+            overlay_retired_agents: Vec::new(),
+            overlay_agent_edits: Vec::new(),
+            overlay_tool_grants: None,
+            overlay_workflows: Vec::new(),
+            overlay_budgets: Vec::new(),
+            overlay_policy: None,
+            overlay_desk_tools: Default::default(),
+            disabled_workflows: Vec::new(),
+            template_provenance: None,
         };
         context.store.save(&record).await.expect("the record saves");
         (context, events, dir)
