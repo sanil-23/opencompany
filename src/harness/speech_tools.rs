@@ -441,12 +441,17 @@ fn tool_result_text(result: &ToolResult) -> String {
 /// (see its doc comment), so reaching for it here does not add a channel the
 /// recipient cannot already hear on.
 fn dm_journal_key(record: &crate::ports::types::CompanyRecord, peer: &str) -> String {
-    let collides_with_desk = record
-        .manifest
-        .group_chats
-        .iter()
-        .any(|chat| chat.id == peer)
-        || record.overlay_desks.iter().any(|desk| desk.id == peer);
+    // Codex P1 (fresh evidence after the first collision fix): `owns` /
+    // `same_conversation` match a stored row against EITHER a desk's id OR
+    // its display name, so a collision on the *name* alone is exactly as
+    // readable-by-the-whole-desk as a collision on the id — checking only
+    // `chat.id`/`desk.id` here missed the `{ id = "triage", name = "support"
+    // }` shape entirely, where a DM to agent `support` still collides.
+    let collides_with_desk = record.manifest.group_chats.iter().any(|chat| {
+        chat.id == peer || (!chat.name.trim().is_empty() && chat.name == peer)
+    }) || record.overlay_desks.iter().any(|desk| {
+        desk.id == peer || (!desk.name.trim().is_empty() && desk.name == peer)
+    });
     if collides_with_desk {
         format!("{}{peer}", crate::runtime::assignee::DM_PREFIX)
     } else {
