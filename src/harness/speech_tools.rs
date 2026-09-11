@@ -1231,7 +1231,7 @@ description = "Finds things."
     /// row out of the transcript as a desk deliberation aside, which it is not.
     #[tokio::test]
     async fn a_dm_lands_in_the_recipients_own_channel() {
-        let (context, events, _dir) = context();
+        let (context, events, _dir) = context_with_overlay_teammates().await;
         let spoken = crate::runtime::delegation::new_turn_speech();
         let result = crate::runtime::delegation::with_turn_speech(spoken.clone(), async {
             crate::runtime::delegation::with_turn_conversation(
@@ -1275,7 +1275,7 @@ description = "Finds things."
     /// read, and inventing one would be inventing a group nobody created.
     #[tokio::test]
     async fn a_dm_to_two_teammates_leaves_a_row_in_each_of_their_channels() {
-        let (context, events, _dir) = context();
+        let (context, events, _dir) = context_with_overlay_teammates().await;
         let spoken = crate::runtime::delegation::new_turn_speech();
         let result = crate::runtime::delegation::with_turn_speech(spoken.clone(), async {
             crate::runtime::delegation::with_turn_conversation(
@@ -1311,7 +1311,7 @@ description = "Finds things."
     /// agent repeats what its tools tell it.
     #[tokio::test]
     async fn a_dm_says_it_was_left_rather_than_delivered() {
-        let (context, events, _dir) = context();
+        let (context, events, _dir) = context_with_overlay_teammates().await;
         let spoken = crate::runtime::delegation::new_turn_speech();
         let result = crate::runtime::delegation::with_turn_speech(spoken.clone(), async {
             crate::runtime::delegation::with_turn_conversation(
@@ -1340,7 +1340,7 @@ description = "Finds things."
     /// audience is only its author is a covert channel with a journal entry.
     #[tokio::test]
     async fn a_dm_to_yourself_is_refused() {
-        let (context, events, _dir) = context();
+        let (context, events, _dir) = context_with_overlay_teammates().await;
         let spoken = crate::runtime::delegation::new_turn_speech();
         let result = crate::runtime::delegation::with_turn_speech(spoken, async {
             crate::runtime::delegation::with_turn_conversation(
