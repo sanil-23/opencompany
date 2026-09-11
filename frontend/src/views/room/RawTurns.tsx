@@ -22,6 +22,14 @@
 // difference between "here is the transcript again, in a smaller font" and
 // "here is the string the model was handed".
 //
+// The author half comes from `cueAuthor`, which the host computes with the very
+// function that builds the cue (`chat_history::cue_author`) — never from
+// `author`. Those two resolve differently on purpose: an agent's byline is a
+// stable id because it becomes a per-line attribution prefix and so must be
+// unforgeable, while a person reading a transcript needs a name. Rendering the
+// display name here would put a name in front of an operator that the agent
+// never saw, which is the one thing this view exists not to do.
+//
 // Nothing collapses. The referral and aside collapses the chat views reuse from
 // `StepTimeline` are summaries, and a summary is the thing this exists to get
 // out from behind, so they render as their own lines, in full.
@@ -105,8 +113,18 @@ function RawTurn({
         {row.parentId && <span>reply to #{row.parentId}</span>}
       </div>
       <pre className="mt-1.5 font-mono text-xs leading-relaxed whitespace-pre-wrap">
-        {said ? row.text : cueLine(channel, row.author, row.text)}
+        {said ? row.text : cueLine(channel, row.cueAuthor ?? row.author, row.text)}
       </pre>
+      {row.cueAuthor && row.cueAuthor !== row.author && (
+        // The cue names the sender by a stable id; the transcript names them by
+        // the display name a person reads. Both are correct for their reader,
+        // and an operator looking at the id needs to be told whose it is —
+        // otherwise this line reads as the agent not knowing who spoke, when in
+        // fact it knows exactly, just not by name.
+        <p className="mt-1 text-2xs text-muted-foreground">
+          {row.cueAuthor} is {row.author}
+        </p>
+      )}
       {!!row.steps?.length && (
         <ol
           className="mt-2 space-y-1.5 border-t pt-2"
