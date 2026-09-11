@@ -679,10 +679,26 @@ members = ["copy"]
             Some(EventSeq::new(2)),
         )
         .await;
-        let SessionPlan::Delta { envelopes, .. } = plan else {
+        let SessionPlan::Delta {
+            envelopes,
+            next_state,
+        } = plan
+        else {
             panic!("expected a delta, got {plan:?}");
         };
         assert!(envelopes.is_empty(), "{envelopes:?}");
+        // Codex P1: neither row produced an envelope, but both were scanned —
+        // and both must still be marked consumed. Before the fix, `accept`
+        // was never called for either, so the watermark stayed pinned at its
+        // starting value forever: every later turn would rescan the same two
+        // non-deliverable rows, and once that rescan crossed
+        // `SESSION_SCAN_LIMIT` it would reinitialize instead of completing,
+        // permanently falling back to a chat-only reseed.
+        assert_eq!(
+            next_state.watermark,
+            Some(EventSeq::new(2)),
+            "scanned-but-nondeliverable rows must still advance the watermark: {next_state:?}"
+        );
     }
 
     /// The one narrowing that survives. Channel isolation was dropped
