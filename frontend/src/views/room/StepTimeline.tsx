@@ -82,7 +82,12 @@ export function AsideConversation({ aside }: { aside: AsideConversationDto }) {
         // this was said beside the room rather than across a desk boundary.
         <ol className="mt-0.5 flex flex-col gap-2 rounded-lg border border-dashed bg-card/60 px-2.5 py-2">
           {aside.lines.map((line, i) => (
-            <li key={i} className="flex gap-2">
+            // `AsideLineDto` carries no id of its own (issue: tinysweeper
+            // review), so the index alone is not a stable key if the lines
+            // are ever reordered or merged. Pairing it with the author keeps
+            // a reordered author's rows from swapping component instances
+            // with an unrelated author's.
+            <li key={`${line.authorId}-${i}`} className="flex gap-2">
               <TeammateAvatar name={line.authorId} className="mt-0.5 size-5 shrink-0" />
               <div className="flex min-w-0 flex-col gap-0.5">
                 <span className="text-2xs leading-none font-semibold">{line.authorId}</span>
