@@ -298,6 +298,16 @@ impl SpeechContext {
             );
         }
         let mut left_for: Vec<String> = Vec::new();
+        // coderabbit: an earlier version returned the first journal error for
+        // the whole call, even though every recipient before it had already
+        // been durably appended. A retry after that error re-sent the text to
+        // every one of them a second time — the exact "partial write read as
+        // total failure" defect this tracks both outcomes to avoid. Every
+        // recipient is now attempted regardless of an earlier one's failure,
+        // and the reply says which of them actually got a row so a retry (by
+        // the model, or by whoever reads the result) can address only the
+        // ones that still need it.
+        let mut failed_for: Vec<(String, String)> = Vec::new();
         for peer in &peers {
             // Codex P1: a desk whose id happens to equal this recipient's
             // agent id also "owns" a row journaled under the bare id
@@ -309,36 +319,57 @@ impl SpeechContext {
             // row is journaled somewhere only that desk's own id would match,
             // which is far less likely to collide.
             let key = dm_journal_key(record, peer);
-            match self.say(key, text.clone(), Vec::new()).await {
-                result if result.is_error => return result,
-                _ => {
-                    // A DM is a hop from one openhuman session to another, and
-                    // this is the only place both ends are known at once. Both
-                    // teammates hold a live openhuman session named
-                    // `{company}:{agent_id}` (see `harness::session_key`); the
-                    // row just journaled leaves the sender's and is picked up
-                    // by the recipient's `prepare_delta` on its next turn.
-                    //
-                    // Logged rather than returned: the recipient's session id
-                    // is an internal name, and the agent has no use for it —
-                    // what the *operator* has a use for is being able to follow
-                    // one line between two sessions when a hundred of them are
-                    // live at once, which is exactly when the reply text alone
-                    // stops being enough to tell who heard what.
-                    tracing::debug!(
-                        from_session = %crate::harness::session_key::openhuman_session_key(
-                            &self.company,
-                            &self.agent_id,
-                        ),
-                        to_session = %crate::harness::session_key::openhuman_session_key(
-                            &self.company,
-                            peer,
-                        ),
-                        "[speech] dm left in the recipient's session"
-                    );
-                    left_for.push(format!("@{peer}"));
-                }
+            let result = self.say(key, text.clone(), Vec::new()).await;
+            if result.is_error {
+                failed_for.push((peer.clone(), result.into_text()));
+                continue;
             }
+            // A DM is a hop from one openhuman session to another, and
+            // this is the only place both ends are known at once. Both
+            // teammates hold a live openhuman session named
+            // `{company}:{agent_id}` (see `harness::session_key`); the
+            // row just journaled leaves the sender's and is picked up
+            // by the recipient's `prepare_delta` on its next turn.
+            //
+            // Logged rather than returned: the recipient's session id
+            // is an internal name, and the agent has no use for it —
+            // what the *operator* has a use for is being able to follow
+            // one line between two sessions when a hundred of them are
+            // live at once, which is exactly when the reply text alone
+            // stops being enough to tell who heard what.
+            tracing::debug!(
+                from_session = %crate::harness::session_key::openhuman_session_key(
+                    &self.company,
+                    &self.agent_id,
+                ),
+                to_session = %crate::harness::session_key::openhuman_session_key(
+                    &self.company,
+                    peer,
+                ),
+                "[speech] dm left in the recipient's session"
+            );
+            left_for.push(format!("@{peer}"));
+        }
+        if !failed_for.is_empty() {
+            let failures = failed_for
+                .iter()
+                .map(|(peer, error)| format!("@{peer} ({error})"))
+                .collect::<Vec<_>>()
+                .join("; ");
+            return if left_for.is_empty() {
+                ToolResult::error(format!("Could not leave it for anyone: {failures}"))
+            } else {
+                // Not `ToolResult::error`: some of it genuinely landed, and an
+                // agent that reads "error" here and retries the whole call
+                // would journal a second row for everyone already in
+                // `left_for`. The text says exactly who still needs it.
+                ToolResult::success(format!(
+                    "Left for {}. Could not reach {}Ë — retry `desk_dm` with only the names that \
+                     failed.",
+                    left_for.join(", "),
+                    failures,
+                ))
+            };
         }
         ToolResult::success(format!(
             "Left for {}. Not delivered now — each of them reads it on their next turn, and \
