@@ -974,6 +974,43 @@ mod test {
     /// reached the journal rather than what the tool said it did.
     struct RecordingLog(Mutex<Vec<CompanyEvent>>);
 
+    /// Like [`RecordingLog`], but refuses to append to one named channel —
+    /// for proving a `desk_dm` to several recipients does not treat one
+    /// recipient's journal failure as a reason to report the whole call
+    /// failed after earlier recipients already got a durable row.
+    struct FlakyLog {
+        events: Mutex<Vec<CompanyEvent>>,
+        refuses: &'static str,
+    }
+
+    #[async_trait]
+    impl EventLog for FlakyLog {
+        async fn append(&self, _id: &CompanyId, event: CompanyEvent) -> crate::Result<EventSeq> {
+            if let CompanyEvent::AgentReply { chat_id, .. } = &event
+                && chat_id == self.refuses
+            {
+                anyhow::bail!("journal unavailable for {chat_id}");
+            }
+            let mut appended = self.events.lock().expect("test log lock");
+            appended.push(event);
+            Ok(EventSeq::new(appended.len() as u64))
+        }
+        async fn read_from(
+            &self,
+            _id: &CompanyId,
+            _seq: EventSeq,
+            _limit: usize,
+        ) -> crate::Result<Vec<StoredEvent>> {
+            Ok(Vec::new())
+        }
+        fn subscribe(
+            &self,
+            _id: &CompanyId,
+        ) -> BoxStream<'static, crate::ports::events::EventStreamItem> {
+            Box::pin(stream::empty())
+        }
+    }
+
     #[async_trait]
     impl EventLog for RecordingLog {
         async fn append(&self, _id: &CompanyId, event: CompanyEvent) -> crate::Result<EventSeq> {
