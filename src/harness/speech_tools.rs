@@ -1108,6 +1108,60 @@ description = "Finds things."
         );
     }
 
+    /// Codex P2: canonicalizing `to` can turn a survivor of the raw self-id
+    /// filter back into the caller's own id. `nova` addressing itself as
+    /// `"Nova"` passes the first filter (`"Nova" != "nova"`) and must still be
+    /// refused once resolution reveals it is the caller.
+    #[tokio::test]
+    async fn a_dm_to_your_own_display_name_is_refused() {
+        let (mut context, events, _dir) = context_with_overlay_teammates().await;
+        context.agent_id = "nova".to_string();
+        let spoken = crate::runtime::delegation::new_turn_speech();
+        let result = crate::runtime::delegation::with_turn_speech(spoken, async {
+            crate::runtime::delegation::with_turn_conversation(
+                Some("designer".to_string()),
+                DmTool(context).execute(serde_json::json!({
+                    "to": ["Nova"],
+                    "message": "note to self"
+                })),
+            )
+            .await
+        })
+        .await
+        .expect("the tool runs");
+        assert!(result.is_error, "{result:?}");
+        assert!(
+            events.0.lock().expect("lock").is_empty(),
+            "a self-DM by display name must journal nothing"
+        );
+    }
+
+    /// tinysweeper: an unreadable roster must refuse a DM, not silently skip
+    /// the check and journal a row to whatever the caller typed — the same
+    /// rule `resolve_desk` already applies to a channel name.
+    #[tokio::test]
+    async fn a_dm_is_refused_when_the_roster_cannot_be_read() {
+        let (context, events, _dir) = context();
+        let spoken = crate::runtime::delegation::new_turn_speech();
+        let result = crate::runtime::delegation::with_turn_speech(spoken, async {
+            crate::runtime::delegation::with_turn_conversation(
+                Some("brand".to_string()),
+                DmTool(context).execute(serde_json::json!({
+                    "to": ["copy"],
+                    "message": "ship it"
+                })),
+            )
+            .await
+        })
+        .await
+        .expect("the tool runs");
+        assert!(result.is_error, "{result:?}");
+        assert!(
+            events.0.lock().expect("lock").is_empty(),
+            "an unreadable roster must journal nothing"
+        );
+    }
+
     /// `desk_post` can name a channel this agent sits on, and the line lands
     /// there rather than in the conversation the turn is in.
     ///
