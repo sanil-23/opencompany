@@ -84,6 +84,17 @@ export function AgentSession({
 }) {
   const [lines, setLines] = useState<SessionLine[]>([]);
   const [load, setLoad] = useState<Load>("loading");
+  /**
+   * Whether to show the turns as the agent received them rather than as chat.
+   *
+   * An address (`?tab=session&raw`), not local state, for the reason the Edit
+   * form is one: the raw view is the thing you send to somebody else. "Look at
+   * what it actually saw" is a link, and a link that lands on the rendered
+   * bubbles and asks the reader to find a switch has lost the point of being
+   * sent. `useHashFlag` also makes Back close it, which is the behaviour a
+   * reader who opened it out of curiosity expects.
+   */
+  const [raw, setRaw] = useHashFlag("raw");
   // Incremented whenever the fetch effect restarts. A read that started before
   // a teammate switch captures the old value and discards its answer, so rows
   // fetched for one teammate can never be committed beneath another's name —
@@ -180,13 +191,68 @@ export function AgentSession({
   return (
     <Card>
       <CardContent className="space-y-4">
-        <ol className="space-y-4" data-testid="agent-session">
-          {lines.map((line) => (
-            <SessionRow key={line.message.id} line={line} agentId={agentId} />
-          ))}
-        </ol>
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-xs text-muted-foreground">
+            {raw
+              ? "Every turn as the agent received it, in order, with each tool call unfolded."
+              : "Everything this teammate has said and heard, across every channel it can read."}
+          </p>
+          <ViewToggle raw={raw} onChange={setRaw} />
+        </div>
+        {raw ? (
+          <ol className="space-y-3" data-testid="agent-session-raw">
+            {lines.map((line) => (
+              <RawTurn key={line.row.id} line={line} agentId={agentId} />
+            ))}
+          </ol>
+        ) : (
+          <ol className="space-y-4" data-testid="agent-session">
+            {lines.map((line) => (
+              <SessionRow key={line.message.id} line={line} agentId={agentId} />
+            ))}
+          </ol>
+        )}
       </CardContent>
     </Card>
+  );
+}
+
+/**
+ * Chat or raw turns.
+ *
+ * Two buttons rather than a `Switch`, in the idiom the workflow index already
+ * uses for Cards/List: a switch names one state and leaves the operator to
+ * infer the other, and "Raw" is not a thing that is obviously on or off.
+ */
+function ViewToggle({
+  raw,
+  onChange,
+}: {
+  raw: boolean;
+  onChange: (on: boolean) => void;
+}) {
+  return (
+    <div className="flex shrink-0 items-center gap-1 rounded-lg border p-0.5">
+      {(
+        [
+          { value: false, label: "Chat", Icon: MessagesSquare, id: "chat" },
+          { value: true, label: "Raw turns", Icon: Braces, id: "raw" },
+        ] as const
+      ).map(({ value, label, Icon, id }) => (
+        <Button
+          key={id}
+          size="sm"
+          variant={raw === value ? "secondary" : "ghost"}
+          className="h-7 px-2"
+          onClick={() => onChange(value)}
+          aria-pressed={raw === value}
+          data-testid={`agent-session-view-${id}`}
+        >
+          <Icon className="mr-1.5 size-3.5" aria-hidden />
+          {label}
+        </Button>
+      ))}
+    </div>
   );
 }
 
