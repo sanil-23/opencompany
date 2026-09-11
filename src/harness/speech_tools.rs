@@ -367,7 +367,11 @@ impl Tool for DmTool {
         PermissionLevel::None
     }
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
-        let Some(channel) = self.0.channel() else {
+        // The channel's *value* is no longer used — a DM goes to the recipient's
+        // own channel, not this one — but its presence still gates the tool. A
+        // turn with no conversation is not a turn anybody is talking in, and
+        // letting it DM would let a dispatched card message the roster.
+        let Some(_channel) = self.0.channel() else {
             return Ok(ToolResult::error(
                 "`desk_dm` is only available while answering in a channel; this turn is not in one."
                     .to_string(),
@@ -786,11 +790,20 @@ mod test {
         );
     }
 
-    /// A DM is the exception and journals itself, because a narrowed audience is
-    /// not something a turn's single reply can express. The audience carries the
-    /// addressees and never the author — the field's documented shape.
+    /// A DM lands in the **recipient's** channel, not the speaker's.
+    ///
+    /// This test exists because the first version of `desk_dm` did the opposite
+    /// and a live run caught it: the row went to the ambient channel with
+    /// `audience: [recipient]`, which put a message meant for a teammate into
+    /// the *operator's* DM with the speaker. `agent_channels` never gives the
+    /// recipient the speaker's own DM, so the one person named could not read
+    /// it and the one person not named could — and the tool said "Said."
+    ///
+    /// So the assertions are about `chat_id`, and the empty `audience` is as
+    /// load-bearing as the id: a non-empty one would make `fold_asides` lift the
+    /// row out of the transcript as a desk deliberation aside, which it is not.
     #[tokio::test]
-    async fn a_dm_journals_itself_with_its_audience() {
+    async fn a_dm_lands_in_the_recipients_own_channel() {
         let (context, events, _dir) = context();
         let spoken = crate::runtime::delegation::new_turn_speech();
         let result = crate::runtime::delegation::with_turn_speech(spoken.clone(), async {
@@ -817,9 +830,82 @@ mod test {
         else {
             panic!("expected an AgentReply, got {:?}", appended[0]);
         };
-        assert_eq!(audience, &vec!["copy".to_string()]);
         assert_eq!(agent_id, "designer");
-        assert_eq!(chat_id, "brand");
+        assert_eq!(
+            chat_id, "copy",
+            "a DM belongs in the recipient's channel; `brand` here is the speaker's own, which \
+             the recipient cannot read"
+        );
+        assert!(
+            audience.is_empty(),
+            "the channel is the narrowing; an audience would make this a deliberation aside"
+        );
+    }
+
+    /// Two recipients get two rows, one in each of their channels.
+    ///
+    /// Not one row with both in an audience: there is no channel both of them
+    /// read, and inventing one would be inventing a group nobody created.
+    #[tokio::test]
+    async fn a_dm_to_two_teammates_leaves_a_row_in_each_of_their_channels() {
+        let (context, events, _dir) = context();
+        let spoken = crate::runtime::delegation::new_turn_speech();
+        let result = crate::runtime::delegation::with_turn_speech(spoken.clone(), async {
+            crate::runtime::delegation::with_turn_conversation(
+                Some("brand".to_string()),
+                DmTool(context).execute(serde_json::json!({
+                    "to": ["copy", "researcher"],
+                    "message": "both of you: ship it"
+                })),
+            )
+            .await
+        })
+        .await
+        .expect("the tool runs");
+        assert!(!result.is_error, "{result:?}");
+        let appended = events.0.lock().expect("lock");
+        let channels: Vec<&str> = appended
+            .iter()
+            .map(|event| match event {
+                CompanyEvent::AgentReply { chat_id, .. } => chat_id.as_str(),
+                other => panic!("expected an AgentReply, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(channels, vec!["copy", "researcher"]);
+    }
+
+    /// The result sentence does not claim delivery.
+    ///
+    /// Nothing here wakes the recipient — `AgentReply::mentions` is never
+    /// consulted by dispatch, which is the mention-loop fuse — so the row waits
+    /// until their next turn. A live run showed why the wording matters: told
+    /// "Said. Journaled at [67]", the agent reported to the person who asked
+    /// that the message had been "passed to them directly (delivered)". An
+    /// agent repeats what its tools tell it.
+    #[tokio::test]
+    async fn a_dm_says_it_was_left_rather_than_delivered() {
+        let (context, events, _dir) = context();
+        let spoken = crate::runtime::delegation::new_turn_speech();
+        let result = crate::runtime::delegation::with_turn_speech(spoken.clone(), async {
+            crate::runtime::delegation::with_turn_conversation(
+                Some("brand".to_string()),
+                DmTool(context).execute(serde_json::json!({
+                    "to": ["copy"],
+                    "message": "ship it"
+                })),
+            )
+            .await
+        })
+        .await
+        .expect("the tool runs");
+        let said = format!("{result:?}");
+        assert!(said.contains("Left for @copy"), "{said}");
+        assert!(said.contains("next turn"), "{said}");
+        assert!(
+            !said.to_lowercase().contains("delivered now\" "),
+            "the sentence must not read as delivery: {said}"
+        );
+        drop(events);
     }
 
     /// Self-addressing is refused in three places in the crate and is refused
