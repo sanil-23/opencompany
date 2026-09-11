@@ -4931,6 +4931,15 @@ struct AgentSessionMessageDto {
     session_channel: String,
     /// The desk id behind that label, so a row can link to its conversation.
     session_channel_id: String,
+    /// **What the agent was told to call this row's author.**
+    ///
+    /// Not the same string as the flattened `author`, and deliberately so: that
+    /// one is the display name a *person* reads and falls back to `"someone"`
+    /// where this falls back to the signed-in user's id. The console's raw view
+    /// reproduces the cue line the model was handed, and a cue rendered from
+    /// the display name would put a name in front of the operator that the
+    /// agent never saw. See [`cue_author`](crate::server::chat_history::cue_author).
+    cue_author: String,
 }
 
 /// `GET {scope}/agents/{agent_id}/session` — everything one agent said and heard.
@@ -4986,8 +4995,13 @@ async fn agent_session_response(
         )
         .await?;
         for message in messages {
+            // Read before the conversion: `ChatHistoryMessageDto::from` takes
+            // the view by value, and this field is not one of the ones it
+            // carries — it is the agent's byline, not the reader's.
+            let cue_author = message.cue_author.clone();
             rows.push(AgentSessionMessageDto {
                 message: ChatHistoryMessageDto::from(message),
+                cue_author,
                 session_channel: channel.label.clone(),
                 session_channel_id: channel.id.clone(),
             });
