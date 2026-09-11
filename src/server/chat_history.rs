@@ -1113,6 +1113,9 @@ impl MessageView {
                 // ever reads this — named rather than left to drift.
                 cue_author: crate::ports::SYSTEM_AUTHOR.to_string(),
                 author: crate::ports::SYSTEM_AUTHOR.to_string(),
+                // `body_of` never delivers this fallback marker to an agent
+                // either — same reasoning as the arm above.
+                cue_text: format!("{other:?}"),
                 text: format!("{other:?}"),
                 at_millis,
                 mine: false,
