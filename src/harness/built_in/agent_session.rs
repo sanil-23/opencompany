@@ -246,16 +246,34 @@ pub async fn prepare_delta(
             if state.already_seen(stored.seq) {
                 continue;
             }
+            // Codex P1: a row above the watermark that this agent will never
+            // be delivered — wrong channel, `Audience::admits` refuses it, not
+            // a conversational event, or blank — still has to be marked
+            // consumed. `accept` only compacts the watermark through
+            // CONSECUTIVE sequences, so leaving a structurally-undeliverable
+            // seq out of `next_state` pins the watermark at the row below it
+            // forever: every later turn rescans from there, and once the scan
+            // exceeds `SESSION_SCAN_LIMIT` it reinitializes instead of
+            // completing, permanently falling back to a chat-only reseed.
+            // These are safe to accept unconditionally, unlike the reseed's
+            // watermark (see `AgentSessionState::reseeded`): that case skipped
+            // a row that WOULD eventually be delivered on another channel;
+            // this one is filtered out for this agent by construction and can
+            // never become deliverable later.
             let Some(channel) = channel_for(&channels, &stored.event) else {
+                skip_seen.push(stored.seq);
                 continue;
             };
             if !readable_by(agent_id, &stored.event) {
+                skip_seen.push(stored.seq);
                 continue;
             }
             let Some((author, mine, text)) = body_of(agent_id, &stored.event) else {
+                skip_seen.push(stored.seq);
                 continue;
             };
             if text.trim().is_empty() {
+                skip_seen.push(stored.seq);
                 continue;
             }
             newest_first.push(Envelope {
@@ -286,6 +304,9 @@ pub async fn prepare_delta(
     let mut next_state = state.clone();
     for envelope in &newest_first {
         next_state.accept(envelope.seq);
+    }
+    for seq in skip_seen {
+        next_state.accept(seq);
     }
     // The turn's own message is accepted too: the turn appends it, so the next
     // delta must not hand it back.
