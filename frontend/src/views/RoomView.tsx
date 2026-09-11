@@ -2862,6 +2862,9 @@ export function RoomView({
               membersOpen={membersOpen}
               onToggleMembers={() => setMembersOpen((o) => !o)}
               onOpenRail={roomRail.reveal}
+              rawAvailable={!!rawAgentId}
+              raw={showRaw}
+              onToggleRaw={() => setRawRequested(!showRaw)}
             />
 
             <div className="flex min-h-0 flex-1">
@@ -2878,6 +2881,14 @@ export function RoomView({
                     </span>
                   </p>
                 )}
+                {showRaw && rawAgentId ? (
+                  <RawTranscript
+                    load={rawLoad}
+                    rows={rawRows}
+                    agentId={rawAgentId}
+                    agentName={channelTitle(channel)}
+                  />
+                ) : (
                 <MessageTimeline
                   channel={channel}
                   items={items}
@@ -2934,6 +2945,7 @@ export function RoomView({
                   redeemingBudgetPauseAgent={redeemingBudgetPauseAgent}
                   latestBudgetPauseMessageIdByAgent={budgetPauseMessageIdByAgent}
                 />
+                )}
                 {budgetProximity && (
                   <p
                     role="status"
