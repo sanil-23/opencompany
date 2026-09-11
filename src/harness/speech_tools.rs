@@ -447,11 +447,15 @@ fn dm_journal_key(record: &crate::ports::types::CompanyRecord, peer: &str) -> St
     // readable-by-the-whole-desk as a collision on the id — checking only
     // `chat.id`/`desk.id` here missed the `{ id = "triage", name = "support"
     // }` shape entirely, where a DM to agent `support` still collides.
-    let collides_with_desk = record.manifest.group_chats.iter().any(|chat| {
-        chat.id == peer || (!chat.name.trim().is_empty() && chat.name == peer)
-    }) || record.overlay_desks.iter().any(|desk| {
-        desk.id == peer || (!desk.name.trim().is_empty() && desk.name == peer)
-    });
+    let collides_with_desk = record
+        .manifest
+        .group_chats
+        .iter()
+        .any(|chat| chat.id == peer || (!chat.name.trim().is_empty() && chat.name == peer))
+        || record
+            .overlay_desks
+            .iter()
+            .any(|desk| desk.id == peer || (!desk.name.trim().is_empty() && desk.name == peer));
     if collides_with_desk {
         format!("{}{peer}", crate::runtime::assignee::DM_PREFIX)
     } else {
