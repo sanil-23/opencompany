@@ -104,4 +104,33 @@ describe("the working line names the teammate", () => {
     const text = await render({ srLabel: "Replying…", name: "Amendments", queued: true });
     expect(text).not.toContain("Amendments is working…");
   });
+
+  /**
+   * CodeRabbit: the visible line names the teammate; the assistive text must
+   * too, or a screen-reader user never learns who is answering — only sighted
+   * readers did. Checked on the `sr-only` node specifically, so a future
+   * `textContent` match against the aria-hidden twin cannot paper over a
+   * regression here the way a combined-text assertion could.
+   */
+  it("names the teammate in the accessible label too, not only the visible one", async () => {
+    await render({ srLabel: "Replying…", name: "Amendments" });
+    const srOnly = container.querySelector(".sr-only")?.textContent ?? "";
+    expect(srOnly).toBe("Amendments is working…");
+  });
+
+  /**
+   * The sr-only text is deliberately stable across step transitions (module
+   * doc); it must not start following the name mid-step and read
+   * "Amendments is working…" while the visible line — and the live step
+   * timeline beside it — are naming a specific step instead.
+   */
+  it("keeps the accessible label on the running step, not the name, while one runs", async () => {
+    await render({
+      srLabel: "Replying…",
+      name: "Amendments",
+      steps: [step("running")],
+    });
+    const srOnly = container.querySelector(".sr-only")?.textContent ?? "";
+    expect(srOnly).toBe("Replying…");
+  });
 });
