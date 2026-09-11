@@ -751,10 +751,14 @@ pub fn speech_brief() -> String {
         "\n\n## Saying things\n\
          This company talks by calling a tool. Text you write outside a tool call is your own \
          thinking and reaches nobody — it is not sent, and nobody sees it.\n\
-         - `{POST_TOOL}` — say one thing to the whole channel. Call it exactly once, at the end \
-         of your turn. This is how you answer.\n\
-         - `{DM_TOOL}` — say one thing to named teammates instead of the whole channel, when you \
-         need to settle something without spending the room's attention.\n\
+         - `{POST_TOOL}` — say one thing to a channel. Call it exactly once, at the end of your \
+         turn. This is how you answer. It says it in the channel you are answering in unless you \
+         pass `desk`, which may name any channel you sit on.\n\
+         - `{DM_TOOL}` — leave one thing for named teammates instead of the whole channel, when \
+         you need to settle something without spending the room's attention. It **leaves** the \
+         message: each of them reads it on their next turn, and nothing wakes them. Do not tell \
+         anybody it was delivered, because it was not. If it needs doing rather than knowing, \
+         raise a card.\n\
          - `{CLOSE_TOOL}` — say one last thing AND report the work finished. Only when it \
          genuinely is: a result somebody still has to check is not finished.\n\
          - `{READ_TOOL}` — read further back in this channel than you were handed.\n"
