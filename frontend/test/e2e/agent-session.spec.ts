@@ -178,8 +178,10 @@ test("a DM opens on the teammate's raw turns when the address asks", async ({
   await expect(settled.first()).toBeVisible({ timeout: 30_000 });
 
   // The composer stays. The toggle changes how the conversation is drawn, not
-  // whether you can still talk in it.
-  await expect(page.getByTestId("chat-raw-toggle")).toBeVisible();
+  // whether you can still talk in it. Asserted against the composer itself,
+  // not a second look at the toggle already checked above (coderabbit
+  // review) — this is the actual claim the comment makes.
+  await expect(page.getByPlaceholder(/^Message /)).toBeVisible();
 
   // And it goes back without a reload, dropping the flag from the address.
   await toggle.click();
