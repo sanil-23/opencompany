@@ -365,6 +365,24 @@ fn refusal(rejection: UtteranceRejection) -> ToolResult {
     ToolResult::error(rejection.to_string())
 }
 
+/// The journal `chat_id` a `desk_dm` to `peer` should use.
+///
+/// Bare, unless `peer` collides with a desk id — in which case that desk
+/// would also `chat_history::owns` a row journaled under the bare spelling,
+/// making a supposedly private DM readable by the whole desk. The `dm:`
+/// prefix is `agent_channels`' own second spelling for this teammate's line
+/// (see its doc comment), so reaching for it here does not add a channel the
+/// recipient cannot already hear on.
+fn dm_journal_key(record: &crate::ports::types::CompanyRecord, peer: &str) -> String {
+    let collides_with_desk = record.manifest.group_chats.iter().any(|chat| chat.id == peer)
+        || record.overlay_desks.iter().any(|desk| desk.id == peer);
+    if collides_with_desk {
+        format!("{}{peer}", crate::runtime::assignee::DM_PREFIX)
+    } else {
+        peer.to_string()
+    }
+}
+
 /// `desk_post` — say one thing to the whole channel.
 pub struct PostTool(pub SpeechContext);
 
