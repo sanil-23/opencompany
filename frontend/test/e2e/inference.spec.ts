@@ -435,81 +435,96 @@ test("switching to the managed brain and saving stays on managed, with its Conne
   await openConnections(page);
   await expect(page.locator("#inference-provider")).toBeVisible({ timeout: 30_000 });
 
-  // Start from a *saved* OpenRouter company, so "still stuck with OpenRouter"
-  // is a state this test could actually be stuck in rather than the default it
-  // happens to open on.
-  await pickProvider(page, "OpenRouter");
-  await confirmReplaceIfAsked(page);
-  await page.getByTestId("inference-save").click();
-  await expect(
-    page.getByText(/Inference updated\.|Inference saved — restart the company/),
-  ).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByTestId("inference-current-provider")).toHaveText("OpenRouter");
+  // coderabbit: this test mutates the shared E2E company's inference config,
+  // and the "Reset to default" cleanup at the end used not to run if an
+  // earlier assertion or interaction threw — leaving the generated key and
+  // the managed-provider override in place for whichever spec ran next.
+  // Wrapped in try/finally so the reset always runs, success or failure.
+  try {
+    // Start from a *saved* OpenRouter company, so "still stuck with OpenRouter"
+    // is a state this test could actually be stuck in rather than the default it
+    // happens to open on.
+    await pickProvider(page, "OpenRouter");
+    await confirmReplaceIfAsked(page);
+    await page.getByTestId("inference-save").click();
+    await expect(
+      page.getByText(/Inference updated\.|Inference saved — restart the company/),
+    ).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId("inference-current-provider")).toHaveText("OpenRouter");
 
-  // Now the switch under test.
-  await pickProvider(page, "Managed (TinyHumans)");
-  await confirmReplaceIfAsked(page);
-  await page.getByTestId("inference-save").click();
-  await expect(
-    page.getByText(/Inference updated\.|Inference saved — restart the company/),
-  ).toBeVisible({ timeout: 30_000 });
+    // Now the switch under test.
+    await pickProvider(page, "Managed (TinyHumans)");
+    await confirmReplaceIfAsked(page);
+    await page.getByTestId("inference-save").click();
+    await expect(
+      page.getByText(/Inference updated\.|Inference saved — restart the company/),
+    ).toBeVisible({ timeout: 30_000 });
 
-  // The host reports the selection back. Asserted on `provider` alone, and
-  // deliberately not on `slug` or `baseUrl`: a keyless managed save is sent as a
-  // revert (a managed brain with no key of its own is the platform default, not
-  // an override), so *which* resolution arm answers depends on whether this host
-  // was given a platform endpoint — and this spec is about the choice being
-  // visible on every one of them. The resolution itself is pinned by
-  // `company::inference`'s own tests, where each arm can be set up exactly.
-  const saved = await page.request.get("/api/v1/company/inference");
-  expect(saved.ok()).toBeTruthy();
-  expect((await saved.json()).provider).toBe("managed");
+    // The host reports the selection back. Asserted on `provider` alone, and
+    // deliberately not on `slug` or `baseUrl`: a keyless managed save is sent as a
+    // revert (a managed brain with no key of its own is the platform default, not
+    // an override), so *which* resolution arm answers depends on whether this host
+    // was given a platform endpoint — and this spec is about the choice being
+    // visible on every one of them. The resolution itself is pinned by
+    // `company::inference`'s own tests, where each arm can be set up exactly.
+    const saved = await page.request.get("/api/v1/company/inference");
+    expect(saved.ok()).toBeTruthy();
+    expect((await saved.json()).provider).toBe("managed");
 
-  // Both halves of the card agree, and neither has snapped back.
-  await expect(page.getByTestId("inference-current-provider")).toHaveText("Managed (TinyHumans)");
-  await expect(page.locator("#inference-provider")).toContainText("Managed (TinyHumans)");
+    // Both halves of the card agree, and neither has snapped back.
+    await expect(page.getByTestId("inference-current-provider")).toHaveText(
+      "Managed (TinyHumans)",
+    );
+    await expect(page.locator("#inference-provider")).toContainText("Managed (TinyHumans)");
 
-  // The managed-only Connect button is on screen — the second reported symptom,
-  // and the reason it had gone: it never rendered because `provider` was never
-  // `"managed"` for longer than the round trip.
-  await expect(page.getByTestId("connect-tinyhumans")).toBeVisible();
+    // The managed-only Connect button is on screen — the second reported symptom,
+    // and the reason it had gone: it never rendered because `provider` was never
+    // `"managed"` for longer than the round trip.
+    await expect(page.getByTestId("connect-tinyhumans")).toBeVisible();
 
-  // A reload proves it is stored, not just held in the component's state.
-  await page.reload();
-  await expect(page.getByTestId("inference-current-provider")).toHaveText("Managed (TinyHumans)", {
-    timeout: 30_000,
-  });
-  await expect(page.locator("#inference-provider")).toContainText("Managed (TinyHumans)");
-  await expect(page.getByTestId("connect-tinyhumans")).toBeVisible();
+    // A reload proves it is stored, not just held in the component's state.
+    await page.reload();
+    await expect(
+      page.getByTestId("inference-current-provider"),
+    ).toHaveText("Managed (TinyHumans)", {
+      timeout: 30_000,
+    });
+    await expect(page.locator("#inference-provider")).toContainText("Managed (TinyHumans)");
+    await expect(page.getByTestId("connect-tinyhumans")).toBeVisible();
 
-  // A managed save carrying a key takes the other branch — a real `PUT`
-  // override rather than a revert — and that is the branch whose stored blob
-  // used to read back as its `openrouter` alias. Both have to hold, so both are
-  // exercised: the two failed for different reasons and one passing has never
-  // meant the other does.
-  await page.locator("#inference-key").fill(`pw-e2e-${Date.now()}`);
-  await page.getByTestId("inference-save").click();
-  await expect(
-    page.getByText(/Inference updated\.|Inference saved — restart the company/),
-  ).toBeVisible({ timeout: 30_000 });
+    // A managed save carrying a key takes the other branch — a real `PUT`
+    // override rather than a revert — and that is the branch whose stored blob
+    // used to read back as its `openrouter` alias. Both have to hold, so both are
+    // exercised: the two failed for different reasons and one passing has never
+    // meant the other does.
+    await page.locator("#inference-key").fill(`pw-e2e-${Date.now()}`);
+    await page.getByTestId("inference-save").click();
+    await expect(
+      page.getByText(/Inference updated\.|Inference saved — restart the company/),
+    ).toBeVisible({ timeout: 30_000 });
 
-  const keyed = await page.request.get("/api/v1/company/inference");
-  expect(keyed.ok()).toBeTruthy();
-  const keyedBody = await keyed.json();
-  expect(keyedBody.keyConfigured).toBe(true);
-  expect(keyedBody.provider).toBe("managed");
-  // The key is what takes a managed company off the subscription and onto its
-  // own OpenRouter account — the fact the console used to reconstruct from
-  // `provider` and can no longer, now that `provider` is the selection.
-  expect(keyedBody.proxied).toBe(false);
-  expect(keyedBody.slug).toBe("openrouter");
-  await expect(page.getByTestId("inference-current-provider")).toHaveText("Managed (TinyHumans)");
-
-  // Leave the shared E2E company on its committed default for later specs —
-  // and with no key of its own, which the reset also clears (issue #993).
-  await page.getByRole("button", { name: "Reset to default" }).click();
-  await expect(
-    page.getByText("Reverted to the committed manifest (or managed) configuration."),
-  ).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByTestId("inference-remove-key")).toHaveCount(0, { timeout: 30_000 });
+    const keyed = await page.request.get("/api/v1/company/inference");
+    expect(keyed.ok()).toBeTruthy();
+    const keyedBody = await keyed.json();
+    expect(keyedBody.keyConfigured).toBe(true);
+    expect(keyedBody.provider).toBe("managed");
+    // The key is what takes a managed company off the subscription and onto its
+    // own OpenRouter account — the fact the console used to reconstruct from
+    // `provider` and can no longer, now that `provider` is the selection.
+    expect(keyedBody.proxied).toBe(false);
+    expect(keyedBody.slug).toBe("openrouter");
+    await expect(page.getByTestId("inference-current-provider")).toHaveText(
+      "Managed (TinyHumans)",
+    );
+  } finally {
+    // Leave the shared E2E company on its committed default for later specs —
+    // and with no key of its own, which the reset also clears (issue #993).
+    // Runs on success or failure, so a broken assertion above never leaves a
+    // generated key or a managed override for whichever spec runs next.
+    await page.getByRole("button", { name: "Reset to default" }).click();
+    await expect(
+      page.getByText("Reverted to the committed manifest (or managed) configuration."),
+    ).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId("inference-remove-key")).toHaveCount(0, { timeout: 30_000 });
+  }
 });
