@@ -940,6 +940,135 @@ members = ["engineer"]
         (context, events, dir)
     }
 
+    /// A roster with two operator-added teammates: `nova`, whose display name
+    /// `Nova` is unique, and two sharing the display name `Rivers` — the two
+    /// [`crate::ports::types::TeammateResolution`] arms `desk_dm` must not
+    /// collapse into "found something, ship it".
+    async fn context_with_overlay_teammates() -> (SpeechContext, Arc<RecordingLog>, tempfile::TempDir)
+    {
+        let (context, events, dir) = context();
+        let manifest: crate::company::CompanyManifest = toml::from_str(
+            r#"
+[company]
+name = "Acme"
+
+[policy]
+mode = "full"
+
+[[agent]]
+id = "designer"
+role = "Designer"
+description = "Draws things."
+"#,
+        )
+        .expect("valid manifest");
+        let mut record = crate::ports::types::CompanyRecord {
+            id: context.company.clone(),
+            manifest,
+            ledger: Vec::new(),
+            lifecycle: "running".to_string(),
+            setup: None,
+            name_confirmed: false,
+            activation_completed_at: None,
+            created_at_millis: None,
+            overlay_agents: Vec::new(),
+            overlay_desk_members: Vec::new(),
+            overlay_desk_order: Vec::new(),
+            overlay_desks: Vec::new(),
+            overlay_desk_hive: Vec::new(),
+            overlay_retired_agents: Vec::new(),
+            overlay_agent_edits: Vec::new(),
+            overlay_tool_grants: None,
+            overlay_workflows: Vec::new(),
+            overlay_budgets: Vec::new(),
+            overlay_policy: None,
+            overlay_desk_tools: Default::default(),
+            disabled_workflows: Vec::new(),
+            template_provenance: None,
+        };
+        for (id, name) in [
+            ("nova", "Nova"),
+            ("rivers-1", "Rivers"),
+            ("rivers-2", "Rivers"),
+        ] {
+            record.overlay_agents.push(crate::ports::types::OverlayAgent {
+                id: id.to_string(),
+                name: name.to_string(),
+                role: "Growth".to_string(),
+                description: None,
+                tools: None,
+                model: None,
+                harness: None,
+            });
+        }
+        context.store.save(&record).await.expect("the record saves");
+        (context, events, dir)
+    }
+
+    /// `desk_dm` must resolve a display name to the roster's canonical id
+    /// before journaling: `dm` names the recipient's session with it
+    /// (`openhuman_session_key`), and `agent_channels` registers that session
+    /// under the canonical id, never the typed name. Left unresolved, the row
+    /// would be journaled under a session nothing reads (Codex P2).
+    #[tokio::test]
+    async fn a_dm_to_a_display_name_resolves_to_the_canonical_id() {
+        let (context, events, _dir) = context_with_overlay_teammates().await;
+        let spoken = crate::runtime::delegation::new_turn_speech();
+        let result = crate::runtime::delegation::with_turn_speech(spoken.clone(), async {
+            crate::runtime::delegation::with_turn_conversation(
+                Some("designer".to_string()),
+                DmTool(context).execute(serde_json::json!({
+                    "to": ["Nova"],
+                    "message": "ship it"
+                })),
+            )
+            .await
+        })
+        .await
+        .expect("the tool runs");
+        assert!(!result.is_error, "{result:?}");
+        let appended = events.0.lock().expect("lock");
+        assert_eq!(appended.len(), 1, "{appended:?}");
+        let CompanyEvent::AgentReply { chat_id, .. } = &appended[0] else {
+            panic!("expected an AgentReply, got {:?}", appended[0]);
+        };
+        assert_eq!(
+            chat_id, "nova",
+            "the row must be journaled under the canonical id, not the typed display name"
+        );
+    }
+
+    /// A display name two teammates share must be refused, not silently
+    /// resolved to whichever one the roster happens to list first — that would
+    /// journal a row under a session the operator never meant to address.
+    #[tokio::test]
+    async fn a_dm_to_an_ambiguous_display_name_is_refused() {
+        let (context, events, _dir) = context_with_overlay_teammates().await;
+        let spoken = crate::runtime::delegation::new_turn_speech();
+        let result = crate::runtime::delegation::with_turn_speech(spoken, async {
+            crate::runtime::delegation::with_turn_conversation(
+                Some("designer".to_string()),
+                DmTool(context).execute(serde_json::json!({
+                    "to": ["Rivers"],
+                    "message": "ship it"
+                })),
+            )
+            .await
+        })
+        .await
+        .expect("the tool runs");
+        assert!(result.is_error, "{result:?}");
+        let said = format!("{result:?}");
+        assert!(
+            said.contains("more than one") || said.contains("Rivers"),
+            "the refusal should name the collision: {said}"
+        );
+        assert!(
+            events.0.lock().expect("lock").is_empty(),
+            "an ambiguous name must journal nothing"
+        );
+    }
+
     /// `desk_post` can name a channel this agent sits on, and the line lands
     /// there rather than in the conversation the turn is in.
     ///
