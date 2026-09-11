@@ -654,6 +654,19 @@ pub struct CompanyAgent {
     /// `None` for an uncapped teammate — and for every overlay teammate, which
     /// carries no per-agent cap in v1.
     pub budget_usd_daily: Option<f64>,
+    /// The name that embedded session answers to on openhuman's event bus —
+    /// `{company}:{agent_id}`, minted by
+    /// [`openhuman_session_key`](crate::harness::session_key::openhuman_session_key)
+    /// and stamped onto the [`Agent`] at build time.
+    ///
+    /// Held here as well as on the session because openhuman keeps
+    /// `event_session_id` `pub(super)`: a session cannot be asked its own name
+    /// from outside the crate. The two consumers that need it — the speech
+    /// tools, which name the destination session when one teammate leaves a DM
+    /// in another's, and anything reporting a turn — would otherwise each
+    /// re-derive it, and a DM is only reportable as a hop between sessions if
+    /// both ends spell the session the same way.
+    pub session_key: String,
     /// The embedded openhuman session. A [`Mutex`] because a `turn` takes
     /// `&mut self` and one agent must serialise its own turns.
     agent: Mutex<Agent>,
@@ -4205,6 +4218,10 @@ impl HarnessPool {
         let agent = CompanyAgent {
             agent_id: confine::CONFINED_AGENT_ID.to_string(),
             role: "Workflow copilot".to_string(),
+            session_key: crate::harness::session_key::openhuman_session_key(
+                company,
+                confine::CONFINED_AGENT_ID,
+            ),
             // A confined turn carries no manifest teammate, so there is no
             // per-agent daily cap to read; the company-wide ceiling above is the
             // one that applies to it.
@@ -5632,6 +5649,10 @@ pub(crate) fn build_roster(
         roster.push(Arc::new(CompanyAgent {
             agent_id: manifest_agent.id.clone(),
             role: manifest_agent.role.clone(),
+            session_key: crate::harness::session_key::openhuman_session_key(
+                &company.id,
+                &manifest_agent.id,
+            ),
             budget_usd_daily: effective_budget,
             step_labels: steps::StepLabels::from_tools(agent.tools()),
             agent: Mutex::new(agent),
@@ -5721,6 +5742,10 @@ pub(crate) fn build_roster(
         roster.push(Arc::new(CompanyAgent {
             agent_id: manifest_agent.id.clone(),
             role: manifest_agent.role.clone(),
+            session_key: crate::harness::session_key::openhuman_session_key(
+                &company.id,
+                &manifest_agent.id,
+            ),
             budget_usd_daily: effective_budget,
             step_labels: steps::StepLabels::from_tools(agent.tools()),
             agent: Mutex::new(agent),
