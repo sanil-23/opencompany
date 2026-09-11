@@ -2063,6 +2063,18 @@ impl CompanyAgent {
         // the operator. `overrides` is `Copy`, so reading it here — after
         // being handed to `agent.set_next_turn_overrides` well above — is the
         // same suppression this turn actually ran with, not a stale copy.
+        //
+        // The deferred session-delta commit (Codex P1, above): only `Ok`
+        // means the model actually ran with the cued rows in its context, so
+        // only `Ok` may mark them delivered. An `Err` leaves
+        // `pending_session_commit` to drop here unwritten — `self.session`
+        // stays exactly where it was before this turn, and the next attempt's
+        // delta walk hands the same rows over again.
+        if reply.is_ok()
+            && let Some(next_state) = pending_session_commit.take()
+        {
+            *self.session.lock().await = next_state;
+        }
         let outcome = reply.map(|reply| TurnOutcome {
             reply: if overrides.suppress_tools {
                 chat_only_guard::guard_suppressed_reply(reply)
