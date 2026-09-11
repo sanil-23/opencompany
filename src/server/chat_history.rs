@@ -623,6 +623,18 @@ pub struct MessageView {
     pub cue_author: String,
     /// The message text.
     pub text: String,
+    /// **What the agent was actually handed for this row** — the text before
+    /// [`readable_moves`] rewrote it into operator-facing prose.
+    ///
+    /// Same reasoning as [`Self::cue_author`], applied to the other half of
+    /// the cue line: `render_cues` in `agent_session.rs` prepends
+    /// `[channel · author] text` using the **pre-rewrite** body (`body_of`
+    /// reads the stored event directly, never a projected `MessageView`), so
+    /// a surface that claims to show what the model saw — the raw-turns view
+    /// — must not feed it [`Self::text`], which has already had `!support
+    /// #topic ^3` turned into prose. Equal to [`Self::text`] on every row
+    /// `readable_moves` does not touch.
+    pub cue_text: String,
     /// When it was journaled, epoch millis.
     pub at_millis: f64,
     /// Whether it is the operator's own message.
