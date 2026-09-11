@@ -3420,3 +3420,93 @@ function EmptyPane({
     </div>
   );
 }
+
+/** How many of a teammate's turns one read of its session brings back. */
+const RAW_TURN_PAGE = 200;
+
+type RawLoad = "loading" | "ready" | "unsupported" | "error";
+
+/**
+ * Whether a session row belongs to the DM with `agentId`.
+ *
+ * Both spellings, because the host lists both: `chat_history::agent_channels`
+ * registers a teammate's DM under its **bare** id (what `dmThreadId` posts to,
+ * after issue #364 re-keyed DMs) *and* under `dm:<id>` (the console's channel
+ * key and a documented route key). Matching one would silently drop every line
+ * keyed the other way — including, depending on which wrote it, the whole of
+ * the operator's own side of the conversation.
+ */
+function inDmWith(row: AgentSessionMessageDto, agentId: string): boolean {
+  return (
+    row.sessionChannelId === agentId || row.sessionChannelId === `dm:${agentId}`
+  );
+}
+
+/**
+ * The transcript, as the turns the teammate actually took.
+ *
+ * Scoped to **this conversation**, not to the teammate's whole session. A
+ * toggle changes how the thing in front of you is drawn; it must not quietly
+ * change what the thing is, and flipping a DM into a stream that also carries
+ * `#general` would do exactly that. The cross-channel view has its own address
+ * — the Session tab on the teammate's page — and says so below.
+ */
+function RawTranscript({
+  load,
+  rows,
+  agentId,
+  agentName,
+}: {
+  load: RawLoad;
+  rows: AgentSessionMessageDto[];
+  agentId: string;
+  agentName: string;
+}) {
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
+      {load === "loading" && (
+        <p className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="size-4 animate-spin" aria-hidden />
+          Reading {agentName}&apos;s turns…
+        </p>
+      )}
+      {load === "unsupported" && (
+        <p className="text-sm text-muted-foreground">
+          This host does not keep a per-agent session yet, so there are no turns
+          to show. The conversation itself is unaffected — switch back to Chat.
+        </p>
+      )}
+      {load === "error" && (
+        <p className="text-sm text-muted-foreground">
+          {agentName}&apos;s turns could not be read. They are still there — this
+          is a failed request, not an empty history.
+        </p>
+      )}
+      {load === "ready" && rows.length === 0 && (
+        <p className="flex items-center gap-2 text-sm text-muted-foreground">
+          <MessageSquare className="size-4 shrink-0" aria-hidden />
+          Nothing has been said in this conversation yet.
+        </p>
+      )}
+      {load === "ready" && rows.length > 0 && (
+        <>
+          {/* No channel badges: every row here is this one DM, and a badge
+              repeating the same word down the page is noise. The whole-session
+              view turns them on, because there they are the only thing telling
+              two desks apart. */}
+          <RawTurns rows={rows} agentId={agentId} />
+          <p className="mt-4 text-xs text-muted-foreground">
+            These are {agentName}&apos;s turns in this conversation.{" "}
+            <a
+              className="underline underline-offset-4"
+              href={`#/company/agent/${encodeURIComponent(agentId)}?tab=session&raw`}
+            >
+              Everything it has said and heard
+            </a>{" "}
+            spans every channel it can read.
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
