@@ -130,8 +130,9 @@ describe("the raw-turns toggle", () => {
    * Cards/List, each carrying `aria-pressed`.
    */
   it("offers both views as named, pressable controls", () => {
-    expect(session).toContain('data-testid="agent-session-view-chat"');
-    expect(session).toContain('data-testid="agent-session-view-raw"');
+    expect(session).toContain('label: "Chat"');
+    expect(session).toContain('label: "Raw turns"');
+    expect(session).toContain("data-testid={`agent-session-view-${id}`}");
     expect(session).toContain("aria-pressed={raw === value}");
   });
 
