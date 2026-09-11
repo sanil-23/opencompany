@@ -1349,6 +1349,15 @@ impl CompanyAgent {
         // Runs inside the `agent` critical section, which already serialises
         // this agent's turns.
         let mut session_cues: Option<String> = None;
+        // Codex P1: a session delta's `next_state` must not land in
+        // `self.session` until the turn it was cued into actually succeeds.
+        // The rows it marks delivered are handed to the model as this turn's
+        // cue text — but if `agent.turn` never runs, or returns `Err`, the
+        // model never actually read them, and committing anyway would have
+        // the next turn's delta walk skip straight past rows nothing was ever
+        // shown. Held here and only written back once `reply` is `Ok`, well
+        // below.
+        let mut pending_session_commit: Option<agent_session::AgentSessionState> = None;
         if let Some(incoming) = turn_chat_id.as_deref() {
             let incoming_root = thread_root;
             let mut bound = self.bound_chat.lock().await;
