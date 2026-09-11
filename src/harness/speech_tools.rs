@@ -800,8 +800,12 @@ impl Tool for ReadTool {
         }
         // A read that was cut says so — `query_company` is the cautionary case
         // this repo already names: a partial list that reads as complete
-        // becomes "we have no record of that".
-        let truncated = lines.len() >= limit;
+        // becomes "we have no record of that". tinysweeper: `lines.len() <
+        // limit` alone missed the OTHER way a read is cut short — the scan
+        // budget running out first. A matching message can exist just past
+        // `SEARCH_BUDGET`; without this, that reply reads as "nothing more to
+        // see" when the honest answer is "did not look far enough".
+        let truncated = lines.len() >= limit || scanned >= SEARCH_BUDGET;
         let mut body = lines.join("\n");
         if truncated {
             body.push_str(&format!(
