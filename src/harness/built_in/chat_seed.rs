@@ -216,7 +216,9 @@ impl ChatSeedRequest {
                     },
                     SessionAuthor::Operator => SeedEntry {
                         role: "user",
-                        speaker: Speaker::Operator(crate::server::chat_history::CUE_OPERATOR_LABEL.to_string()),
+                        speaker: Speaker::Operator(
+                            crate::server::chat_history::CUE_OPERATOR_LABEL.to_string(),
+                        ),
                         text: message.content,
                         parent: None,
                     },
