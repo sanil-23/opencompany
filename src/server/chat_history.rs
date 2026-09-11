@@ -549,7 +549,9 @@ pub enum Viewer {
 ///
 /// Safe to sit in the same namespace as roster ids and user ids: a manifest
 /// refuses the reserved ids (`company/manifest.rs`), and a minted user id is
-/// not this word.
+/// not this word. Nothing a message *body* can say matters either, because
+/// bodies are nested under their own speaker's label by
+/// `chat_seed::prefix_every_line`.
 pub const CUE_OPERATOR_LABEL: &str = "operator";
 
 /// The signed-in person behind a message, when there is one.
