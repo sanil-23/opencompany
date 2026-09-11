@@ -1584,6 +1584,120 @@ members = ["designer"]
         assert_eq!(channels, vec!["copy", "researcher"]);
     }
 
+    /// coderabbit: a journal failure for one recipient must not read as a
+    /// failure for all of them — the recipients ahead of the failing one
+    /// already have a durable row, and reporting a flat error invites a retry
+    /// that journals a second one for each. `researcher`'s append is made to
+    /// fail; `copy`'s must still land, and the result must say so by name
+    /// rather than simply being `is_error`.
+    #[tokio::test]
+    async fn a_dm_failure_for_one_recipient_does_not_undo_or_hide_an_earlier_success() {
+        let dir = tempfile::Builder::new()
+            .prefix("speech-tools-")
+            .tempdir()
+            .expect("tempdir");
+        let store: Arc<dyn crate::ports::store::CompanyStore> =
+            Arc::new(crate::store::FsCompanyStore::new(dir.path()));
+        let company = CompanyId::new("acme");
+        let events = Arc::new(FlakyLog {
+            events: Mutex::new(Vec::new()),
+            refuses: "researcher",
+        });
+        let context = SpeechContext::new(
+            company.clone(),
+            "designer".to_string(),
+            events.clone() as Arc<dyn EventLog>,
+            store.clone(),
+        );
+        let manifest: crate::company::CompanyManifest = toml::from_str(
+            r#"
+[company]
+name = "Acme"
+
+[policy]
+mode = "full"
+
+[[agent]]
+id = "designer"
+role = "Designer"
+description = "Draws things."
+
+[[agent]]
+id = "copy"
+role = "Copywriter"
+description = "Writes things."
+
+[[agent]]
+id = "researcher"
+role = "Researcher"
+description = "Finds things."
+
+[[group_chat]]
+id = "brand"
+name = "Brand"
+members = ["designer", "copy", "researcher"]
+"#,
+        )
+        .expect("valid manifest");
+        let record = crate::ports::types::CompanyRecord {
+            id: company,
+            manifest,
+            ledger: Vec::new(),
+            lifecycle: "running".to_string(),
+            setup: None,
+            name_confirmed: false,
+            activation_completed_at: None,
+            created_at_millis: None,
+            overlay_agents: Vec::new(),
+            overlay_desk_members: Vec::new(),
+            overlay_desk_order: Vec::new(),
+            overlay_desks: Vec::new(),
+            overlay_desk_hive: Vec::new(),
+            overlay_retired_agents: Vec::new(),
+            overlay_agent_edits: Vec::new(),
+            overlay_tool_grants: None,
+            overlay_workflows: Vec::new(),
+            overlay_budgets: Vec::new(),
+            overlay_policy: None,
+            overlay_desk_tools: Default::default(),
+            disabled_workflows: Vec::new(),
+            template_provenance: None,
+        };
+        store.save(&record).await.expect("the record saves");
+        let spoken = crate::runtime::delegation::new_turn_speech();
+        let result = crate::runtime::delegation::with_turn_speech(spoken.clone(), async {
+            crate::runtime::delegation::with_turn_conversation(
+                Some("brand".to_string()),
+                DmTool(context).execute(serde_json::json!({
+                    "to": ["copy", "researcher"],
+                    "message": "both of you: ship it"
+                })),
+            )
+            .await
+        })
+        .await
+        .expect("the tool runs");
+        let appended = events.events.lock().expect("lock");
+        assert_eq!(
+            appended.len(),
+            1,
+            "copy's row must still be journaled despite researcher's failure: {appended:?}"
+        );
+        let CompanyEvent::AgentReply { chat_id, .. } = &appended[0] else {
+            panic!("expected an AgentReply, got {:?}", appended[0]);
+        };
+        assert_eq!(chat_id, "copy");
+        let text = tool_result_text(&result);
+        assert!(
+            text.contains("copy"),
+            "the reply must name who it did reach: {text}"
+        );
+        assert!(
+            text.contains("researcher"),
+            "the reply must name who it did not reach, so a retry can target just them: {text}"
+        );
+    }
+
     /// The result sentence does not claim delivery.
     ///
     /// Nothing here wakes the recipient — `AgentReply::mentions` is never
