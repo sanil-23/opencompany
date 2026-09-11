@@ -102,3 +102,91 @@ describe("the Session tab", () => {
     expect(session).toContain("if (generation !== generationRef.current) return;");
   });
 });
+
+/**
+ * The raw view is the same stream with the rendering taken off: the turns as
+ * the agent received them, each tool call unfolded.
+ *
+ * These are source-shape assertions for the same reason the ones above are —
+ * the properties that matter here are about *which data* is rendered and *what
+ * the address is*, and neither survives into a snapshot of the output.
+ */
+describe("the raw-turns toggle", () => {
+  /**
+   * An address, not local state, and for a sharper reason than the tab was: the
+   * raw view is the thing you send to somebody. A link that lands on the chat
+   * bubbles and asks the reader to go and find a switch has thrown away the
+   * point of having been sent.
+   */
+  it("is addressable as ?raw", () => {
+    expect(session).toContain('useHashFlag("raw")');
+    expect(session).toContain('from "@/hooks/use-hash-flag"');
+  });
+
+  /**
+   * Both states are named. A `Switch` labelled "Raw" names one state and leaves
+   * the operator to infer the other, and "not raw" is not a thing with an
+   * obvious name — so it is two buttons, the idiom the workflow index uses for
+   * Cards/List, each carrying `aria-pressed`.
+   */
+  it("offers both views as named, pressable controls", () => {
+    expect(session).toContain('data-testid="agent-session-view-chat"');
+    expect(session).toContain('data-testid="agent-session-view-raw"');
+    expect(session).toContain("aria-pressed={raw === value}");
+  });
+
+  /**
+   * The raw view renders the **host's row**, not the mapped `ChatMessage`.
+   *
+   * `fromHistory` resolves `from` against the viewer, prefixes ids, and lifts
+   * referrals and asides onto the bubble — every one of which is a rendering
+   * decision somebody asking for the raw turns is asking to see past. Rendering
+   * it from the mapped shape would make this a second opinion about the
+   * transcript rather than the transcript.
+   */
+  it("renders the host's own row rather than the mapped message", () => {
+    expect(session).toContain("row: AgentSessionMessageDto;");
+    expect(session).toContain("<RawTurn key={line.row.id}");
+    expect(session).toContain("{said ? row.text : cueLine(channel, row.author, row.text)}");
+  });
+
+  /**
+   * A line somebody else said does not reach the agent as a bubble — it reaches
+   * it as `[channel · author] text`, prepended to the turn by `render_cues` in
+   * `src/harness/built_in/agent_session.rs`. Reproducing that literal shape is
+   * the whole difference between this view and the chat one in a smaller font.
+   */
+  it("reproduces the host's cue shape for a line the agent was given", () => {
+    expect(session).toContain("return `[${channel || \"?\"} · ${author}] ${text.trim()}`;");
+  });
+
+  /**
+   * Which turns the agent *produced* comes from the channel the host journaled
+   * the reply under (the agent's id), never from the author label — a label is
+   * a display string and two teammates can share one.
+   */
+  it("tells its own turns apart by channel, not by author label", () => {
+    expect(session).toContain("const said = row.channel === agentId;");
+  });
+
+  /**
+   * Tool calls are unfolded, not named. The chat view's `StepTimeline` is a
+   * summary, and a summary is what this view exists to get out from behind, so
+   * the raw one prints each step's arguments and its result.
+   */
+  it("unfolds each step's arguments and result", () => {
+    expect(session).toContain('data-testid="agent-session-raw-step"');
+    expect(session).toContain("{step.detail}");
+    expect(session).toContain("{step.result}");
+    expect(session).toContain("step.truncated");
+  });
+
+  /**
+   * The collapses do not survive into the raw view. A referral rendered as
+   * "asked @copy · 2 msgs" is precisely the summary being opened up.
+   */
+  it("prints referral and aside lines in full rather than collapsed", () => {
+    expect(session).toMatch(/row\.referralConversation\?\.lines\.map/);
+    expect(session).toMatch(/row\.asideConversation\?\.lines\.map/);
+  });
+});
