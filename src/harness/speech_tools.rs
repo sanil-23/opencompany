@@ -1032,22 +1032,6 @@ mod test {
     #[derive(Default)]
     struct HistoryLog(Mutex<Vec<StoredEvent>>);
 
-    impl HistoryLog {
-        fn seed(events: Vec<CompanyEvent>) -> Self {
-            let stored = events
-                .into_iter()
-                .enumerate()
-                .map(|(i, event)| StoredEvent {
-                    seq: EventSeq::new(i as u64 + 1),
-                    company: CompanyId::new("acme"),
-                    event,
-                    at_millis: 0,
-                })
-                .collect();
-            Self(Mutex::new(stored))
-        }
-    }
-
     #[async_trait]
     impl EventLog for HistoryLog {
         async fn append(&self, _id: &CompanyId, event: CompanyEvent) -> crate::Result<EventSeq> {
