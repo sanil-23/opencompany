@@ -921,6 +921,9 @@ impl MessageView {
                 // `body_of`'s `AgentReply` arm names the agent, so this does.
                 cue_author: agent_id.clone(),
                 author: agent_id,
+                // `body_of`'s `AgentReply` arm hands the agent `text.clone()`
+                // untouched — clone before `readable_moves` consumes it below.
+                cue_text: text.clone(),
                 text: readable_moves(text),
                 at_millis,
                 mine: false,
