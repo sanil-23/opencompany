@@ -5922,7 +5922,7 @@ dependencies = [
 
 [[package]]
 name = "tinyconnectors-bus"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -6058,7 +6058,7 @@ dependencies = [
 
 [[package]]
 name = "tinymemory"
-version = "1.15.2"
+version = "1.16.0"
 dependencies = [
  "anyhow",
  "async-trait",
