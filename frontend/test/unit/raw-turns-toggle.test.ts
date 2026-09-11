@@ -18,6 +18,7 @@ const raw = readFileSync("src/views/room/RawTurns.tsx", "utf8");
 const session = readFileSync("src/views/team/AgentSession.tsx", "utf8");
 const header = readFileSync("src/views/room/ChatHeader.tsx", "utf8");
 const room = readFileSync("src/views/RoomView.tsx", "utf8");
+const types = readFileSync("src/api/types.ts", "utf8");
 
 describe("the raw-turns renderer", () => {
   /**
@@ -106,6 +107,53 @@ describe("the raw-turns renderer", () => {
     expect(raw).toContain("showChannel = false");
     expect(session).toContain("showChannel");
     expect(room).toContain("<RawTurns rows={rows} agentId={agentId} />");
+  });
+});
+
+describe("the openhuman session key in the raw view", () => {
+  /**
+   * It comes from the host. `openhuman_session_key` in
+   * `src/harness/session_key.rs` is the one place a session is named — it is
+   * what the builder stamps onto the live session's `event_context` — so the
+   * console reads the string off the DTO. A `${company}:${agentId}` built here
+   * would be a second spelling, and a second spelling is one that can drift
+   * from the one the runtime actually answers to.
+   */
+  it("comes from the DTO and is never rebuilt in TypeScript", () => {
+    expect(types).toContain("openhumanSessionKey?: string;");
+    expect(raw).toContain("rows.find((row) => row.openhumanSessionKey)");
+    // No console-side minting, on any surface that shows the key.
+    for (const source of [raw, session, room]) {
+      expect(source).not.toMatch(/`\$\{company\}:\$\{agent/);
+    }
+  });
+
+  /**
+   * In the header, once. The key names the session the whole stream belongs to,
+   * not any one row, and a badge repeated down the page would imply rows could
+   * belong to different sessions — which is the opposite of what "one agent,
+   * one session" says.
+   */
+  it("is rendered once in the header, as an identity", () => {
+    expect(raw).toContain('data-testid="agent-session-raw-key"');
+    expect(raw).toContain("openhuman session");
+    expect(raw).toContain('className="font-mono text-foreground"');
+    // Inside `RawTurns`, above the turn list — not inside `RawTurn`.
+    expect(raw.indexOf('data-testid="agent-session-raw-key"')).toBeLessThan(
+      raw.indexOf('data-testid="agent-session-raw"'),
+    );
+  });
+
+  /**
+   * Both surfaces get it, because both render the same component — the DM and
+   * the Session tab must not disagree about which session they are showing.
+   */
+  it("reaches both surfaces through the one shared renderer", () => {
+    expect(session).toContain('from "@/views/room/RawTurns"');
+    expect(room).toContain('from "./room/RawTurns"');
+    // Neither surface carries a key renderer of its own.
+    expect(session).not.toContain("agent-session-raw-key");
+    expect(room).not.toContain("agent-session-raw-key");
   });
 });
 
