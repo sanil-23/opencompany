@@ -28,12 +28,12 @@ afterEach(async () => {
   container.remove();
 });
 
-async function render(props: Parameters<typeof WorkingIndicator>[0]) {
+async function await render(props: Parameters<typeof WorkingIndicator>[0]) {
   // tinysweeper: unawaited, a render's own effects (the reduced-motion
   // listener setup) are not guaranteed to have flushed before the assertion
   // below reads `textContent`, which is exactly the flakiness this file's
   // own regression story warns about.
-  await act(() => root.render(createElement(WorkingIndicator, props)));
+  await act(() => root.await render(createElement(WorkingIndicator, props)));
   return container.querySelector("[data-testid='working-indicator']")?.textContent ?? "";
 }
 
@@ -53,14 +53,14 @@ const step = (status: TurnStep["status"]): TurnStep => ({
  * just did not appear. A rendering test is the only thing that catches that.
  */
 describe("the working line names the teammate", () => {
-  it("names whoever the host recorded", () => {
-    expect(render({ srLabel: "Replying…", name: "Amendments" })).toContain(
+  it("names whoever the host recorded", async () => {
+    expect(await render({ srLabel: "Replying…", name: "Amendments" })).toContain(
       "Amendments is working…",
     );
   });
 
-  it("says the generic line when nobody was recorded", () => {
-    expect(render({ srLabel: "Replying…" })).toContain("Working…");
+  it("says the generic line when nobody was recorded", async () => {
+    expect(await render({ srLabel: "Replying…" })).toContain("Working…");
   });
 
   /**
@@ -68,8 +68,8 @@ describe("the working line names the teammate", () => {
    * which is `""`. Pinning the empty string keeps the fallback honest whichever
    * way the value arrives.
    */
-  it("says the generic line for an empty name rather than a naked verb", () => {
-    const text = render({ srLabel: "Replying…", name: "" });
+  it("says the generic line for an empty name rather than a naked verb", async () => {
+    const text = await render({ srLabel: "Replying…", name: "" });
     expect(text).toContain("Working…");
     expect(text).not.toContain(" is working…");
   });
@@ -79,8 +79,8 @@ describe("the working line names the teammate", () => {
    * it wins. The name is what fills the gaps — before the first step, and
    * between one settling and the next starting.
    */
-  it("lets a running step outrank the name", () => {
-    const text = render({
+  it("lets a running step outrank the name", async () => {
+    const text = await render({
       srLabel: "Replying…",
       name: "Amendments",
       steps: [step("running")],
@@ -89,9 +89,9 @@ describe("the working line names the teammate", () => {
     expect(text).not.toContain("Amendments is working…");
   });
 
-  it("falls back to the name once every step has settled", () => {
+  it("falls back to the name once every step has settled", async () => {
     expect(
-      render({ srLabel: "Replying…", name: "Amendments", steps: [step("ok")] }),
+      await render({ srLabel: "Replying…", name: "Amendments", steps: [step("ok")] }),
     ).toContain("Amendments is working…");
   });
 
@@ -100,8 +100,8 @@ describe("the working line names the teammate", () => {
    * lock, so naming a seat that has not started would imply progress that is
    * not happening — the same reason `queued` already outranks a step label.
    */
-  it("keeps the queued wording even when a seat is named", () => {
-    const text = render({ srLabel: "Replying…", name: "Amendments", queued: true });
+  it("keeps the queued wording even when a seat is named", async () => {
+    const text = await render({ srLabel: "Replying…", name: "Amendments", queued: true });
     expect(text).not.toContain("Amendments is working…");
   });
 });
