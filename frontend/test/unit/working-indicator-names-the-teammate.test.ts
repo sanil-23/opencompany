@@ -19,13 +19,21 @@ beforeEach(() => {
   root = createRoot(container);
 });
 
-afterEach(() => {
-  act(() => root.unmount());
+afterEach(async () => {
+  // tinysweeper: `act` returns a Promise in React 18; awaiting it is what
+  // flushes an unmount's own effects before the next test's `beforeEach`
+  // creates a fresh root, matching this repo's other jsdom specs (e.g.
+  // `chat-thread-avatar.test.ts`).
+  await act(() => root.unmount());
   container.remove();
 });
 
-function render(props: Parameters<typeof WorkingIndicator>[0]) {
-  act(() => root.render(createElement(WorkingIndicator, props)));
+async function render(props: Parameters<typeof WorkingIndicator>[0]) {
+  // tinysweeper: unawaited, a render's own effects (the reduced-motion
+  // listener setup) are not guaranteed to have flushed before the assertion
+  // below reads `textContent`, which is exactly the flakiness this file's
+  // own regression story warns about.
+  await act(() => root.render(createElement(WorkingIndicator, props)));
   return container.querySelector("[data-testid='working-indicator']")?.textContent ?? "";
 }
 
