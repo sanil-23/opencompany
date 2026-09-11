@@ -971,6 +971,17 @@ impl<'a> EpisodeDriver<'a> {
         // hive turn sees its whole direct line regardless of which spelling
         // wrote it.
         let direct_line_label = format!("Your direct line (@{agent_id})");
+        // Codex P2: General is the synthetic company-wide channel, not a
+        // declared desk — `agent_channels` grants every agent that channel
+        // (`company/chat_history.rs`'s own-line loop), but `context_desks` is
+        // built from declared desks and so never includes it. Without a
+        // target for it here, a hive member reads its other desks and its DM
+        // but never `#general`, even though it can. Skipped only when this
+        // episode's own desk somehow *is* General — never true in practice
+        // (`desk_episode` refuses to open one there), but defensive against a
+        // caller passing an odd `HiveDesk`.
+        let general = tinyhivemind_core::chat::GENERAL_DESK.to_string();
+        let general_label = format!("#{general} ({general})");
         let targets: Vec<(String, String, String)> = self
             .context_desks
             .iter()
@@ -984,6 +995,11 @@ impl<'a> EpisodeDriver<'a> {
                     format!("#{} ({})", desk.id, desk.name),
                 )
             })
+            .chain(
+                (self.desk.id != general)
+                    .then(|| (general.clone(), general.clone(), general_label))
+                    .into_iter(),
+            )
             .chain(std::iter::once((
                 agent_id.to_string(),
                 agent_id.to_string(),
