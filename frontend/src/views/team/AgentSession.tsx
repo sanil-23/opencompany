@@ -268,7 +268,12 @@ function SessionRow({ line, agentId }: { line: SessionLine; agentId: string }) {
   // the page — which is why the agent's own lines are matched by author rather
   // than by `from`.
   const mine = message.from === "you";
-  const author = mine ? "You" : (message.channel ?? agentId);
+  // CodeRabbit: `fromHistory` sets a system row's `from` to `"system"` and
+  // carries no `channel` for it, so the fallback below (`message.channel ??
+  // agentId`) landed on `agentId` — a structural marker (a dispatch
+  // terminal, say) then read as if the teammate itself had said it.
+  const author =
+    mine ? "You" : message.from === "system" ? "System" : (message.channel ?? agentId);
 
   return (
     <li className="flex gap-3" data-testid="agent-session-row">
