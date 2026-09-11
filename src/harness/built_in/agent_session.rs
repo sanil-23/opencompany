@@ -323,10 +323,41 @@ pub async fn prepare_delta(
 }
 
 /// Which of this agent's channels owns `event`, if any.
-fn channel_for(channels: &[Channel], event: &CompanyEvent) -> Option<String> {
+fn channel_for(
+    channels: &[Channel],
+    event: &CompanyEvent,
+    record: &CompanyRecord,
+) -> Option<String> {
+    // Codex P1: `owns(id, name, event)` matches EITHER spelling, which is
+    // right for `desk_read`/`chat_history` where `desk_id`+`desk_name` name
+    // the SAME desk — but here `channels` is the whole list of desks this
+    // agent sits on, checked one at a time, so a channel `{id: "ops", name:
+    // "sales"}` this agent sits on would also claim an event journaled under
+    // chat_id = "sales" that belongs to an ACTUAL desk named `sales` this
+    // agent does not sit on. Exact ids are resolved first and alone across
+    // every one of this agent's channels; a name match is only trusted once
+    // it is confirmed the event's key is not some OTHER real desk's id.
+    if let Some(channel) = channels
+        .iter()
+        .find(|channel| chat_history::owns(&channel.id, &channel.id, event))
+    {
+        return Some(channel.label.clone());
+    }
+    let collides_with_a_real_desk_id = record
+        .manifest
+        .group_chats
+        .iter()
+        .any(|chat| chat_history::owns(&chat.id, &chat.id, event))
+        || record
+            .overlay_desks
+            .iter()
+            .any(|desk| chat_history::owns(&desk.id, &desk.id, event));
+    if collides_with_a_real_desk_id {
+        return None;
+    }
     channels
         .iter()
-        .find(|channel| chat_history::owns(&channel.id, &channel.name, event))
+        .find(|channel| chat_history::owns(&channel.name, &channel.name, event))
         .map(|channel| channel.label.clone())
 }
 
