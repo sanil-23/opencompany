@@ -944,8 +944,8 @@ members = ["engineer"]
     /// `Nova` is unique, and two sharing the display name `Rivers` — the two
     /// [`crate::ports::types::TeammateResolution`] arms `desk_dm` must not
     /// collapse into "found something, ship it".
-    async fn context_with_overlay_teammates() -> (SpeechContext, Arc<RecordingLog>, tempfile::TempDir)
-    {
+    async fn context_with_overlay_teammates()
+    -> (SpeechContext, Arc<RecordingLog>, tempfile::TempDir) {
         let (context, events, dir) = context();
         let manifest: crate::company::CompanyManifest = toml::from_str(
             r#"
@@ -991,15 +991,17 @@ description = "Draws things."
             ("rivers-1", "Rivers"),
             ("rivers-2", "Rivers"),
         ] {
-            record.overlay_agents.push(crate::ports::types::OverlayAgent {
-                id: id.to_string(),
-                name: name.to_string(),
-                role: "Growth".to_string(),
-                description: None,
-                tools: None,
-                model: None,
-                harness: None,
-            });
+            record
+                .overlay_agents
+                .push(crate::ports::types::OverlayAgent {
+                    id: id.to_string(),
+                    name: name.to_string(),
+                    role: "Growth".to_string(),
+                    description: None,
+                    tools: None,
+                    model: None,
+                    harness: None,
+                });
         }
         context.store.save(&record).await.expect("the record saves");
         (context, events, dir)
