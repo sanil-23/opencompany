@@ -448,6 +448,20 @@ export interface AgentSessionMessageDto extends ChatHistoryMessageDto {
    */
   cueAuthor?: string;
   /**
+   * **The text the model was actually handed for this row** — before the
+   * host's move-marker rewrite turned it into operator-facing prose (e.g.
+   * `!support #topic ^3` becoming a sentence).
+   *
+   * Same reasoning as {@link cueAuthor}, for the other half of the cue line:
+   * the raw view claims to show the string the model received, and
+   * {@link ChatHistoryMessageDto.text} has already been rewritten for a
+   * person to read. Equal to `text` on every row the rewrite did not touch.
+   * Optional for the same reason `cueAuthor` is — a host predating the field
+   * omits it, and the honest fallback is the rendered text with no claim
+   * attached.
+   */
+  cueText?: string;
+  /**
    * **The openhuman session this agent's turns belong to** —
    * `{company}:{agentId}`.
    *
