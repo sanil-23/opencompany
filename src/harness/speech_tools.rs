@@ -986,6 +986,16 @@ mode = "full"
 id = "designer"
 role = "Designer"
 description = "Draws things."
+
+[[agent]]
+id = "copy"
+role = "Copywriter"
+description = "Writes things."
+
+[[agent]]
+id = "researcher"
+role = "Researcher"
+description = "Finds things."
 "#,
         )
         .expect("valid manifest");
