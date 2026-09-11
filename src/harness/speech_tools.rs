@@ -628,7 +628,7 @@ impl Tool for DmTool {
                             .to_string(),
                     ));
                 }
-                Ok(self.0.dm(peers, message).await)
+                Ok(self.0.dm(peers, message, &record).await)
             }
             Ok(_) => Ok(ToolResult::error(
                 "`desk_dm` says one thing to named teammates; it takes no other form.".to_string(),
