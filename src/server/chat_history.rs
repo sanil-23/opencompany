@@ -1016,6 +1016,9 @@ impl MessageView {
                     // where this lands on the user id.
                     cue_author: cue_author(&by),
                     author,
+                    // `body_of`'s `OperatorMessage` arm applies no rewrite
+                    // either, so the cue and the rendered text agree here.
+                    cue_text: text.clone(),
                     text,
                     at_millis,
                     mine,
