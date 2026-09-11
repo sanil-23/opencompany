@@ -30,6 +30,14 @@
 // display name here would put a name in front of an operator that the agent
 // never saw, which is the one thing this view exists not to do.
 //
+// The header carries one thing the rows cannot: the **openhuman session key**,
+// `{company}:{agent_id}`. One OpenCompany teammate is one openhuman session,
+// and this is the view where that stops being an architecture claim and becomes
+// a string you can read. It arrives on the DTO, minted by
+// `openhuman_session_key` in `src/harness/session_key.rs` — the same function
+// that names the live session — and is never re-derived in TypeScript, because
+// a second spelling of a session's name is one that can drift from the runtime's.
+//
 // Nothing collapses. The referral and aside collapses the chat views reuse from
 // `StepTimeline` are summaries, and a summary is the thing this exists to get
 // out from behind, so they render as their own lines, in full.
@@ -56,17 +64,44 @@ export function RawTurns({
    */
   showChannel?: boolean;
 }) {
+  // The session's own name, read off the rows and never rebuilt here.
+  //
+  // Every row of one response carries the same value — the host mints it once
+  // per request with `openhuman_session_key` — so the first row that has it
+  // answers for the page. `find` rather than `rows[0]` only because a host that
+  // predates the field omits it, and mixing is cheaper to tolerate than to
+  // reason about.
+  const sessionKey = rows.find((row) => row.openhumanSessionKey)
+    ?.openhumanSessionKey;
+
   return (
-    <ol className="space-y-3" data-testid="agent-session-raw">
-      {rows.map((row) => (
-        <RawTurn
-          key={row.id}
-          row={row}
-          agentId={agentId}
-          showChannel={showChannel}
-        />
-      ))}
-    </ol>
+    <div className="space-y-2">
+      {sessionKey && (
+        // Header, not a per-row badge: the key names the session the whole
+        // stream belongs to, and repeating it down the page would suggest rows
+        // could differ. Set as an identity — the literal string the runtime
+        // answers to — rather than decorated as a chip.
+        <p className="text-2xs text-muted-foreground">
+          openhuman session{" "}
+          <span
+            className="font-mono text-foreground"
+            data-testid="agent-session-raw-key"
+          >
+            {sessionKey}
+          </span>
+        </p>
+      )}
+      <ol className="space-y-3" data-testid="agent-session-raw">
+        {rows.map((row) => (
+          <RawTurn
+            key={row.id}
+            row={row}
+            agentId={agentId}
+            showChannel={showChannel}
+          />
+        ))}
+      </ol>
+    </div>
   );
 }
 
