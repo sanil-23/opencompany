@@ -427,6 +427,26 @@ export interface AgentSessionMessageDto extends ChatHistoryMessageDto {
   sessionChannel: string;
   /** The desk id behind that label, so a row can link to its conversation. */
   sessionChannelId: string;
+  /**
+   * **What the agent was told to call this row's author.**
+   *
+   * Not {@link ChatHistoryMessageDto.author}, and not a substitute for it. That
+   * one is the display name a *person* reads, walking the ladder chosen name →
+   * a name derived from the login identity → `"someone"`. This one is what the
+   * runtime puts in the cue line the model is handed, and it is a **stable id**
+   * — the signed-in user's id, or `"operator"` for a machine credential.
+   *
+   * The two differ on purpose. An agent's byline becomes a per-line attribution
+   * prefix, so it has to be unique and unforgeable; a display name is neither,
+   * and a person who set theirs to a teammate's id could otherwise have their
+   * lines prefixed as if that teammate had said them. A person reading a
+   * transcript needs the opposite — a name, not a key.
+   *
+   * Only the raw view reads it, and only because it claims to show the string
+   * the model received. Optional: a host predating the field omits it, and the
+   * honest fallback there is the display name with no claim attached.
+   */
+  cueAuthor?: string;
 }
 
 export interface ReferredFromDto {
