@@ -1367,7 +1367,7 @@ description = "Finds things."
     /// teammate's own line.
     #[tokio::test]
     async fn a_dm_to_a_peer_whose_id_collides_with_a_desk_lands_under_the_prefixed_key() {
-        let (context, events, _dir) = context().await_or_self();
+        let (context, events, _dir) = context();
         let manifest: crate::company::CompanyManifest = toml::from_str(
             r#"
 [company]
