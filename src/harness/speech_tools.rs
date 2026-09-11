@@ -989,7 +989,9 @@ mod test {
             if let CompanyEvent::AgentReply { chat_id, .. } = &event
                 && chat_id == self.refuses
             {
-                anyhow::bail!("journal unavailable for {chat_id}");
+                return Err(crate::error::OpenCompanyError::Conflict(format!(
+                    "journal unavailable for {chat_id}"
+                )));
             }
             let mut appended = self.events.lock().expect("test log lock");
             appended.push(event);
