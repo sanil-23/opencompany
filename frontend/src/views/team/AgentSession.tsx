@@ -115,19 +115,25 @@ export function AgentSession({
       // and `asideConversation` through untouched. Mapping these rows by hand
       // would be a second answer to "what is a chat line" that would drift from
       // the room's.
-      const mapped = fromHistory(rows);
+      //
+      // Called once per row rather than once for the whole array (tinysweeper
+      // review): `fromHistory` happens to be a 1:1, order-preserving `.map`
+      // today, so correlating its output back to `rows` by array index was
+      // correct — but that correlation held only by accident of the current
+      // implementation, and a later filter or reorder inside `fromHistory`
+      // would silently misattribute a `channel`/`channelId` to the wrong
+      // message with no type error to catch it. Mapping each row through its
+      // own `fromHistory([row])` call ties every message to its row
+      // structurally instead of positionally.
       setLines(
-        mapped.flatMap((message, index) => {
-          const row = rows[index];
-          if (!row) return [];
-          return [
-            {
-              message,
-              channel: row.sessionChannel ?? "",
-              channelId: row.sessionChannelId ?? "",
-              row,
-            },
-          ];
+        rows.map((row) => {
+          const [message] = fromHistory([row]);
+          return {
+            message,
+            channel: row.sessionChannel ?? "",
+            channelId: row.sessionChannelId ?? "",
+            row,
+          };
         }),
       );
       setLoad("ready");
