@@ -4940,6 +4940,27 @@ struct AgentSessionMessageDto {
     /// the display name would put a name in front of the operator that the
     /// agent never saw. See [`cue_author`](crate::server::chat_history::cue_author).
     cue_author: String,
+    /// **The openhuman session these turns belong to** — `{company}:{agent_id}`,
+    /// exactly as
+    /// [`openhuman_session_key`](crate::harness::session_key::openhuman_session_key)
+    /// mints it for the builder that stamps it onto the live session.
+    ///
+    /// # Why a per-row field and not an envelope
+    ///
+    /// This is metadata about the *session*, not about the row, so the tidy
+    /// shape would be `{ sessionKey, rows: [...] }`. It is a field anyway,
+    /// because the route already answers a bare JSON array and every existing
+    /// caller — both console surfaces, and anything else reading the documented
+    /// route — indexes, filters and maps that array directly. Wrapping it is a
+    /// breaking change to a shipped shape in exchange for saving one repeated
+    /// string; an added field is one every old caller ignores. The repetition
+    /// is bounded and constant: one short string per row of a page already
+    /// capped at `CHAT_HISTORY_PAGE_LIMIT`.
+    ///
+    /// The console renders this and never rebuilds it: a second spelling of a
+    /// session's name in TypeScript is a second spelling that can drift from
+    /// the one the runtime actually uses.
+    openhuman_session_key: String,
 }
 
 /// `GET {scope}/agents/{agent_id}/session` — everything one agent said and heard.
@@ -4982,6 +5003,9 @@ async fn agent_session_response(
     // bounded by `limit`, so the merge is bounded by `channels × limit` before
     // the tail cut below — and an agent sits on a handful of desks, not a
     // hundred.
+    // Minted once, by the one function that names a session, and copied onto
+    // every row. See `AgentSessionMessageDto::openhuman_session_key`.
+    let session_key = crate::harness::session_key::openhuman_session_key(company, agent_id);
     let mut rows: Vec<AgentSessionMessageDto> = Vec::new();
     for channel in &channels {
         let messages = history_for_desk(
@@ -5004,6 +5028,7 @@ async fn agent_session_response(
                 cue_author,
                 session_channel: channel.label.clone(),
                 session_channel_id: channel.id.clone(),
+                openhuman_session_key: session_key.clone(),
             });
         }
     }
