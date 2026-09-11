@@ -382,7 +382,10 @@ impl Tool for PostTool {
         );
         match call {
             Ok(ToolCall::Speak(Utterance::Post { message })) => {
-                match self.0.resolve_desk(args.get("desk").and_then(Value::as_str), &channel).await
+                match self
+                    .0
+                    .resolve_desk(args.get("desk").and_then(Value::as_str), &channel)
+                    .await
                 {
                     Ok(target) if target == channel => {
                         // The channel this turn is already in: the ordinary
@@ -945,7 +948,10 @@ members = ["engineer"]
         assert!(result.is_error, "{result:?}");
         let said = format!("{result:?}");
         assert!(said.contains("do not sit on"), "{said}");
-        assert!(said.contains("Brand"), "the refusal names what it can reach: {said}");
+        assert!(
+            said.contains("Brand"),
+            "the refusal names what it can reach: {said}"
+        );
         assert!(
             events.0.lock().expect("lock").is_empty(),
             "a refused post journals nothing"
