@@ -2257,6 +2257,64 @@ mod tests {
         }
     }
 
+    /// CodeRabbit: `speech_enabled` is the manifest's opt-in, but the tools
+    /// ARE the append (module doc, above) — with no `EventLog` wired there is
+    /// nothing to append to, so `speech_wired` (not the bare flag) must gate
+    /// both the belt and the persona brief. Before this, `[speech] enabled =
+    /// true` on a host with no journal still told the agent to call tools
+    /// that were never registered.
+    #[test]
+    fn speech_tools_stay_off_the_belt_with_no_journal_even_when_the_manifest_asks() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let deps = pin_deps(dir.path().to_path_buf());
+        assert!(
+            deps.events.is_none(),
+            "this test exercises the no-journal case; pin_deps must still default to it"
+        );
+        let manifest_agent = ManifestAgent {
+            global: false,
+            id: "designer".to_string(),
+            role: "Designer".to_string(),
+            name: None,
+            description: None,
+            tier: None,
+            harness: None,
+            tools: None,
+            delegates_to: Vec::new(),
+            context: None,
+            budget_usd_daily: None,
+            prompt: None,
+            prompt_files: Vec::new(),
+            prompt_files_resolved: Vec::new(),
+            classes: Vec::new(),
+            ledgers: None,
+            can_declare_ledgers: true,
+            model: None,
+        };
+        let agent = build_agent(
+            &CompanyId::new("acme"),
+            "Acme",
+            &manifest_agent,
+            ApprovalPolicy::new(&Policy::default(), None),
+            &deps,
+            &["*".to_string()],
+            &[],
+            &[],
+            None,
+            false,
+            /* speech_enabled */ true,
+        )
+        .expect("agent builds");
+        let names: Vec<String> = agent.tools().iter().map(|t| t.name().to_string()).collect();
+        for tool in crate::harness::speech_tools::SPEECH_TOOLS {
+            assert!(
+                !names.contains(&tool.to_string()),
+                "{tool} must stay off the belt with no journal, even with `[speech] enabled`: \
+                 {names:?}"
+            );
+        }
+    }
+
     /// Build one agent under `grants` and return its live tool names, sorted, so
     /// a snapshot compares byte-stably against a literal.
     fn built_tool_names(grants: &[&str], is_orchestrator: bool) -> Vec<String> {
