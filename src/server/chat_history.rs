@@ -544,6 +544,56 @@ pub enum Viewer {
     User(String),
 }
 
+/// The label a message with no nameable human author carries in an agent's cue.
+///
+/// Safe to sit in the same namespace as roster ids and user ids: a manifest
+/// refuses the reserved ids (`company/manifest.rs`), and a minted user id is
+/// not this word.
+pub const CUE_OPERATOR_LABEL: &str = "operator";
+
+/// The signed-in person behind a message, when there is one.
+///
+/// `Some(id)` for a [`ActorKind::User`] actor and nothing else. An agent-sent
+/// message (a crossing referral arrives as one) and a machine credential both
+/// answer `None` — neither names a person.
+pub fn cue_author_id(by: &Option<Actor>) -> Option<String> {
+    match by {
+        Some(actor) if actor.kind == ActorKind::User => Some(actor.id.clone()),
+        _ => None,
+    }
+}
+
+/// **What an agent is told to call the sender** — a stable id, not a screen name.
+///
+/// This is the single source of truth for that string. `chat_seed::operator_label`
+/// delegates to it, [`MessageView::cue_author`] is projected from it, and the
+/// per-agent session route ships it to the console, so the byline an agent was
+/// handed, the one the seed writes and the one an operator reads in the raw
+/// view cannot drift apart.
+///
+/// # Why an id and not the display name the console shows
+///
+/// Two reasons, and the second is the one that matters.
+///
+/// Resolving a name costs a store read per distinct author, on a projection
+/// that runs inside the per-company cycle lock and whose whole design note is
+/// that it must not do avoidable I/O.
+///
+/// And a display name is **neither unique nor unforgeable**. The label becomes
+/// a per-line attribution prefix ([`prefix_every_line`](crate::harness::built_in::chat_seed),
+/// issues #1956 / #2075), so a person who set their display name to a
+/// teammate's id would have their own lines prefixed as if that teammate had
+/// said them. An id cannot be chosen, so it cannot be chosen to impersonate.
+///
+/// The console is under the opposite constraint — it shows a person to other
+/// people, and an id is not a name there — which is why `author_labels` walks
+/// the display ladder and lands on `"someone"`. The two answers are different
+/// on purpose; what must never happen is a surface claiming to show one and
+/// showing the other.
+pub fn cue_author(by: &Option<Actor>) -> String {
+    cue_author_id(by).unwrap_or_else(|| CUE_OPERATOR_LABEL.to_string())
+}
+
 /// One message in a desk history, independent of transport. Mirrors
 /// `frontend/src/lib/chat.ts`. The GraphQL `Message` type and the REST
 /// `chat/history` JSON shape both project from this.
@@ -555,6 +605,19 @@ pub struct MessageView {
     pub channel: String,
     /// The author label.
     pub author: String,
+    /// **What an agent is told to call this row's author** — see
+    /// [`cue_author`].
+    ///
+    /// Deliberately not [`Self::author`]: that one is the display name a
+    /// *person* reads, and the two resolve differently on purpose. Projected
+    /// here so the per-agent session route can ship the agent's own byline to
+    /// the console without the console guessing at it — a raw view that showed
+    /// the display name while claiming to show the cue would be asserting the
+    /// agent saw something it did not.
+    ///
+    /// Mirrors `agent_session::body_of` arm for arm; the two are pinned
+    /// together by `cue_author_matches_the_envelope_the_agent_is_handed`.
+    pub cue_author: String,
     /// The message text.
     pub text: String,
     /// When it was journaled, epoch millis.
