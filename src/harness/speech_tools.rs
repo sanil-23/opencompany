@@ -826,6 +826,113 @@ mod test {
         (context, events, dir)
     }
 
+    /// A roster with one desk `designer` sits on and one it does not.
+    async fn context_with_desks() -> (SpeechContext, Arc<RecordingLog>, tempfile::TempDir) {
+        let (context, events, dir) = context();
+        let manifest: crate::company::types::CompanyManifest = toml::from_str(
+            r#"
+[company]
+name = "Acme"
+
+[policy]
+mode = "full"
+
+[[agent]]
+id = "designer"
+role = "Designer"
+description = "Draws things."
+
+[[agent]]
+id = "engineer"
+role = "Engineer"
+description = "Builds things."
+
+[[group_chat]]
+id = "brand"
+name = "Brand"
+members = ["designer"]
+
+[[group_chat]]
+id = "platform"
+name = "Platform"
+members = ["engineer"]
+"#,
+        )
+        .expect("valid manifest");
+        let record = crate::ports::types::CompanyRecord {
+            id: context.company.clone(),
+            manifest,
+            ..Default::default()
+        };
+        context.store.save(&record).await.expect("the record saves");
+        (context, events, dir)
+    }
+
+    /// `desk_post` can name a channel this agent sits on, and the line lands
+    /// there rather than in the conversation the turn is in.
+    ///
+    /// This is the capability a live run found missing: asked to say something
+    /// on another desk, the agent had no argument for it and answered the person
+    /// who asked instead — which reads as the message having been passed on.
+    #[tokio::test]
+    async fn a_post_can_name_another_channel_this_agent_sits_on() {
+        let (context, events, _dir) = context_with_desks().await;
+        let spoken = crate::runtime::delegation::new_turn_speech();
+        let result = crate::runtime::delegation::with_turn_speech(spoken.clone(), async {
+            crate::runtime::delegation::with_turn_conversation(
+                Some("designer".to_string()),
+                PostTool(context).execute(serde_json::json!({
+                    "desk": "brand",
+                    "message": "moving the hero to the left rail"
+                })),
+            )
+            .await
+        })
+        .await
+        .expect("the tool runs");
+        assert!(!result.is_error, "{result:?}");
+        let appended = events.0.lock().expect("lock");
+        let CompanyEvent::AgentReply { chat_id, .. } = &appended[0] else {
+            panic!("expected an AgentReply, got {:?}", appended[0]);
+        };
+        assert_eq!(
+            chat_id, "brand",
+            "a named desk is where it goes; `designer` is the DM the turn was in"
+        );
+    }
+
+    /// A desk this agent is not a member of is refused, and the refusal says
+    /// which channels it can reach.
+    ///
+    /// Widening to it would put a line in front of a room with no record of who
+    /// let it in. Reaching another desk is a referral — a crossing the library
+    /// already models, with its own provenance chip and return path.
+    #[tokio::test]
+    async fn a_post_to_a_desk_this_agent_is_not_on_is_refused() {
+        let (context, events, _dir) = context_with_desks().await;
+        let spoken = crate::runtime::delegation::new_turn_speech();
+        let result = crate::runtime::delegation::with_turn_speech(spoken.clone(), async {
+            crate::runtime::delegation::with_turn_conversation(
+                Some("designer".to_string()),
+                PostTool(context).execute(serde_json::json!({
+                    "desk": "platform",
+                    "message": "you should refactor this"
+                })),
+            )
+            .await
+        })
+        .await
+        .expect("the tool runs");
+        assert!(result.is_error, "{result:?}");
+        let said = format!("{result:?}");
+        assert!(said.contains("do not sit on"), "{said}");
+        assert!(said.contains("Brand"), "the refusal names what it can reach: {said}");
+        assert!(
+            events.0.lock().expect("lock").is_empty(),
+            "a refused post journals nothing"
+        );
+    }
+
     /// The contract text is the crate's, not this host's. It is the only place a
     /// seat is told that text outside a tool call reaches nobody, so a host that
     /// paraphrased it would be quietly rewriting the rule.
