@@ -1116,11 +1116,9 @@ export function RoomView({
     setRawLoad("loading");
     void (async () => {
       try {
-        const rows = await client.agentSession(rawAgentId, company, {
-          limit: RAW_TURN_PAGE,
-        });
+        const rows = await fetchDmRawTurns(client, rawAgentId, company);
         if (generation !== rawGenerationRef.current) return;
-        setRawRows(rows.filter((row) => inDmWith(row, rawAgentId)));
+        setRawRows(rows);
         setRawLoad("ready");
       } catch (error) {
         if (generation !== rawGenerationRef.current) return;
