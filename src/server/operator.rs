@@ -10202,8 +10202,7 @@ mode = "full"
     /// written and go on passing it the day the minting function changed.
     #[tokio::test]
     async fn the_session_route_reports_the_key_openhuman_session_key_mints() {
-        let expected =
-            crate::session_key::openhuman_session_key(&CompanyId::new("acme"), "ceo");
+        let expected = crate::session_key::openhuman_session_key(&CompanyId::new("acme"), "ceo");
         let rows = session_rows("/api/v1/companies/acme/agents/ceo/session").await;
         for row in &rows {
             assert_eq!(
