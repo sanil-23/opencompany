@@ -4988,9 +4988,9 @@ struct AgentSessionMessageDto {
 /// has **already** been handed. A `desk_dm` journals a row and runs nothing —
 /// the recipient reads it on its own next turn, through the per-agent
 /// watermark `agent_session::AgentSessionState` tracks. That watermark lives
-/// in the live [`HarnessPool`](crate::harness::HarnessPool), gated behind the
-/// `openhuman` feature; this route has no access to it and compiles in every
-/// build. So a message queued behind another turn shows up here immediately,
+/// in the live `HarnessPool`, gated behind the `openhuman` feature; this route
+/// has no access to it and compiles in every build. So a message queued
+/// behind another turn shows up here immediately,
 /// same as one the agent answered an hour ago. See
 /// `docs/spec/runtime/speech.md#reading-it-back`.
 ///
