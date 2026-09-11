@@ -1597,6 +1597,34 @@ members = ["designer"]
         assert_eq!(channels, vec!["copy", "researcher"]);
     }
 
+    /// Codex P2: `to` naming the same recipient twice — by a repeated raw id,
+    /// or (elsewhere) once by id and once by a display name that resolves to
+    /// the same canonical id — must not double the row in their channel.
+    #[tokio::test]
+    async fn a_repeated_recipient_leaves_only_one_row() {
+        let (context, events, _dir) = context_with_overlay_teammates().await;
+        let spoken = crate::runtime::delegation::new_turn_speech();
+        let result = crate::runtime::delegation::with_turn_speech(spoken.clone(), async {
+            crate::runtime::delegation::with_turn_conversation(
+                Some("brand".to_string()),
+                DmTool(context).execute(serde_json::json!({
+                    "to": ["copy", "copy"],
+                    "message": "said once, meant once"
+                })),
+            )
+            .await
+        })
+        .await
+        .expect("the tool runs");
+        assert!(!result.is_error, "{result:?}");
+        let appended = events.0.lock().expect("lock");
+        assert_eq!(
+            appended.len(),
+            1,
+            "a repeated `to` entry must not journal a second row: {appended:?}"
+        );
+    }
+
     /// coderabbit: a journal failure for one recipient must not read as a
     /// failure for all of them — the recipients ahead of the failing one
     /// already have a durable row, and reporting a flat error invites a retry
