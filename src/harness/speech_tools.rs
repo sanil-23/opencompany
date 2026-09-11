@@ -169,11 +169,32 @@ impl SpeechContext {
             ));
         };
         let channels = crate::server::chat_history::agent_channels(&record, &self.agent_id);
-        let found = channels.iter().find(|channel| {
-            channel.id.eq_ignore_ascii_case(wanted)
-                || channel.name.eq_ignore_ascii_case(wanted)
-                || channel.label.eq_ignore_ascii_case(wanted)
-        });
+        // Codex P2: an exact `id` match is resolved first and alone — desk
+        // names are not unique, so a name/label match must not outrank (or be
+        // outranked by iteration order against) a desk whose `id` is exactly
+        // what was asked for. Only once no id matches are we in name/label
+        // territory, and there an ambiguous match — more than one channel
+        // answering to the same name — is refused rather than silently
+        // resolved to whichever happened to iterate first.
+        let found = if let Some(channel) = channels
+            .iter()
+            .find(|channel| channel.id.eq_ignore_ascii_case(wanted))
+        {
+            Some(channel)
+        } else {
+            let mut by_name = channels.iter().filter(|channel| {
+                channel.name.eq_ignore_ascii_case(wanted) || channel.label.eq_ignore_ascii_case(wanted)
+            });
+            match (by_name.next(), by_name.next()) {
+                (Some(only), None) => Some(only),
+                (Some(_), Some(_)) => {
+                    return Err(ToolResult::error(format!(
+                        "More than one channel you sit on answers to `{desk}`. Use its id instead."
+                    )));
+                }
+                (None, _) => None,
+            }
+        };
         match found {
             Some(channel) => Ok(channel.id.clone()),
             None => {
