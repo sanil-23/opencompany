@@ -183,7 +183,8 @@ impl SpeechContext {
             Some(channel)
         } else {
             let mut by_name = channels.iter().filter(|channel| {
-                channel.name.eq_ignore_ascii_case(wanted) || channel.label.eq_ignore_ascii_case(wanted)
+                channel.name.eq_ignore_ascii_case(wanted)
+                    || channel.label.eq_ignore_ascii_case(wanted)
             });
             match (by_name.next(), by_name.next()) {
                 (Some(only), None) => Some(only),
@@ -395,7 +396,11 @@ fn refusal(rejection: UtteranceRejection) -> ToolResult {
 /// (see its doc comment), so reaching for it here does not add a channel the
 /// recipient cannot already hear on.
 fn dm_journal_key(record: &crate::ports::types::CompanyRecord, peer: &str) -> String {
-    let collides_with_desk = record.manifest.group_chats.iter().any(|chat| chat.id == peer)
+    let collides_with_desk = record
+        .manifest
+        .group_chats
+        .iter()
+        .any(|chat| chat.id == peer)
         || record.overlay_desks.iter().any(|desk| desk.id == peer);
     if collides_with_desk {
         format!("{}{peer}", crate::runtime::assignee::DM_PREFIX)
