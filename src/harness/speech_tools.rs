@@ -849,12 +849,18 @@ impl Tool for ReadTool {
             Err(rejection) => return Ok(refusal(rejection)),
         };
 
-        let (desk_id, desk_name) = crate::server::chat_history::resolve_seed_desk(
-            &self.0.store,
-            &self.0.company,
-            Some(channel.as_str()),
-        )
-        .await;
+        // Codex P1: `resolve_seed_desk` is an ALIAS resolver — built for a
+        // human-typed or short-form channel key, and it will happily widen a
+        // bare DM key that collides with a desk's display name (agent
+        // `support`, desk `{ id: "triage", name: "support" }`) to that OTHER
+        // desk's canonical id. `channel` here is not typed input: it is the
+        // ambient conversation this turn is already bound to, the exact
+        // string `post_to_channel`/`say` use verbatim as `chat_id` for this
+        // turn's own posts (see `post_to_channel` above). Scanning under that
+        // same literal string — not a resolved alias — is what keeps
+        // `desk_read` scoped to "this channel", channel it was actually
+        // authorized for, precisely as the tool's contract promises.
+        let (desk_id, desk_name) = (channel.clone(), channel.clone());
 
         let mut lines: Vec<String> = Vec::new();
         let mut cursor: Option<EventSeq> = None;
