@@ -765,6 +765,50 @@ members = ["copy"]
         assert!(state.present_above_watermark.is_empty());
     }
 
+    /// Codex P1: a chat-only reseed's recent-window seed covers only the
+    /// incoming channel. Overwriting the watermark with the turn's own
+    /// sequence — as this used to — would mark an OLDER, still-unseen row on
+    /// some OTHER channel "already delivered" underneath it, and it would
+    /// never reach the agent. `reseeded` must leave the prior watermark where
+    /// it was: a row below it stays exactly as seen or unseen as it already
+    /// was, and only the turn's own message is newly accepted.
+    #[test]
+    fn reseed_does_not_swallow_an_older_unseen_row_on_another_channel() {
+        // Desk B's message at seq 6 has never been delivered.
+        let before_reseed = AgentSessionState {
+            watermark: Some(EventSeq::new(5)),
+            present_above_watermark: BTreeSet::new(),
+        };
+        // A greeting on desk A, seq 7, triggers a chat-only reseed.
+        let after_reseed = before_reseed.reseeded(Some(EventSeq::new(7)));
+        assert_eq!(
+            after_reseed.watermark,
+            Some(EventSeq::new(5)),
+            "the prior watermark must survive the reseed unchanged"
+        );
+        assert!(
+            !after_reseed.already_seen(EventSeq::new(6)),
+            "desk B's still-unseen row must not become 'delivered' by a reseed \
+             that never showed it to the agent"
+        );
+        assert!(
+            after_reseed.already_seen(EventSeq::new(7)),
+            "the turn's own message, which the seed DID show the agent, is accepted"
+        );
+    }
+
+    /// A true cold start (no watermark at all yet) must still come out of its
+    /// first reseed WITH a watermark — otherwise `session.watermark.is_none()`
+    /// keeps tripping the reseed branch forever and the agent can never walk a
+    /// delta.
+    #[test]
+    fn reseed_from_a_true_cold_start_still_establishes_a_watermark() {
+        let cold = AgentSessionState::default();
+        let after_reseed = cold.reseeded(Some(EventSeq::new(3)));
+        assert_eq!(after_reseed.watermark, Some(EventSeq::new(3)));
+        assert!(after_reseed.present_above_watermark.is_empty());
+    }
+
     /// The agent's own lines are in the session — it said them — but they are
     /// not cued as things it needs to read. Cueing them would have the model
     /// answering its own last reply.
