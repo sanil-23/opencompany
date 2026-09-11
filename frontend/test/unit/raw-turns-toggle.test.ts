@@ -68,10 +68,21 @@ describe("the raw-turns renderer", () => {
    * never saw — the one thing this view exists not to do.
    */
   it("takes the cue's author from the host, not from the display name", () => {
-    expect(raw).toContain(
-      "{said ? row.text : cueLine(channel, row.cueAuthor ?? row.author, row.text)}",
-    );
+    expect(raw).toContain("cueLine(channel, row.cueAuthor ?? row.author, row.cueText ?? row.text)");
     expect(raw).toContain("row.cueAuthor && row.cueAuthor !== row.author");
+  });
+
+  /**
+   * The text half of the cue comes from `cueText` — the body before the
+   * host's move-marker rewrite turned it into operator-facing prose — never
+   * from the already-rendered `text`. A `!support #topic ^3` the agent read
+   * verbatim must not show up here as the sentence a person sees; that would
+   * make this view show the transcript again rather than what was handed to
+   * the model.
+   */
+  it("takes the cue's text from the host, not from the rendered transcript", () => {
+    expect(raw).toContain("row.cueText ?? row.text");
+    expect(types).toContain("cueText?: string;");
   });
 
   /**
