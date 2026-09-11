@@ -74,6 +74,7 @@ import {
 } from "./room/mentions";
 import { echoCause } from "./room/EchoPlaceholder";
 import { MessageTimeline } from "./room/MessageTimeline";
+import { RawTurns } from "./room/RawTurns";
 import { ThreadPanel } from "./room/ThreadPanel";
 import { useLocalScope } from "@/connections/ConnectionContext";
 import * as room from "@/room/store";
@@ -1080,6 +1081,55 @@ export function RoomView({
       directMessageForId(members, generalSub ?? resolvedSub ?? decodedSub) ??
       firstChannel(sections))
     : null;
+
+  /**
+   * The teammate whose raw turns this conversation can show, if any.
+   *
+   * A DM has exactly one agent on the other end, so "the raw turns" names
+   * something. A `#channel` has several and the Operator feed has none, so
+   * there is no such control there — a toggle that has to pick one of four
+   * agents for you is worse than no toggle.
+   */
+  const rawAgentId = channel?.kind === "dm" ? (channel.member?.id ?? null) : null;
+  /**
+   * Whether the transcript is showing raw turns instead of chat.
+   *
+   * An address (`#/chat/<id>?raw`), not component state, for the reason `?edit`
+   * is one on the agent page: "look at what it actually saw" is a link one
+   * operator sends another, and Back closes it. `useHashView` strips everything
+   * from `?` onward before it resolves a segment, so this rides the chat route
+   * without the router ever seeing it.
+   */
+  const [rawRequested, setRawRequested] = useHashFlag("raw");
+  const showRaw = rawRequested && !!rawAgentId;
+  const [rawRows, setRawRows] = useState<AgentSessionMessageDto[]>([]);
+  const [rawLoad, setRawLoad] = useState<RawLoad>("loading");
+  // The same stale-response guard the Session tab carries (issue #1671): a read
+  // started before the operator switched DMs must not commit its rows under the
+  // next teammate's name.
+  const rawGenerationRef = useRef(0);
+  useEffect(() => {
+    if (!showRaw || !rawAgentId) return;
+    const generation = (rawGenerationRef.current += 1);
+    setRawLoad("loading");
+    void (async () => {
+      try {
+        const rows = await client.agentSession(rawAgentId, company, {
+          limit: RAW_TURN_PAGE,
+        });
+        if (generation !== rawGenerationRef.current) return;
+        setRawRows(rows.filter((row) => inDmWith(row, rawAgentId)));
+        setRawLoad("ready");
+      } catch (error) {
+        if (generation !== rawGenerationRef.current) return;
+        // A host without the per-agent session route is a host without this
+        // surface, not a failure — saying so invites no debugging, and a red
+        // error box does.
+        const status = (error as { status?: number } | null)?.status;
+        setRawLoad(status === 404 ? "unsupported" : "error");
+      }
+    })();
+  }, [showRaw, rawAgentId, client, company]);
 
   /**
    * A bare `#/chat` is resolved **into the hash**, so which conversation is open
