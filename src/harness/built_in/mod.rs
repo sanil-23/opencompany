@@ -1432,10 +1432,15 @@ impl CompanyAgent {
                         envelopes,
                         next_state,
                     }) => {
-                        // Commit only AFTER the rows are in hand — the ordering
-                        // is `agent_session`'s contract. Committing first would
-                        // let a failed turn leave the session believing it read
-                        // something it never saw.
+                        // NOT committed here (Codex P1): writing `*session =
+                        // next_state` at this point marks every envelope's row
+                        // delivered before `agent.turn` has even been called,
+                        // let alone succeeded. Queued in
+                        // `pending_session_commit` instead, and only written
+                        // back once `reply` comes back `Ok`, far below — a
+                        // turn that fails after this never marks these rows
+                        // seen, so the next attempt's delta still hands them
+                        // over.
                         session_cues = agent_session::render_cues(&envelopes);
                         tracing::debug!(
                             chat = incoming,
@@ -1443,7 +1448,7 @@ impl CompanyAgent {
                             cued = session_cues.is_some(),
                             "[harness] session delta — continuing without clearing history"
                         );
-                        *session = next_state;
+                        pending_session_commit = Some(next_state);
                     }
                     Some(agent_session::SessionPlan::Reinitialize { reason }) => {
                         tracing::debug!(
