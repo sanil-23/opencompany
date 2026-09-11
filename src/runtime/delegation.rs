@@ -4114,19 +4114,29 @@ pub fn mark_turn_spoke() {
 
 /// Records one channel-visible utterance for this turn.
 ///
-/// Returns whether it was collected: `false` outside a tracked turn, which
-/// tells the caller to fall back to appending it itself.
+/// Returns whether it was collected: `false` outside a tracked turn, or when
+/// the turn's speech mutex is poisoned, which tells the caller to fall back to
+/// appending it itself. tinysweeper: the poisoned branch used to fall through
+/// silently with no signal that anything was wrong; it now logs, so the
+/// corruption is detectable rather than reading as an ordinary "no active
+/// scope" — the caller's existing direct-append fallback still runs either
+/// way, so the text itself is not lost.
 pub fn collect_utterance(text: String) -> bool {
     TURN_SPEECH
-        .try_with(|speech| {
-            if let Ok(mut lines) = speech.utterances.lock() {
+        .try_with(|speech| match speech.utterances.lock() {
+            Ok(mut lines) => {
                 lines.push(text);
                 speech
                     .spoke
                     .store(true, std::sync::atomic::Ordering::Relaxed);
-                return true;
+                true
             }
-            false
+            Err(_) => {
+                tracing::error!(
+                    "[delegation] turn-speech mutex poisoned; falling back to a direct append"
+                );
+                false
+            }
         })
         .unwrap_or(false)
 }
