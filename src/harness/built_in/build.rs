@@ -3148,6 +3148,7 @@ mod tests {
             &[],
             None,
             false,
+            false,
         )
         .expect("agent builds");
         let names: Vec<String> = agent.tools().iter().map(|t| t.name().to_string()).collect();
