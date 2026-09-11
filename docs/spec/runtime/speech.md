@@ -168,10 +168,24 @@ session delta — which is the stigmergic model, and needs no dispatch edge.
 
 ## Reading it back
 
-`GET {scope}/agents/{agent_id}/session` — everything one agent said and heard,
-in journal order, each row stamped with its channel. Projected through the
-**same** `chat_history::agent_channels` the session itself uses, so the page
-cannot claim an agent saw something it did not.
+`GET {scope}/agents/{agent_id}/session` — every row on every channel this agent
+is **eligible to read**, in journal order, each stamped with its channel.
+Projected through the **same** `chat_history::agent_channels` the live session
+uses to decide what it may read, so the page never admits a channel the agent's
+own session would be refused.
+
+Eligible is not the same as *delivered*. A `desk_dm` "journals a row and runs
+nothing" (above): the row exists the instant it is sent, but the recipient does
+not actually receive it until its own next turn walks a session delta past the
+watermark. This route has no access to that in-process watermark — it is
+per-`AgentSessionState`, held by the live [`HarnessPool`](../../../src/harness/built_in/mod.rs)
+under the `openhuman` feature, while this route compiles and answers in every
+build. So a message queued behind another turn, or a fresh `desk_dm` the
+recipient has not yet acted on, already appears here as an ordinary row —
+this is the channel history the agent **may** read, not a record of what it
+has **already** been handed. Treat a row here as "on the desk", not as "seen":
+for the latter, cross-reference the raw-turns view of a turn that ran *after*
+the row's timestamp.
 
 The operator sees more than the agent does, deliberately: the route projects
 with the caller's own `Viewer`, and `Audience::admits` admits every operator
