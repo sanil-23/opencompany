@@ -263,7 +263,12 @@ impl SpeechContext {
     /// the reason `AgentReply::mentions` is never consulted by dispatch. The
     /// result sentence says so rather than claiming delivery, because an agent
     /// that is told "delivered" will tell the person who asked that it was.
-    async fn dm(&self, peers: Vec<String>, text: String) -> ToolResult {
+    async fn dm(
+        &self,
+        peers: Vec<String>,
+        text: String,
+        record: &crate::ports::types::CompanyRecord,
+    ) -> ToolResult {
         if text.trim().is_empty() {
             return ToolResult::error(
                 "A message with no text reaches nobody. Say what you mean, or call no tool at all."
@@ -272,7 +277,17 @@ impl SpeechContext {
         }
         let mut left_for: Vec<String> = Vec::new();
         for peer in &peers {
-            match self.say(peer.clone(), text.clone(), Vec::new()).await {
+            // Codex P1: a desk whose id happens to equal this recipient's
+            // agent id also "owns" a row journaled under the bare id
+            // (`chat_history::owns` matches on the stored `chat_id` alone), so
+            // every member of that desk could read a supposedly private
+            // `desk_dm`. `agent_channels` already registers the `dm:<id>`
+            // spelling as this teammate's own line for exactly this reason —
+            // reach for it whenever the bare id collides with a desk, so the
+            // row is journaled somewhere only that desk's own id would match,
+            // which is far less likely to collide.
+            let key = dm_journal_key(record, peer);
+            match self.say(key, text.clone(), Vec::new()).await {
                 result if result.is_error => return result,
                 _ => {
                     // A DM is a hop from one openhuman session to another, and
