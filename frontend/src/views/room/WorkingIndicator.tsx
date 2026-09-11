@@ -117,9 +117,13 @@ export function WorkingIndicator({
       {/* CodeRabbit: the visible line already names the teammate (`idle`,
           above) once a step settles; the sr-only twin was still falling back
           to the generic `srLabel` in that same case, so an AT user never got
-          the identity a sighted reader saw. Matches `idle`'s own phrasing —
-          `name` wins over the generic label whenever this is not queued. */}
-      <span className="sr-only">{queued ? QUEUED_LABEL : (name ? idle : srLabel)}</span>
+          the identity a sighted reader saw. Mirrors the visible fallback
+          order exactly — a running step still outranks the name here too, so
+          this never announces "Amendments is working…" while the visible
+          line (and the live step timeline beside it) is naming a step. */}
+      <span className="sr-only">
+        {queued ? QUEUED_LABEL : !running && name ? idle : srLabel}
+      </span>
     </span>
   );
 }
