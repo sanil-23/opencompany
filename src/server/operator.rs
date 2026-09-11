@@ -4940,6 +4940,13 @@ struct AgentSessionMessageDto {
     /// the display name would put a name in front of the operator that the
     /// agent never saw. See [`cue_author`](crate::server::chat_history::cue_author).
     cue_author: String,
+    /// **The text half of the cue line the model was actually handed** —
+    /// before [`readable_moves`](crate::server::chat_history::readable_moves)
+    /// rewrote it into operator-facing prose (Codex P2: the raw-turns surface
+    /// must show `!support #topic ^3`, not the prose it becomes for a person).
+    /// Same reasoning as `cue_author`, for the other half of the line. See
+    /// [`MessageView::cue_text`](crate::server::chat_history::MessageView::cue_text).
+    cue_text: String,
     /// **The openhuman session these turns belong to** — `{company}:{agent_id}`,
     /// exactly as
     /// [`openhuman_session_key`](crate::session_key::openhuman_session_key)
