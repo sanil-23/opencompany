@@ -166,13 +166,70 @@ impl SpeechContext {
 
     /// Appends one line to the journal, with the audience the caller resolved.
     ///
-    /// `audience` empty is the ordinary desk-visible case. A non-empty one is a
-    /// private aside: the author is implicit and is never repeated in the list,
-    /// which is the field's documented shape.
+    /// `audience` empty is the ordinary channel-visible case. A non-empty one is
+    /// a private aside **within one desk's deliberation**: every party is on
+    /// that desk, and the list narrows which of them may read the row.
     ///
-    /// This is `desk_dm`'s path, and the fallback for a post with no sink. A
-    /// narrowed audience is not something a turn's single reply can express, so
-    /// a DM has to be its own row.
+    /// That is why a DM does NOT use it — see [`Self::dm`]. An `audience` is a
+    /// narrowing *inside* a channel, and it cannot carry a row *across* one.
+    ///
+    /// This is the fallback for a post with no sink, and the append every
+    /// direct row goes through.
+    /// Leaves one line for each named teammate, **in that teammate's own DM
+    /// channel**.
+    ///
+    /// # Why not the ambient channel with a narrowed audience
+    ///
+    /// Because that delivers nowhere, and says it delivered. It was the first
+    /// shape of this method and it was wrong in a way only a live run showed:
+    /// a row journaled under the *current* conversation with
+    /// `audience: ["motion_designer"]` sits in the operator's DM with the
+    /// speaker. Which channels reach an agent is decided by
+    /// [`agent_channels`](crate::server::chat_history::agent_channels), and the
+    /// speaker's own DM is not one of the recipient's — so the recipient could
+    /// never read it, while the operator could. The message went to exactly the
+    /// wrong person, and the tool reported success.
+    ///
+    /// `audience` was reached for because it needed no journal migration. It is
+    /// the asides field, and an aside is a narrowing *within a desk everybody
+    /// named is already on*. A DM has no such guarantee, so the narrowing has to
+    /// be the channel itself.
+    ///
+    /// So: one row per recipient, `chat_id` set to the recipient's own DM key —
+    /// the bare teammate id, which is the spelling `agent_channels` registers
+    /// and the console already posts under — and an empty `audience`, because
+    /// the channel has done the narrowing and a non-empty one would additionally
+    /// make [`fold_asides`](crate::server::chat_history) lift the row out of the
+    /// transcript as a deliberation aside, which it is not.
+    ///
+    /// # What it does not do
+    ///
+    /// Start a turn. The recipient reads this on its next turn, through its own
+    /// session delta — the stigmergic model the vendored crate is built on, and
+    /// the reason `AgentReply::mentions` is never consulted by dispatch. The
+    /// result sentence says so rather than claiming delivery, because an agent
+    /// that is told "delivered" will tell the person who asked that it was.
+    async fn dm(&self, peers: Vec<String>, text: String) -> ToolResult {
+        if text.trim().is_empty() {
+            return ToolResult::error(
+                "A message with no text reaches nobody. Say what you mean, or call no tool at all."
+                    .to_string(),
+            );
+        }
+        let mut left_for: Vec<String> = Vec::new();
+        for peer in &peers {
+            match self.say(peer.clone(), text.clone(), Vec::new()).await {
+                result if result.is_error => return result,
+                _ => left_for.push(format!("@{peer}")),
+            }
+        }
+        ToolResult::success(format!(
+            "Left for {}. Not delivered now — each of them reads it on their next turn, and \
+             nothing here wakes them. If it needs doing rather than knowing, raise a card.",
+            left_for.join(", "),
+        ))
+    }
+
     async fn say(&self, chat_id: String, text: String, audience: Vec<String>) -> ToolResult {
         if text.trim().is_empty() {
             return ToolResult::error(
@@ -381,7 +438,7 @@ impl Tool for DmTool {
                         )));
                     }
                 }
-                Ok(self.0.say(channel, message, peers).await)
+                Ok(self.0.dm(peers, message).await)
             }
             Ok(_) => Ok(ToolResult::error(
                 "`desk_dm` says one thing to named teammates; it takes no other form.".to_string(),
