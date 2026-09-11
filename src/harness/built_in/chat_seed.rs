@@ -627,10 +627,11 @@ fn prefix_every_line(label: &str, text: &str) -> String {
 /// An id is stable, unique and already unforgeable (see [`OPERATOR_LABEL`]);
 /// a colleague's screen name is neither of the last two.
 pub(super) fn operator_label(by: &Option<crate::ports::types::Actor>) -> String {
-    match by {
-        Some(actor) if actor.kind == crate::ports::types::ActorKind::User => actor.id.clone(),
-        _ => OPERATOR_LABEL.to_string(),
-    }
+    // Delegated rather than duplicated. The console's raw view renders this
+    // exact string, shipped on the session route as `MessageView::cue_author`,
+    // so a second copy of the rule here is a second copy that can drift from
+    // what an operator is shown the agent was handed.
+    crate::server::chat_history::cue_author(by)
 }
 
 /// The label a message with no resolvable human author carries.
@@ -639,7 +640,7 @@ pub(super) fn operator_label(by: &Option<crate::ports::types::Actor>) -> String 
 /// refuses the reserved ids (`company/manifest.rs`), and a minted user id is
 /// not this word. Nothing a *body* can say matters here, because bodies are
 /// nested under their own speaker's label by [`prefix_every_line`].
-const OPERATOR_LABEL: &str = "operator";
+const OPERATOR_LABEL: &str = crate::server::chat_history::CUE_OPERATOR_LABEL;
 
 /// Keeps each root's **first** reply and drops the rest (issue #1890 D part 3).
 ///
