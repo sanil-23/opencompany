@@ -380,7 +380,13 @@ pub fn build_agent(
     // there is nothing for them to do and registering them would advertise a
     // voice the host cannot give. A company in that configuration keeps the
     // return-text path, which is the same fallback an un-called tool gets.
-    if speech_enabled && let Some(events) = deps.events.clone() {
+    // CodeRabbit: `speech_enabled` alone is the manifest's opt-in; whether the
+    // tools actually got wired also needs a journal to append to (the comment
+    // above). The persona brief below must agree with THIS — the AND, not the
+    // flag alone — or a company with no `EventLog` gets a brief instructing it
+    // to call tools that were never registered.
+    let speech_wired = speech_enabled && deps.events.is_some();
+    if speech_wired && let Some(events) = deps.events.clone() {
         tools.extend(crate::harness::speech_tools::speech_belt(
             crate::harness::speech_tools::SpeechContext::new(
                 company.clone(),
