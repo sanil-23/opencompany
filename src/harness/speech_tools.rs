@@ -364,7 +364,7 @@ impl SpeechContext {
                 // would journal a second row for everyone already in
                 // `left_for`. The text says exactly who still needs it.
                 ToolResult::success(format!(
-                    "Left for {}. Could not reach {}Ë — retry `desk_dm` with only the names that \
+                    "Left for {}. Could not reach {} — retry `desk_dm` with only the names that \
                      failed.",
                     left_for.join(", "),
                     failures,
