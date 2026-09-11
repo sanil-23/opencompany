@@ -148,7 +148,9 @@ function RawTurn({
         {row.parentId && <span>reply to #{row.parentId}</span>}
       </div>
       <pre className="mt-1.5 font-mono text-xs leading-relaxed whitespace-pre-wrap">
-        {said ? row.text : cueLine(channel, row.cueAuthor ?? row.author, row.text)}
+        {said
+          ? row.text
+          : cueLine(channel, row.cueAuthor ?? row.author, row.cueText ?? row.text)}
       </pre>
       {row.cueAuthor && row.cueAuthor !== row.author && (
         // The cue names the sender by a stable id; the transcript names them by
