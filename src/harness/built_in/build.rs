@@ -923,9 +923,10 @@ pub fn build_agent(
     // reply rather than a note about one namespace — and because the failure it
     // prevents is silent: an agent that never learns about `desk_post` just
     // answers in text, the reply path journals it, and nothing reports that the
-    // feature did nothing. Gated on the same flag that wired the tools, so the
-    // brief can never describe a voice this agent was not given.
-    if speech_enabled {
+    // feature did nothing. Gated on the same condition that wired the tools
+    // (`speech_wired`, not the bare `speech_enabled` flag — Codex/CodeRabbit),
+    // so the brief can never describe a voice this agent was not given.
+    if speech_wired {
         persona.push_str(&crate::harness::speech_tools::speech_brief());
     }
 
