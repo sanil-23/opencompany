@@ -2153,6 +2153,7 @@ mod test {
             admin_only: false,
             cue_author: author.to_owned(),
             author: author.to_owned(),
+            cue_text: text.to_owned(),
             text: text.to_owned(),
             at_millis: 0.0,
             mine: false,
