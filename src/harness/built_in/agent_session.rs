@@ -263,7 +263,7 @@ pub async fn prepare_delta(
             // a row that WOULD eventually be delivered on another channel;
             // this one is filtered out for this agent by construction and can
             // never become deliverable later.
-            let Some(channel) = channel_for(&channels, &stored.event) else {
+            let Some(channel) = channel_for(&channels, &stored.event, record) else {
                 skip_seen.push(stored.seq);
                 continue;
             };
