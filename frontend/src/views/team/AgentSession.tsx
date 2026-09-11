@@ -34,7 +34,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Braces, Loader2, MessageSquare, MessagesSquare } from "lucide-react";
 
 import type { OpenCompanyClient } from "@/api/client";
-import type { AgentSessionMessageDto, TurnStep } from "@/api/types";
+import type { AgentSessionMessageDto } from "@/api/types";
 import { TeammateAvatar } from "@/components/teammate-avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -42,6 +42,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { useHashFlag } from "@/hooks/use-hash-flag";
 import { fromHistory, type ChatMessage } from "@/lib/chat";
 import { cn } from "@/lib/utils";
+import { RawTurns } from "@/views/room/RawTurns";
 import {
   AsideConversation,
   ReferralConversation,
@@ -200,11 +201,14 @@ export function AgentSession({
           <ViewToggle raw={raw} onChange={setRaw} />
         </div>
         {raw ? (
-          <ol className="space-y-3" data-testid="agent-session-raw">
-            {lines.map((line) => (
-              <RawTurn key={line.row.id} line={line} agentId={agentId} />
-            ))}
-          </ol>
+          // Channel badges on, unlike the DM: this stream interleaves rows from
+          // every desk the teammate sits on, and without the badge two
+          // teammates answering in two places are indistinguishable.
+          <RawTurns
+            rows={lines.map((line) => line.row)}
+            agentId={agentId}
+            showChannel
+          />
         ) : (
           <ol className="space-y-4" data-testid="agent-session">
             {lines.map((line) => (
