@@ -3441,6 +3441,53 @@ function inDmWith(row: AgentSessionMessageDto, agentId: string): boolean {
 }
 
 /**
+ * How many merged-channel pages one DM's raw-turns read will walk before
+ * giving up on filling {@link RAW_TURN_PAGE}. Bounds the read the same way
+ * `SESSION_SCAN_LIMIT` bounds the host's own delta walk — a DM that has gone
+ * quiet for a very long time gets whatever history it can find within a few
+ * pages, not an unbounded fetch loop.
+ */
+const RAW_TURN_PAGE_WALK_LIMIT = 10;
+
+/**
+ * This DM's own raw turns, walked back page by page until there are
+ * {@link RAW_TURN_PAGE} of them or the host's history runs out.
+ *
+ * `GET .../session` answers the agent's **merged, cross-channel** stream,
+ * capped at `limit` — so one page of it can be entirely some other desk's
+ * traffic while this DM sits just past the cut (Codex P2: 200 newer rows on
+ * `#general` make an older, non-empty DM read as empty). Filtering one page
+ * for `agentId` is therefore not enough; this pages backward with `before`,
+ * the same cursor `chat/history` pagination already uses, collecting this
+ * channel's rows until the window is full or a short page says the host has
+ * no more history to give.
+ */
+async function fetchDmRawTurns(
+  client: OpenCompanyClient,
+  agentId: string,
+  company: string | null | undefined,
+): Promise<AgentSessionMessageDto[]> {
+  const collected: AgentSessionMessageDto[] = [];
+  let before: string | undefined;
+  for (let page = 0; page < RAW_TURN_PAGE_WALK_LIMIT; page += 1) {
+    const rows = await client.agentSession(agentId, company, {
+      limit: RAW_TURN_PAGE,
+      before,
+    });
+    // Oldest-first, same order the route answers in: an earlier page's rows
+    // belong in front of what is already collected, not behind it.
+    collected.unshift(...rows.filter((row) => inDmWith(row, agentId)));
+    if (rows.length < RAW_TURN_PAGE || collected.length >= RAW_TURN_PAGE) break;
+    const oldest = rows[0]?.id;
+    if (!oldest || oldest === before) break;
+    before = oldest;
+  }
+  return collected.length > RAW_TURN_PAGE
+    ? collected.slice(collected.length - RAW_TURN_PAGE)
+    : collected;
+}
+
+/**
  * The transcript, as the turns the teammate actually took.
  *
  * Scoped to **this conversation**, not to the teammate's whole session. A
