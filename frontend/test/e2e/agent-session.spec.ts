@@ -144,3 +144,65 @@ test("a teammate's raw turns open from their own address", async ({ page }) => {
     await expect(rawStream).toHaveCount(0);
   }
 });
+
+/**
+ * The same raw view, reached from the DM — which is where the question gets
+ * asked.
+ *
+ * `#/chat/dm:<id>?raw` is an address for the same reason the tab's is, so the
+ * walk is a deep link rather than a click on the header control. What it proves
+ * that a unit render cannot: the flag survives the chat router (which strips
+ * everything from `?` onward before resolving a segment), and the host answers
+ * the per-agent route for a teammate reached this way.
+ */
+test("a DM opens on the teammate's raw turns when the address asks", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await dismissOnboarding(page);
+
+  await page.goto("/#/chat/dm:engineer?raw");
+  await dismissOnboarding(page);
+
+  // The control is present at all — which is the half of this the operator
+  // complained about. It exists only in a DM; the channel case is below.
+  const toggle = page.getByTestId("chat-raw-toggle");
+  await expect(toggle).toBeVisible({ timeout: 30_000 });
+  await expect(toggle).toHaveAttribute("aria-pressed", "true");
+
+  // One of the honest states, never a spinner that never settles.
+  const stream = page.getByTestId("agent-session-raw");
+  const settled = stream
+    .or(page.getByText(/Nothing has been said in this conversation yet/))
+    .or(page.getByText(/does not keep a per-agent session yet/));
+  await expect(settled.first()).toBeVisible({ timeout: 30_000 });
+
+  // The composer stays. The toggle changes how the conversation is drawn, not
+  // whether you can still talk in it.
+  await expect(page.getByTestId("chat-raw-toggle")).toBeVisible();
+
+  // And it goes back without a reload, dropping the flag from the address.
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-pressed", "false");
+  await expect(stream).toHaveCount(0);
+  expect(await page.evaluate(() => window.location.hash)).not.toContain("raw");
+});
+
+/**
+ * Not offered on a `#channel`. Several agents speak there, so "the raw turns"
+ * would have to pick one for you — worse than not offering it at all.
+ */
+test("a channel offers no raw-turns toggle", async ({ page }) => {
+  await page.goto("/");
+  await dismissOnboarding(page);
+
+  await page.goto("/#/chat/general");
+  await dismissOnboarding(page);
+
+  // Wait for the header to exist before asserting a control is absent from it,
+  // or this passes against a page that simply had not rendered yet.
+  await expect(page.getByTestId("chat-composer-input").first()).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(page.getByTestId("chat-raw-toggle")).toHaveCount(0);
+});
