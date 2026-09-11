@@ -447,6 +447,23 @@ export interface AgentSessionMessageDto extends ChatHistoryMessageDto {
    * honest fallback there is the display name with no claim attached.
    */
   cueAuthor?: string;
+  /**
+   * **The openhuman session this agent's turns belong to** —
+   * `{company}:{agentId}`.
+   *
+   * Minted host-side by `openhuman_session_key` (`src/harness/session_key.rs`),
+   * the one function that names a session, and the same string stamped onto the
+   * live session's `event_context`. Never rebuilt here: a `${company}:${id}`
+   * in TypeScript would be a second spelling of a session's name, and a second
+   * spelling is one that can drift from the one the runtime actually answers to.
+   *
+   * Carried per row rather than in an envelope because the route answers a bare
+   * array and every caller indexes it; see the Rust DTO for the full reasoning.
+   * Every row of one response carries the same value. Optional: a host
+   * predating the field omits it, and the honest thing then is to show no
+   * session name rather than a guessed one.
+   */
+  openhumanSessionKey?: string;
 }
 
 export interface ReferredFromDto {
