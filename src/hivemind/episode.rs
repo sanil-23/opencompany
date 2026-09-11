@@ -958,6 +958,19 @@ impl<'a> EpisodeDriver<'a> {
         // DM's `chat_id` *is* the roster agent id, so that id is carried in both
         // fields: `in_desk` matches on id or name, and a desk that happened to be
         // named like an agent could otherwise widen the match.
+        //
+        // The direct line carries TWO targets, not one (Codex P2): a `desk_dm`
+        // is journaled under the bare agent id ordinarily, but under the
+        // `dm:<agent-id>` spelling whenever the bare one collides with a desk id
+        // (`speech_tools::dm_journal_key`) or names a General spelling (issue
+        // #364's grandfather case) — `agent_channels` registers both for exactly
+        // this reason, and `EventLogSessionLog::addresses_desk` matches on
+        // whichever exact spelling a row was journaled under. Reading only the
+        // bare one would silently drop the prefixed rows from this seat's own
+        // elsewhere context; both are queried and merged under one label so a
+        // hive turn sees its whole direct line regardless of which spelling
+        // wrote it.
+        let direct_line_label = format!("Your direct line (@{agent_id})");
         let targets: Vec<(String, String, String)> = self
             .context_desks
             .iter()
@@ -974,10 +987,16 @@ impl<'a> EpisodeDriver<'a> {
             .chain(std::iter::once((
                 agent_id.to_string(),
                 agent_id.to_string(),
-                format!("Your direct line (@{agent_id})"),
+                direct_line_label.clone(),
+            )))
+            .chain(std::iter::once((
+                format!("{}{agent_id}", crate::runtime::assignee::DM_PREFIX),
+                format!("{}{agent_id}", crate::runtime::assignee::DM_PREFIX),
+                direct_line_label,
             )))
             .collect();
-        let mut elsewhere = Vec::with_capacity(targets.len());
+        let mut elsewhere: Vec<(String, Vec<tinyhivemind_hive::SessionMessage>)> =
+            Vec::with_capacity(targets.len());
         for (desk_id, desk_name, label) in targets {
             let log = EventLogSessionLog::new(
                 Arc::clone(&self.events),
@@ -1000,7 +1019,18 @@ impl<'a> EpisodeDriver<'a> {
             )
             .await
             {
-                Ok(rows) if !rows.is_empty() => elsewhere.push((label, rows)),
+                Ok(rows) if !rows.is_empty() => {
+                    // The two direct-line targets share one label; merge into
+                    // the existing section rather than opening a second one
+                    // under the same name.
+                    if let Some(existing) =
+                        elsewhere.iter_mut().find(|(existing, _)| *existing == label)
+                    {
+                        existing.1.extend(rows);
+                    } else {
+                        elsewhere.push((label, rows));
+                    }
+                }
                 Ok(_) => {}
                 Err(error) => tracing::warn!(
                     company = %self.company,
