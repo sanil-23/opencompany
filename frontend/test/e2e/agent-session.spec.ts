@@ -201,8 +201,8 @@ test("a channel offers no raw-turns toggle", async ({ page }) => {
 
   // Wait for the header to exist before asserting a control is absent from it,
   // or this passes against a page that simply had not rendered yet.
-  await expect(page.getByTestId("chat-composer-input").first()).toBeVisible({
-    timeout: 30_000,
-  });
+  await expect(
+    page.getByRole("heading", { level: 1, name: "general" }),
+  ).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId("chat-raw-toggle")).toHaveCount(0);
 });
