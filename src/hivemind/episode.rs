@@ -1023,8 +1023,9 @@ impl<'a> EpisodeDriver<'a> {
                     // The two direct-line targets share one label; merge into
                     // the existing section rather than opening a second one
                     // under the same name.
-                    if let Some(existing) =
-                        elsewhere.iter_mut().find(|(existing, _)| *existing == label)
+                    if let Some(existing) = elsewhere
+                        .iter_mut()
+                        .find(|(existing, _)| *existing == label)
                     {
                         existing.1.extend(rows);
                     } else {
