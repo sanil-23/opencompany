@@ -10,7 +10,7 @@ import {
   type SetStateAction,
 } from "react";
 import { createPortal } from "react-dom";
-import { TriangleAlert } from "lucide-react";
+import { Loader2, MessageSquare, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
 
 import { me as fetchMe } from "@/api/auth";
@@ -26,11 +26,13 @@ import {
   type AttachmentDto,
   type CognitionState,
   type DecideApproval,
+  type AgentSessionMessageDto,
   type OperatorChannelDto,
   type TeamMemberDto,
   type Verdict,
   isDetachedChat,
 } from "@/api/types";
+import { useHashFlag } from "@/hooks/use-hash-flag";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
