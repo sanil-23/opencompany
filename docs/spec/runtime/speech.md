@@ -143,3 +143,28 @@ The console renders it as the **Session** tab on `#/company/agent/<id>`
 `StepTimeline`, `ReferralConversation` and `AsideConversation` so an
 agent-to-agent exchange reads the same way there as in the channel it happened
 in.
+
+### Raw turns
+
+The same tab at `#/company/agent/<id>?tab=session&raw` renders the stream with
+the chat rendering taken off: one block per journal row, in order, each stamped
+`said` or `heard` — the latter shown in the literal `[channel · author] text`
+shape [`render_cues`](../../../src/harness/built_in/agent_session.rs) prepends
+to the turn, so what is on screen is the string the model was handed. Tool calls
+unfold into their arguments and their result instead of collapsing into a step
+chip, and referrals and asides print line by line rather than as a summary.
+
+It renders the host's row rather than the mapped `ChatMessage`: `fromHistory`
+resolves the speaker against the viewer, prefixes ids and lifts collapses onto
+the bubble, all of which is what a reader asking for the raw turns is asking to
+see past.
+
+It is not a dump of the model's context window. That is process-local, bounded
+by `max_history_messages`, and gone when the host restarts; the session an
+operator can be shown is the one the host rebuilds from the journal on every
+turn, and that is what this is.
+
+`?raw` is an address rather than component state, for the reason `?edit` is —
+"look at what it actually saw" is a link one operator sends another, and a link
+that lands on the bubbles and asks the reader to find a switch has lost the
+point of having been sent.
