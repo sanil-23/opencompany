@@ -135,6 +135,60 @@ impl SpeechContext {
         crate::runtime::delegation::turn_conversation()
     }
 
+    /// Which channel a `desk_post` should land in.
+    ///
+    /// `None` is the channel the turn is already in — the overwhelmingly common
+    /// case, and the only one before a live run showed that an agent asked to
+    /// say something *somewhere else* had no way to do it and answered the
+    /// person who asked instead.
+    ///
+    /// A named desk is resolved against
+    /// [`agent_channels`](crate::server::chat_history::agent_channels) — the
+    /// same function that decides which channels reach this agent's own
+    /// session. That is what keeps the two honest: an agent can speak exactly
+    /// where it can hear, and nowhere else.
+    ///
+    /// A desk it does not sit on is refused rather than widened to. Reaching
+    /// another desk is a *referral* — a crossing the library already models,
+    /// with its own provenance chip and its own return path — and letting
+    /// `desk_post` write into a room its author is not in would put a line in
+    /// front of people with no record of who let it in.
+    async fn resolve_desk(&self, desk: Option<&str>, ambient: &str) -> Result<String, ToolResult> {
+        let Some(desk) = desk.map(str::trim).filter(|desk| !desk.is_empty()) else {
+            return Ok(ambient.to_string());
+        };
+        let wanted = desk.trim_start_matches('#');
+        let Ok(Some(record)) = self.store.load(&self.company).await else {
+            // The roster could not be read, so membership cannot be checked.
+            // Falling back to the ambient channel would silently say it
+            // somewhere other than asked, which is the defect this argument
+            // exists to fix — so it refuses instead.
+            return Err(ToolResult::error(
+                "The roster could not be read, so I cannot tell whether you sit on that channel.                  Say it here instead, or try again."
+                    .to_string(),
+            ));
+        };
+        let channels = crate::server::chat_history::agent_channels(&record, &self.agent_id);
+        let found = channels.iter().find(|channel| {
+            channel.id.eq_ignore_ascii_case(wanted)
+                || channel.name.eq_ignore_ascii_case(wanted)
+                || channel.label.eq_ignore_ascii_case(wanted)
+        });
+        match found {
+            Some(channel) => Ok(channel.id.clone()),
+            None => {
+                let reachable = channels
+                    .iter()
+                    .map(|channel| channel.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                Err(ToolResult::error(format!(
+                    "You do not sit on `{desk}`, so you cannot post there. You can post in:                      {reachable}. To reach another desk, refer the work across instead."
+                )))
+            }
+        }
+    }
+
     /// Says one thing to the whole channel.
     ///
     /// **Does not append.** The crate's rule is that a tool call is a *request*
@@ -289,6 +343,12 @@ impl Tool for PostTool {
                     "type": "string",
                     "description": "What you established, what you did not finish, and the one \
                                     teammate you need next — that teammate named first."
+                },
+                "desk": {
+                    "type": "string",
+                    "description": "Which channel to say it in. Omit for the one you are \
+                                    answering in. Only a channel you sit on — to reach a desk \
+                                    you are not a member of, refer the work across instead."
                 }
             },
             "required": ["message"],
@@ -322,7 +382,20 @@ impl Tool for PostTool {
         );
         match call {
             Ok(ToolCall::Speak(Utterance::Post { message })) => {
-                Ok(self.0.post_to_channel(channel, message).await)
+                match self.0.resolve_desk(args.get("desk").and_then(Value::as_str), &channel).await
+                {
+                    Ok(target) if target == channel => {
+                        // The channel this turn is already in: the ordinary
+                        // path, which collects rather than appends so the reply
+                        // carries its steps, its live frame and its card.
+                        Ok(self.0.post_to_channel(channel, message).await)
+                    }
+                    // Another channel this agent sits on. It cannot ride the
+                    // turn's own reply — that reply belongs to the conversation
+                    // the turn is in — so it is a row of its own.
+                    Ok(target) => Ok(self.0.say(target, message, Vec::new()).await),
+                    Err(refusal) => Ok(refusal),
+                }
             }
             Ok(_) => Ok(ToolResult::error(
                 "`desk_post` says one thing to the channel; it takes no other form.".to_string(),
