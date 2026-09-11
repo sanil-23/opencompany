@@ -567,6 +567,21 @@ impl Tool for DmTool {
                         )));
                     }
                     peers = canonical;
+                    // Codex P2: canonicalization can turn a survivor of the
+                    // filter above back into the caller's own id — an overlay
+                    // teammate addressing itself by its unique DISPLAY NAME
+                    // (`to: ["Nova"]`, agent id `nova`) passes the raw-id
+                    // filter, since `"Nova" != "nova"`, and only becomes a
+                    // self-reference once resolved. Re-apply the same refusal
+                    // now that every surviving entry is a canonical id.
+                    peers.retain(|id| id != &self.0.agent_id);
+                    if peers.is_empty() {
+                        return Ok(ToolResult::error(
+                            "`to` names only you; a message to yourself reaches nobody else. Use \
+                             `desk_post` to say it to the channel."
+                                .to_string(),
+                        ));
+                    }
                 }
                 Ok(self.0.dm(peers, message).await)
             }
