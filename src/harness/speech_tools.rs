@@ -274,7 +274,33 @@ impl SpeechContext {
         for peer in &peers {
             match self.say(peer.clone(), text.clone(), Vec::new()).await {
                 result if result.is_error => return result,
-                _ => left_for.push(format!("@{peer}")),
+                _ => {
+                    // A DM is a hop from one openhuman session to another, and
+                    // this is the only place both ends are known at once. Both
+                    // teammates hold a live openhuman session named
+                    // `{company}:{agent_id}` (see `harness::session_key`); the
+                    // row just journaled leaves the sender's and is picked up
+                    // by the recipient's `prepare_delta` on its next turn.
+                    //
+                    // Logged rather than returned: the recipient's session id
+                    // is an internal name, and the agent has no use for it —
+                    // what the *operator* has a use for is being able to follow
+                    // one line between two sessions when a hundred of them are
+                    // live at once, which is exactly when the reply text alone
+                    // stops being enough to tell who heard what.
+                    tracing::debug!(
+                        from_session = %crate::harness::session_key::openhuman_session_key(
+                            &self.company,
+                            &self.agent_id,
+                        ),
+                        to_session = %crate::harness::session_key::openhuman_session_key(
+                            &self.company,
+                            peer,
+                        ),
+                        "[speech] dm left in the recipient's session"
+                    );
+                    left_for.push(format!("@{peer}"));
+                }
             }
         }
         ToolResult::success(format!(
