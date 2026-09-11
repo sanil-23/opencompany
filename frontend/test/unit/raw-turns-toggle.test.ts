@@ -53,7 +53,24 @@ describe("the raw-turns renderer", () => {
    */
   it("reproduces the host's cue shape for a line the agent was given", () => {
     expect(raw).toContain("return `[${channel || \"?\"} · ${author}] ${text.trim()}`;");
-    expect(raw).toContain("{said ? row.text : cueLine(channel, row.author, row.text)}");
+  });
+
+  /**
+   * The author half of the cue comes from `cueAuthor` — the string the host
+   * built the cue with — never from `author`.
+   *
+   * The two resolve differently on purpose. An agent's byline becomes a
+   * per-line attribution prefix, so it is a stable id that cannot be chosen and
+   * therefore cannot be chosen to impersonate; a person reading a transcript
+   * gets the display ladder instead, which ends at "someone". Rendering
+   * `author` in the cue would put a name in front of an operator that the agent
+   * never saw — the one thing this view exists not to do.
+   */
+  it("takes the cue's author from the host, not from the display name", () => {
+    expect(raw).toContain(
+      "{said ? row.text : cueLine(channel, row.cueAuthor ?? row.author, row.text)}",
+    );
+    expect(raw).toContain("row.cueAuthor && row.cueAuthor !== row.author");
   });
 
   /**
