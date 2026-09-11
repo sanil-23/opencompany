@@ -4068,10 +4068,21 @@ impl TurnSpeech {
 
     /// The channel-visible lines, in call order.
     pub fn utterances(&self) -> Vec<String> {
-        self.utterances
-            .lock()
-            .map(|lines| lines.clone())
-            .unwrap_or_default()
+        // tinysweeper: a poisoned lock (another task panicked while holding
+        // it) means the vector may be incomplete or inconsistent, but that is
+        // not a reason to answer "said nothing" — this turn may well have
+        // spoken before the panic, and silently discarding that is worse than
+        // surfacing a possibly-incomplete list with the corruption logged so
+        // it is detectable.
+        match self.utterances.lock() {
+            Ok(lines) => lines.clone(),
+            Err(poisoned) => {
+                tracing::error!(
+                    "[delegation] turn-speech mutex poisoned; returning a possibly incomplete utterance list"
+                );
+                poisoned.into_inner().clone()
+            }
+        }
     }
 }
 
