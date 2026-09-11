@@ -6750,6 +6750,50 @@ description = "Builds the product."
         assert_eq!(roster[0].role, "Chief Executive");
     }
 
+    /// Every teammate is a **named** openhuman session.
+    ///
+    /// `AgentBuilder` defaults `event_session_id` to the literal
+    /// `"standalone"`, and this crate did not set it — so every agent of every
+    /// company on the process published `AgentTurnStarted`,
+    /// `AgentTurnCompleted` and `AgentError` under one shared id. That was
+    /// invisible while one turn ran at a time; openhuman's library host now
+    /// overlaps many sessions on one core, and an event stream nobody can
+    /// attribute is what that costs.
+    ///
+    /// Asserted on [`CompanyAgent::session_key`] rather than on the built
+    /// session, because openhuman keeps `event_session_id()` `pub(super)` — a
+    /// session cannot be asked its own name from outside that crate. The field
+    /// and the `.event_context` call are filled from the same function, so this
+    /// pins the name the roster hands out; `session_key`'s own unit tests pin
+    /// the shape.
+    #[tokio::test]
+    async fn every_roster_teammate_gets_its_own_openhuman_session_name() {
+        let rec = record();
+        let fx = fixture();
+        let roster = build_roster(&rec, &fx.deps, &[], &HashMap::new()).expect("roster builds");
+
+        for agent in &roster {
+            assert_eq!(
+                agent.session_key,
+                crate::harness::session_key::openhuman_session_key(&rec.id, &agent.agent_id),
+                "{} was not named for its company and id",
+                agent.agent_id
+            );
+        }
+
+        let names: std::collections::HashSet<&str> =
+            roster.iter().map(|a| a.session_key.as_str()).collect();
+        assert_eq!(
+            names.len(),
+            roster.len(),
+            "two teammates shared a session name — which is the `standalone`              collision this exists to end: {names:?}"
+        );
+        assert!(
+            !names.contains("standalone"),
+            "a teammate is still on the builder's unnamed default"
+        );
+    }
+
     /// Context routing: the resolution that feeds a persona, and the fingerprint
     /// that decides whether an edit reaches the next turn.
     mod routed_context {
