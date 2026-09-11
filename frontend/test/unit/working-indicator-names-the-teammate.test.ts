@@ -29,8 +29,11 @@ function render(props: Parameters<typeof WorkingIndicator>[0]) {
   return container.querySelector("[data-testid='working-indicator']")?.textContent ?? "";
 }
 
-const step = (status: TurnStep["status"]): TurnStep =>
-  ({ id: "s1", label: "Reading the ledger", status }) as TurnStep;
+const step = (status: TurnStep["status"]): TurnStep => ({
+  kind: "tool_call",
+  label: "Reading the ledger",
+  status,
+});
 
 /**
  * The line a reloaded console shows while a turn it never sent is running.
