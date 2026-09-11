@@ -114,7 +114,12 @@ export function WorkingIndicator({
       <span aria-hidden className="truncate">
         {queued ? QUEUED_LABEL : (running ?? idle)}
       </span>
-      <span className="sr-only">{queued ? QUEUED_LABEL : srLabel}</span>
+      {/* CodeRabbit: the visible line already names the teammate (`idle`,
+          above) once a step settles; the sr-only twin was still falling back
+          to the generic `srLabel` in that same case, so an AT user never got
+          the identity a sighted reader saw. Matches `idle`'s own phrasing —
+          `name` wins over the generic label whenever this is not queued. */}
+      <span className="sr-only">{queued ? QUEUED_LABEL : (name ? idle : srLabel)}</span>
     </span>
   );
 }
