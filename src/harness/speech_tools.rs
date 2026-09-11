@@ -507,7 +507,7 @@ impl Tool for DmTool {
                 // own id: a message to yourself reaches nobody else, and a row
                 // whose audience is only its author is a covert channel with a
                 // journal entry.
-                let peers: Vec<String> = to
+                let mut peers: Vec<String> = to
                     .iter()
                     .filter(|id| *id != &self.0.agent_id)
                     .cloned()
@@ -519,19 +519,31 @@ impl Tool for DmTool {
                             .to_string(),
                     ));
                 }
-                // Every named teammate must be on the roster. An id that
-                // resolves to nobody would journal a row nobody can ever read,
-                // which is worse than a refusal that says so.
+                // Every named teammate must resolve to exactly one roster id.
+                // `dm` below hands `peer` straight to `openhuman_session_key`,
+                // and `agent_channels` registers a recipient's session under
+                // its *canonical* id — so a `to` entry that was typed as a
+                // display name must be replaced with that id before it ever
+                // reaches `dm`, or the row is journaled under a session
+                // nothing reads. `Unknown` names nobody; `Ambiguous` names more
+                // than one teammate and must not silently pick either.
                 if let Ok(Some(record)) = self.0.store.load(&self.0.company).await {
-                    let unknown: Vec<&String> = peers
-                        .iter()
-                        .filter(|id| {
-                            matches!(
-                                record.resolve_teammate_key(id),
-                                crate::ports::types::TeammateResolution::Unknown
-                            )
-                        })
-                        .collect();
+                    let mut canonical: Vec<String> = Vec::with_capacity(peers.len());
+                    let mut unknown: Vec<String> = Vec::new();
+                    let mut ambiguous: Vec<String> = Vec::new();
+                    for id in &peers {
+                        match record.resolve_teammate_key(id) {
+                            crate::ports::types::TeammateResolution::Agent(canonical_id) => {
+                                canonical.push(canonical_id)
+                            }
+                            crate::ports::types::TeammateResolution::Unknown => {
+                                unknown.push(id.clone())
+                            }
+                            crate::ports::types::TeammateResolution::Ambiguous(_) => {
+                                ambiguous.push(id.clone())
+                            }
+                        }
+                    }
                     if !unknown.is_empty() {
                         let names = unknown
                             .iter()
@@ -543,6 +555,18 @@ impl Tool for DmTool {
                              again."
                         )));
                     }
+                    if !ambiguous.is_empty() {
+                        let names = ambiguous
+                            .iter()
+                            .map(|id| format!("@{id}"))
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        return Ok(ToolResult::error(format!(
+                            "More than one teammate answers to {names}. Use their id instead of \
+                             a display name."
+                        )));
+                    }
+                    peers = canonical;
                 }
                 Ok(self.0.dm(peers, message).await)
             }
