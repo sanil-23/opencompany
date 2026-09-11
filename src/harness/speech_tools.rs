@@ -1633,6 +1633,91 @@ members = ["designer"]
         );
     }
 
+    /// Codex P1 (fresh evidence): a desk's *display name*, not just its id,
+    /// collides the same way — `chat_history::owns` matches on either — so a
+    /// desk `{ id = "triage", name = "support" }` makes a DM to agent
+    /// `support` exactly as readable-by-the-whole-desk as an id collision
+    /// would.
+    #[tokio::test]
+    async fn a_dm_to_a_peer_whose_id_collides_with_a_desk_name_lands_under_the_prefixed_key() {
+        let (context, events, _dir) = context();
+        let manifest: crate::company::CompanyManifest = toml::from_str(
+            r#"
+[company]
+name = "Acme"
+
+[policy]
+mode = "full"
+
+[[agent]]
+id = "designer"
+role = "Designer"
+description = "Draws things."
+
+[[agent]]
+id = "support"
+role = "Support"
+description = "Answers things."
+
+[[group_chat]]
+id = "triage"
+name = "support"
+members = ["designer"]
+"#,
+        )
+        .expect("valid manifest");
+        let record = crate::ports::types::CompanyRecord {
+            id: context.company.clone(),
+            manifest,
+            ledger: Vec::new(),
+            lifecycle: "running".to_string(),
+            setup: None,
+            name_confirmed: false,
+            activation_completed_at: None,
+            created_at_millis: None,
+            overlay_agents: Vec::new(),
+            overlay_desk_members: Vec::new(),
+            overlay_desk_order: Vec::new(),
+            overlay_desks: Vec::new(),
+            overlay_desk_hive: Vec::new(),
+            overlay_retired_agents: Vec::new(),
+            overlay_agent_edits: Vec::new(),
+            overlay_tool_grants: None,
+            overlay_workflows: Vec::new(),
+            overlay_budgets: Vec::new(),
+            overlay_policy: None,
+            overlay_desk_tools: Default::default(),
+            disabled_workflows: Vec::new(),
+            template_provenance: None,
+        };
+        context.store.save(&record).await.expect("the record saves");
+        let spoken = crate::runtime::delegation::new_turn_speech();
+        let result = crate::runtime::delegation::with_turn_speech(spoken.clone(), async {
+            crate::runtime::delegation::with_turn_conversation(
+                Some("triage".to_string()),
+                DmTool(context).execute(serde_json::json!({
+                    "to": ["support"],
+                    "message": "between us: ship it"
+                })),
+            )
+            .await
+        })
+        .await
+        .expect("the tool runs");
+        assert!(!result.is_error, "{result:?}");
+        let appended = events.0.lock().expect("lock");
+        assert_eq!(appended.len(), 1, "{appended:?}");
+        let CompanyEvent::AgentReply { chat_id, .. } = &appended[0] else {
+            panic!("expected an AgentReply, got {:?}", appended[0]);
+        };
+        assert_eq!(
+            chat_id, "dm:support",
+            "the bare id collides with the `triage` desk's display NAME (\"support\"), \
+             which `owns` matches exactly like an id collision; the prefixed key keeps \
+             it private"
+        );
+    }
+
     /// Two recipients get two rows, one in each of their channels.
     ///
     /// Not one row with both in an audience: there is no channel both of them
