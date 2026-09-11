@@ -1024,6 +1024,85 @@ mod test {
         }
     }
 
+    /// A journal that actually answers `read_before`, for exercising
+    /// `desk_read`'s scan — `RecordingLog` and `FlakyLog` both hardcode
+    /// `read_from` to `Ok(Vec::new())`, which is fine for the tools that only
+    /// append, but makes them useless for testing a tool whose entire job is
+    /// reading history back.
+    #[derive(Default)]
+    struct HistoryLog(Mutex<Vec<StoredEvent>>);
+
+    impl HistoryLog {
+        fn seed(events: Vec<CompanyEvent>) -> Self {
+            let stored = events
+                .into_iter()
+                .enumerate()
+                .map(|(i, event)| StoredEvent {
+                    seq: EventSeq::new(i as u64 + 1),
+                    company: CompanyId::new("acme"),
+                    event,
+                    at_millis: 0,
+                })
+                .collect();
+            Self(Mutex::new(stored))
+        }
+    }
+
+    #[async_trait]
+    impl EventLog for HistoryLog {
+        async fn append(&self, _id: &CompanyId, event: CompanyEvent) -> crate::Result<EventSeq> {
+            let mut rows = self.0.lock().expect("test log lock");
+            let seq = EventSeq::new(rows.len() as u64 + 1);
+            rows.push(StoredEvent {
+                seq,
+                company: CompanyId::new("acme"),
+                event,
+                at_millis: 0,
+            });
+            Ok(seq)
+        }
+        async fn read_from(
+            &self,
+            _id: &CompanyId,
+            seq: EventSeq,
+            limit: usize,
+        ) -> crate::Result<Vec<StoredEvent>> {
+            Ok(self
+                .0
+                .lock()
+                .expect("test log lock")
+                .iter()
+                .filter(|stored| stored.seq.value() >= seq.value())
+                .take(limit)
+                .cloned()
+                .collect())
+        }
+        async fn read_before(
+            &self,
+            _id: &CompanyId,
+            before: Option<EventSeq>,
+            limit: usize,
+        ) -> crate::Result<Vec<StoredEvent>> {
+            let mut rows: Vec<StoredEvent> = self
+                .0
+                .lock()
+                .expect("test log lock")
+                .iter()
+                .filter(|stored| before.is_none_or(|cursor| stored.seq.value() < cursor.value()))
+                .cloned()
+                .collect();
+            rows.reverse();
+            rows.truncate(limit);
+            Ok(rows)
+        }
+        fn subscribe(
+            &self,
+            _id: &CompanyId,
+        ) -> BoxStream<'static, crate::ports::events::EventStreamItem> {
+            Box::pin(stream::empty())
+        }
+    }
+
     #[async_trait]
     impl EventLog for RecordingLog {
         async fn append(&self, _id: &CompanyId, event: CompanyEvent) -> crate::Result<EventSeq> {
