@@ -903,6 +903,8 @@ impl MessageView {
                 id,
                 channel: agent_id.clone(),
                 admin_only: agent_id == crate::runtime::OWNER_FALLBACK_REPORT_AUTHOR,
+                // `body_of`'s `AgentReply` arm names the agent, so this does.
+                cue_author: agent_id.clone(),
                 author: agent_id,
                 text: readable_moves(text),
                 at_millis,
@@ -990,6 +992,11 @@ impl MessageView {
                     id,
                     channel: voice,
                     admin_only: false,
+                    // The agent's byline for this row, resolved by the one
+                    // function that decides it. NOT `author` above: that is the
+                    // display name a person reads, and it lands on "someone"
+                    // where this lands on the user id.
+                    cue_author: cue_author(&by),
                     author,
                     text,
                     at_millis,
@@ -1049,6 +1056,9 @@ impl MessageView {
                 id,
                 channel: crate::ports::SYSTEM_AUTHOR.to_string(),
                 admin_only: false,
+                // `body_of` hands an agent no structural marker, so nothing
+                // ever reads this — named rather than left to drift.
+                cue_author: crate::ports::SYSTEM_AUTHOR.to_string(),
                 author: crate::ports::SYSTEM_AUTHOR.to_string(),
                 text: dispatch_marker_text(&column),
                 at_millis,
@@ -1074,6 +1084,9 @@ impl MessageView {
                 id,
                 channel: crate::ports::SYSTEM_AUTHOR.to_string(),
                 admin_only: false,
+                // `body_of` hands an agent no structural marker, so nothing
+                // ever reads this — named rather than left to drift.
+                cue_author: crate::ports::SYSTEM_AUTHOR.to_string(),
                 author: crate::ports::SYSTEM_AUTHOR.to_string(),
                 text: format!("{other:?}"),
                 at_millis,
