@@ -4942,7 +4942,7 @@ struct AgentSessionMessageDto {
     cue_author: String,
     /// **The openhuman session these turns belong to** — `{company}:{agent_id}`,
     /// exactly as
-    /// [`openhuman_session_key`](crate::harness::session_key::openhuman_session_key)
+    /// [`openhuman_session_key`](crate::session_key::openhuman_session_key)
     /// mints it for the builder that stamps it onto the live session.
     ///
     /// # Why a per-row field and not an envelope
@@ -5005,7 +5005,7 @@ async fn agent_session_response(
     // hundred.
     // Minted once, by the one function that names a session, and copied onto
     // every row. See `AgentSessionMessageDto::openhuman_session_key`.
-    let session_key = crate::harness::session_key::openhuman_session_key(company, agent_id);
+    let session_key = crate::session_key::openhuman_session_key(company, agent_id);
     let mut rows: Vec<AgentSessionMessageDto> = Vec::new();
     for channel in &channels {
         let messages = history_for_desk(
@@ -10194,7 +10194,7 @@ mode = "full"
     #[tokio::test]
     async fn the_session_route_reports_the_key_openhuman_session_key_mints() {
         let expected =
-            crate::harness::session_key::openhuman_session_key(&CompanyId::new("acme"), "ceo");
+            crate::session_key::openhuman_session_key(&CompanyId::new("acme"), "ceo");
         let rows = session_rows("/api/v1/companies/acme/agents/ceo/session").await;
         for row in &rows {
             assert_eq!(
