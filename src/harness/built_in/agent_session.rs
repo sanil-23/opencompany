@@ -365,6 +365,50 @@ pub fn render_cues(envelopes: &[Envelope]) -> Option<String> {
 
 #[cfg(test)]
 mod test {
+    /// The byline an agent is handed and the one the console is shipped are the
+    /// same string.
+    ///
+    /// The console's raw view renders the cue line an agent received, and it
+    /// gets the author half from `MessageView::cue_author` on the session
+    /// route. If these two projections ever answered differently, that view
+    /// would be putting a name in front of an operator that the agent never
+    /// saw — which is the one thing it exists not to do. They are separate
+    /// matches in separate modules (one is `#[cfg(feature = "openhuman")]`),
+    /// so nothing but this test holds them together.
+    #[test]
+    fn cue_author_matches_the_envelope_the_agent_is_handed() {
+        use crate::ports::types::{Actor, ActorKind};
+
+        let cases = [
+            // A signed-in person: the stable user id, never their screen name.
+            Some(Actor {
+                kind: ActorKind::User,
+                id: "01a08d773a62-000000000034".to_string(),
+            }),
+            // A crossing referral, authored by a teammate: no person to name.
+            Some(Actor {
+                kind: ActorKind::Agent,
+                id: "engineer".to_string(),
+            }),
+            // A machine credential, or a line journaled before attribution.
+            None,
+        ];
+        for by in cases {
+            let event = CompanyEvent::OperatorMessage {
+                chat_id: crate::ports::DEFAULT_CHAT.to_string(),
+                text: "hello".to_string(),
+                by: by.clone(),
+                ..Default::default()
+            };
+            let (author, _, _) = body_of("brand_designer", &event).expect("a body");
+            assert_eq!(
+                author,
+                crate::server::chat_history::cue_author(&by),
+                "the cue's author and the route's `cue_author` disagree for {by:?}",
+            );
+        }
+    }
+
     use super::*;
     use crate::ports::types::StoredEvent;
     use async_trait::async_trait;
