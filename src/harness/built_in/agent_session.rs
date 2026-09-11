@@ -206,6 +206,9 @@ pub async fn prepare_delta(
 
     let channels = agent_channels(record, agent_id);
     let mut newest_first: Vec<Envelope> = Vec::new();
+    // Rows above the watermark this agent will never be handed — see the
+    // comment where these are pushed, below.
+    let mut skip_seen: Vec<EventSeq> = Vec::new();
     let mut scanned: usize = 0;
     let mut cursor = before;
     let mut crossed = false;
