@@ -89,3 +89,58 @@ test("a teammate's session opens from its own address", async ({ page }) => {
     }
   }
 });
+
+/**
+ * The raw view is reachable at its own address.
+ *
+ * `?raw` is a deep link on purpose — "look at what it actually saw" is a thing
+ * one operator sends another — so the walk opens it cold rather than clicking
+ * the toggle. A click path would pass with the address broken, which is the one
+ * failure that matters here.
+ */
+test("a teammate's raw turns open from their own address", async ({ page }) => {
+  await page.goto("/");
+  await dismissOnboarding(page);
+
+  await page.goto("/#/company/agent/engineer?tab=session&raw");
+  await dismissOnboarding(page);
+
+  const tab = page.getByTestId("agent-tab-session");
+  await expect(tab).toBeVisible({ timeout: 30_000 });
+  await expect(tab).toHaveAttribute("aria-selected", "true");
+
+  // Either the raw stream, or one of the two honest empties. Whether this
+  // harness company's data directory holds a transcript decides which, and the
+  // spec must not depend on that — what it asserts is that the address settles.
+  const rawStream = page.getByTestId("agent-session-raw");
+  const settled = rawStream
+    .or(page.getByText(/has not said or heard anything yet/))
+    .or(page.getByText(/does not keep a per-agent session yet/));
+  await expect(settled.first()).toBeVisible({ timeout: 30_000 });
+
+  if (await rawStream.isVisible().catch(() => false)) {
+    // The address won: the raw control is the pressed one, and the rendered
+    // stream is the raw one rather than the chat bubbles.
+    await expect(page.getByTestId("agent-session-view-raw")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await expect(page.getByTestId("agent-session")).toHaveCount(0);
+
+    // Every raw turn says whether the teammate said it or was given it. That
+    // distinction is the reason to read this view at all.
+    const turns = page.getByTestId("agent-session-raw-turn");
+    const count = await turns.count();
+    for (let index = 0; index < count; index += 1) {
+      await expect(turns.nth(index)).toHaveAttribute(
+        "data-direction",
+        /^(said|heard)$/,
+      );
+    }
+
+    // And the toggle goes back, without needing a reload.
+    await page.getByTestId("agent-session-view-chat").click();
+    await expect(page.getByTestId("agent-session")).toBeVisible();
+    await expect(rawStream).toHaveCount(0);
+  }
+});
