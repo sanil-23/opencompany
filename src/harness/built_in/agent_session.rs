@@ -395,10 +395,13 @@ mod test {
         ];
         for by in cases {
             let event = CompanyEvent::OperatorMessage {
-                chat_id: crate::ports::DEFAULT_CHAT.to_string(),
                 text: "hello".to_string(),
                 by: by.clone(),
-                ..Default::default()
+                chat: None,
+                parent: None,
+                deliverable: false,
+                mentions: Vec::new(),
+                attachments: Vec::new(),
             };
             let (author, _, _) = body_of("brand_designer", &event).expect("a body");
             assert_eq!(
