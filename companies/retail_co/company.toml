@@ -230,7 +230,7 @@ peer_cap = 2
 id = "returns"
 name = "Returns and Exchanges"
 description = "Delivered orders: exchange an item for a variant of the same product, or take a return for refund."
-members = ["exchanges", "refunds", "triage"]
+members = ["exchanges", "refunds"]
 
 [group_chat.hive]
 enabled = true
