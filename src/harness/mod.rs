@@ -33,7 +33,12 @@ pub mod router;
 /// The name an agent's openhuman session answers to — `{company}:{agent_id}`,
 /// stamped onto the session at build time and quoted by the speech tools when
 /// one teammate leaves a DM in another's. See [`session_key`].
-pub mod session_key;
+///
+/// Re-exported from [`crate::session_key`] rather than declared here: it is a
+/// pure `(company, agent_id)` formatter with no openhuman dependency, and
+/// `src/server/operator.rs` names an agent session's key on a route that
+/// compiles in every build, not just ones with the `openhuman` feature on.
+pub use crate::session_key;
 
 pub use built_in::*;
 
