@@ -168,3 +168,26 @@ turn, and that is what this is.
 "look at what it actually saw" is a link one operator sends another, and a link
 that lands on the bubbles and asks the reader to find a switch has lost the
 point of having been sent.
+
+### The same view from the DM
+
+A **Raw turns** control sits in the chat header of a DM
+(`frontend/src/views/room/ChatHeader.tsx`), addressed as `#/chat/dm:<id>?raw`.
+That is where the question gets asked — "why did it answer that" occurs to you
+mid-conversation, and a control for it two navigations away is one nobody
+finds.
+
+It is offered only in a DM. A `#channel` has several agents and the Operator
+feed has none, so the control would have to pick one for you, which is worse
+than not offering it.
+
+It shows **this conversation's** turns, filtered from the same per-agent route
+by both DM spellings the host registers (the bare teammate id and `dm:<id>` —
+see `chat_history::agent_channels`). A toggle changes how the thing in front of
+you is drawn; it must not quietly change what the thing is, and flipping a DM
+into a stream that also carries `#general` would do that. The pane links to the
+cross-channel view for the operator who wants it.
+
+Both surfaces render `frontend/src/views/room/RawTurns.tsx` — one component,
+because "what the agent saw" is a claim about the runtime, and a claim that
+reads differently depending on which screen you are on is two claims.
