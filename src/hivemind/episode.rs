@@ -1042,7 +1042,21 @@ impl<'a> EpisodeDriver<'a> {
                         .iter_mut()
                         .find(|(existing, _)| *existing == label)
                     {
+                        // Codex P2 (fresh evidence): each target's own window
+                        // is already chronological, but concatenating two
+                        // windows is not — a naive `extend` can leave an
+                        // older bare-spelling row after a newer prefixed one,
+                        // and the combined length can exceed `SESSION_WINDOW`.
+                        // Sorted by sequence, deduplicated (both spellings can
+                        // in principle carry the same row), and cut back down
+                        // to the newest `SESSION_WINDOW`.
                         existing.1.extend(rows);
+                        existing.1.sort_by_key(|message| message.sequence);
+                        existing.1.dedup_by_key(|message| message.sequence);
+                        if existing.1.len() > SESSION_WINDOW {
+                            let overflow = existing.1.len() - SESSION_WINDOW;
+                            existing.1.drain(..overflow);
+                        }
                     } else {
                         elsewhere.push((label, rows));
                     }
