@@ -95,6 +95,31 @@ impl AgentSessionState {
         }
     }
 
+    /// State after a re-seed whose recent-window context covered only the
+    /// turn's own channel (`ChatSeedRequest::build` is given `incoming` and
+    /// nothing else).
+    ///
+    /// The watermark is deliberately **not** reset to the turn's own
+    /// sequence: this agent's session is company-wide, so overwriting it here
+    /// would mark every row below it "already delivered" — including an
+    /// older, still-unseen message on a channel the reseed never looked at
+    /// (Codex P1: a greeting on desk A permanently hides an earlier unseen
+    /// message on desk B). `self`'s prior watermark survives untouched, and
+    /// only the turn's own message is [`accept`](Self::accept)ed, through the
+    /// same compaction a delta uses — which is also what lets a true cold
+    /// start (no prior watermark at all) still come out with one afterward,
+    /// so the next turn can walk a delta instead of re-seeding forever.
+    pub(super) fn reseeded(&self, current_message: Option<EventSeq>) -> Self {
+        let mut next = Self {
+            watermark: self.watermark,
+            present_above_watermark: BTreeSet::new(),
+        };
+        if let Some(seq) = current_message {
+            next.accept(seq);
+        }
+        next
+    }
+
     /// Records `seq` as delivered, compacting the present set into the
     /// watermark whenever it can.
     fn accept(&mut self, seq: EventSeq) {
