@@ -1722,7 +1722,7 @@ fn table_counts_and_intentional_widenings_are_explicit() {
             .flat_map(route_patterns)
             .collect::<BTreeSet<_>>()
             .len(),
-        336,
+        338,
         "concrete paths",
     );
     assert_eq!(render_snapshot().lines().count(), 2_989);
