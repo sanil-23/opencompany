@@ -692,6 +692,17 @@ impl Tool for DmTool {
                 // self-reference once resolved. Re-apply the same refusal
                 // now that every surviving entry is a canonical id.
                 peers.retain(|id| id != &self.0.agent_id);
+                // Codex P2: two `to` entries can canonicalize to the same id —
+                // a repeated raw id, or one spelled once by id and once by
+                // display name — and without this, `dm` below loops over the
+                // vector and journals the identical message once per surviving
+                // entry, doubling it in the recipient's channel. Deduplicated
+                // after canonicalization (not before, where the entries are
+                // not yet comparable) and order-preserving, so the "Left for"
+                // sentence still lists each recipient in the order they were
+                // named.
+                let mut seen_peers = std::collections::HashSet::with_capacity(peers.len());
+                peers.retain(|id| seen_peers.insert(id.clone()));
                 if peers.is_empty() {
                     return Ok(ToolResult::error(
                         "`to` names only you; a message to yourself reaches nobody else. Use \
