@@ -527,61 +527,73 @@ impl Tool for DmTool {
                 // reaches `dm`, or the row is journaled under a session
                 // nothing reads. `Unknown` names nobody; `Ambiguous` names more
                 // than one teammate and must not silently pick either.
-                if let Ok(Some(record)) = self.0.store.load(&self.0.company).await {
-                    let mut canonical: Vec<String> = Vec::with_capacity(peers.len());
-                    let mut unknown: Vec<String> = Vec::new();
-                    let mut ambiguous: Vec<String> = Vec::new();
-                    for id in &peers {
-                        match record.resolve_teammate_key(id) {
-                            crate::ports::types::TeammateResolution::Agent(canonical_id) => {
-                                canonical.push(canonical_id)
-                            }
-                            crate::ports::types::TeammateResolution::Unknown => {
-                                unknown.push(id.clone())
-                            }
-                            crate::ports::types::TeammateResolution::Ambiguous(_) => {
-                                ambiguous.push(id.clone())
-                            }
+                let Ok(Some(record)) = self.0.store.load(&self.0.company).await else {
+                    // tinysweeper: the sibling `resolve_desk` treats an
+                    // unreadable roster as fatal rather than silently skipping
+                    // its own membership check (same rationale, quoted there:
+                    // falling through would risk exactly the row-nobody-reads
+                    // outcome this check exists to prevent). A store error or
+                    // `Ok(None)` here must refuse for the same reason, not
+                    // fall through to `dm` with unresolved names.
+                    return Ok(ToolResult::error(
+                        "The roster could not be read, so I cannot tell who `to` names. Try \
+                         again."
+                            .to_string(),
+                    ));
+                };
+                let mut canonical: Vec<String> = Vec::with_capacity(peers.len());
+                let mut unknown: Vec<String> = Vec::new();
+                let mut ambiguous: Vec<String> = Vec::new();
+                for id in &peers {
+                    match record.resolve_teammate_key(id) {
+                        crate::ports::types::TeammateResolution::Agent(canonical_id) => {
+                            canonical.push(canonical_id)
+                        }
+                        crate::ports::types::TeammateResolution::Unknown => {
+                            unknown.push(id.clone())
+                        }
+                        crate::ports::types::TeammateResolution::Ambiguous(_) => {
+                            ambiguous.push(id.clone())
                         }
                     }
-                    if !unknown.is_empty() {
-                        let names = unknown
-                            .iter()
-                            .map(|id| format!("@{id}"))
-                            .collect::<Vec<_>>()
-                            .join(", ");
-                        return Ok(ToolResult::error(format!(
-                            "Nobody on this company is called {names}. Check the roster and try \
-                             again."
-                        )));
-                    }
-                    if !ambiguous.is_empty() {
-                        let names = ambiguous
-                            .iter()
-                            .map(|id| format!("@{id}"))
-                            .collect::<Vec<_>>()
-                            .join(", ");
-                        return Ok(ToolResult::error(format!(
-                            "More than one teammate answers to {names}. Use their id instead of \
-                             a display name."
-                        )));
-                    }
-                    peers = canonical;
-                    // Codex P2: canonicalization can turn a survivor of the
-                    // filter above back into the caller's own id — an overlay
-                    // teammate addressing itself by its unique DISPLAY NAME
-                    // (`to: ["Nova"]`, agent id `nova`) passes the raw-id
-                    // filter, since `"Nova" != "nova"`, and only becomes a
-                    // self-reference once resolved. Re-apply the same refusal
-                    // now that every surviving entry is a canonical id.
-                    peers.retain(|id| id != &self.0.agent_id);
-                    if peers.is_empty() {
-                        return Ok(ToolResult::error(
-                            "`to` names only you; a message to yourself reaches nobody else. Use \
-                             `desk_post` to say it to the channel."
-                                .to_string(),
-                        ));
-                    }
+                }
+                if !unknown.is_empty() {
+                    let names = unknown
+                        .iter()
+                        .map(|id| format!("@{id}"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    return Ok(ToolResult::error(format!(
+                        "Nobody on this company is called {names}. Check the roster and try \
+                         again."
+                    )));
+                }
+                if !ambiguous.is_empty() {
+                    let names = ambiguous
+                        .iter()
+                        .map(|id| format!("@{id}"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    return Ok(ToolResult::error(format!(
+                        "More than one teammate answers to {names}. Use their id instead of a \
+                         display name."
+                    )));
+                }
+                peers = canonical;
+                // Codex P2: canonicalization can turn a survivor of the
+                // filter above back into the caller's own id — an overlay
+                // teammate addressing itself by its unique DISPLAY NAME
+                // (`to: ["Nova"]`, agent id `nova`) passes the raw-id
+                // filter, since `"Nova" != "nova"`, and only becomes a
+                // self-reference once resolved. Re-apply the same refusal
+                // now that every surviving entry is a canonical id.
+                peers.retain(|id| id != &self.0.agent_id);
+                if peers.is_empty() {
+                    return Ok(ToolResult::error(
+                        "`to` names only you; a message to yourself reaches nobody else. Use \
+                         `desk_post` to say it to the channel."
+                            .to_string(),
+                    ));
                 }
                 Ok(self.0.dm(peers, message).await)
             }
