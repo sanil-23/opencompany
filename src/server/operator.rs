@@ -5027,12 +5027,14 @@ async fn agent_session_response(
         .await?;
         for message in messages {
             // Read before the conversion: `ChatHistoryMessageDto::from` takes
-            // the view by value, and this field is not one of the ones it
-            // carries — it is the agent's byline, not the reader's.
+            // the view by value, and neither field below is one it carries —
+            // they are what the agent was handed, not what the reader is.
             let cue_author = message.cue_author.clone();
+            let cue_text = message.cue_text.clone();
             rows.push(AgentSessionMessageDto {
                 message: ChatHistoryMessageDto::from(message),
                 cue_author,
+                cue_text,
                 session_channel: channel.label.clone(),
                 session_channel_id: channel.id.clone(),
                 openhuman_session_key: session_key.clone(),
