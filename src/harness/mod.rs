@@ -30,6 +30,10 @@ pub mod acp;
 pub mod built_in;
 pub mod lanes;
 pub mod router;
+/// The name an agent's openhuman session answers to — `{company}:{agent_id}`,
+/// stamped onto the session at build time and quoted by the speech tools when
+/// one teammate leaves a DM in another's. See [`session_key`].
+pub mod session_key;
 
 pub use built_in::*;
 
