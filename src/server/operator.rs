@@ -4970,7 +4970,8 @@ struct AgentSessionMessageDto {
     openhuman_session_key: String,
 }
 
-/// `GET {scope}/agents/{agent_id}/session` — everything one agent said and heard.
+/// `GET {scope}/agents/{agent_id}/session` — every row on every channel this
+/// agent is eligible to read.
 ///
 /// # Why this is one route and not "read the desks yourself"
 ///
@@ -4980,6 +4981,18 @@ struct AgentSessionMessageDto {
 /// and that function is also what decides the agent's **own** session. Asking
 /// it here is what keeps the page from claiming an agent saw something it did
 /// not — one function, two readers, no drift.
+///
+/// # Eligible is not delivered
+///
+/// This is channel history the agent **may** read, not a record of what it
+/// has **already** been handed. A `desk_dm` journals a row and runs nothing —
+/// the recipient reads it on its own next turn, through the per-agent
+/// watermark `agent_session::AgentSessionState` tracks. That watermark lives
+/// in the live [`HarnessPool`](crate::harness::HarnessPool), gated behind the
+/// `openhuman` feature; this route has no access to it and compiles in every
+/// build. So a message queued behind another turn shows up here immediately,
+/// same as one the agent answered an hour ago. See
+/// `docs/spec/runtime/speech.md#reading-it-back`.
 ///
 /// # The operator sees more than the agent does, deliberately
 ///
