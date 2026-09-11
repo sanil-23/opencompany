@@ -562,7 +562,17 @@ pub const CUE_OPERATOR_LABEL: &str = "operator";
 /// answer `None` — neither names a person.
 pub fn cue_author_id(by: &Option<Actor>) -> Option<String> {
     match by {
-        Some(actor) if actor.kind == ActorKind::User => Some(actor.id.clone()),
+        // CodeRabbit: an agent-authored crossing arrives as an
+        // `OperatorMessage` too (the `ActorKind::Agent` arm a few lines below
+        // this function's own callers, in `MessageView::project`) — this
+        // matched only `User` and fell through to the `operator` fallback for
+        // that arm, so the raw view and the cue line both attributed the
+        // teammate's own line to "operator". Both actor kinds name a real
+        // sender; only a machine credential (`None`, or neither kind) has
+        // nobody to name.
+        Some(actor) if matches!(actor.kind, ActorKind::User | ActorKind::Agent) => {
+            Some(actor.id.clone())
+        }
         _ => None,
     }
 }
