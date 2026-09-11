@@ -31,13 +31,15 @@
 // page shows every one in full. See `docs/spec/runtime/hivemind-asides.md`.
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Loader2, MessageSquare } from "lucide-react";
+import { Braces, Loader2, MessageSquare, MessagesSquare } from "lucide-react";
 
 import type { OpenCompanyClient } from "@/api/client";
-import type { AgentSessionMessageDto } from "@/api/types";
+import type { AgentSessionMessageDto, TurnStep } from "@/api/types";
 import { TeammateAvatar } from "@/components/teammate-avatar";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { useHashFlag } from "@/hooks/use-hash-flag";
 import { fromHistory, type ChatMessage } from "@/lib/chat";
 import { cn } from "@/lib/utils";
 import {
@@ -54,6 +56,17 @@ interface SessionLine {
   message: ChatMessage;
   channel: string;
   channelId: string;
+  /**
+   * The host's own row, kept beside the mapped message because the raw view
+   * renders **this** and not `message`.
+   *
+   * `fromHistory` is a rendering decision: it resolves `from` against the
+   * viewer, prefixes ids, and lifts referrals and asides onto the bubble. All
+   * of that is exactly what somebody asking for the raw turns is asking to see
+   * past. Rendering the raw view from the mapped shape would make it a second
+   * opinion about the transcript rather than the transcript.
+   */
+  row: AgentSessionMessageDto;
 }
 
 type Load = "loading" | "ready" | "unsupported" | "error";
@@ -92,11 +105,18 @@ export function AgentSession({
       // the room's.
       const mapped = fromHistory(rows);
       setLines(
-        mapped.map((message, index) => ({
-          message,
-          channel: rows[index]?.sessionChannel ?? "",
-          channelId: rows[index]?.sessionChannelId ?? "",
-        })),
+        mapped.flatMap((message, index) => {
+          const row = rows[index];
+          if (!row) return [];
+          return [
+            {
+              message,
+              channel: row.sessionChannel ?? "",
+              channelId: row.sessionChannelId ?? "",
+              row,
+            },
+          ];
+        }),
       );
       setLoad("ready");
     } catch (error) {
