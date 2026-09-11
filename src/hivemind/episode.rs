@@ -995,11 +995,7 @@ impl<'a> EpisodeDriver<'a> {
                     format!("#{} ({})", desk.id, desk.name),
                 )
             })
-            .chain(
-                (self.desk.id != general)
-                    .then(|| (general.clone(), general.clone(), general_label))
-                    .into_iter(),
-            )
+            .chain((self.desk.id != general).then(|| (general.clone(), general.clone(), general_label)))
             .chain(std::iter::once((
                 agent_id.to_string(),
                 agent_id.to_string(),
