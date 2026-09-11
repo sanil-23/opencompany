@@ -10137,6 +10137,101 @@ mode = "full"
         );
     }
 
+    /// Everything one agent said and heard, for a company with one reply in it.
+    ///
+    /// Fetched through the router so the assertion is about the wire, not about
+    /// the struct it was built from.
+    async fn session_rows(uri: &str) -> Vec<serde_json::Value> {
+        let home_dir = home();
+        let home = home_dir.path().to_path_buf();
+        let state = state_with_company(&home, "running").await;
+        let runtime = state.registry().get(&CompanyId::new("acme")).unwrap();
+        runtime
+            .events()
+            .append(
+                runtime.id(),
+                CompanyEvent::AgentReply {
+                    audience: Vec::new(),
+                    mentions: Vec::new(),
+                    mention_depth: 0,
+                    parent: None,
+                    task_id: None,
+                    chat_id: "General".to_string(),
+                    agent_id: "ceo".to_string(),
+                    text: "one turn, from one session".to_string(),
+                    steps: Vec::new(),
+                },
+            )
+            .await
+            .unwrap();
+
+        let app = router(state);
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri(uri)
+                    .header("cookie", crate::server::test_support::fixed_cookie("acme"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "GET {uri}");
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let rows = value.as_array().cloned().unwrap_or_default();
+        assert!(!rows.is_empty(), "no session rows came back from {uri}");
+        rows
+    }
+
+    /// The console must name the session the runtime actually uses.
+    ///
+    /// Pinned to [`openhuman_session_key`] itself rather than to the literal
+    /// `"acme:ceo"`, because the property worth keeping is not the current
+    /// spelling — it is that there is only ever **one** spelling. A route that
+    /// built its own `format!` would pass a literal assertion on the day it was
+    /// written and go on passing it the day the minting function changed.
+    #[tokio::test]
+    async fn the_session_route_reports_the_key_openhuman_session_key_mints() {
+        let expected =
+            crate::harness::session_key::openhuman_session_key(&CompanyId::new("acme"), "ceo");
+        let rows = session_rows("/api/v1/companies/acme/agents/ceo/session").await;
+        for row in &rows {
+            assert_eq!(
+                row.get("openhumanSessionKey").and_then(|k| k.as_str()),
+                Some(expected.as_str()),
+                "every row of one agent's session belongs to that one session: {row}"
+            );
+        }
+    }
+
+    /// The single-company alias resolves the same company, so it must report
+    /// the same session — an operator reading the same agent through the other
+    /// scope form is not looking at a second session.
+    #[tokio::test]
+    async fn both_scope_forms_of_the_session_route_report_the_same_key() {
+        let scoped = session_rows("/api/v1/companies/acme/agents/ceo/session").await;
+        let alias = session_rows("/api/v1/company/agents/ceo/session").await;
+        assert_eq!(
+            scoped[0].get("openhumanSessionKey"),
+            alias[0].get("openhumanSessionKey"),
+        );
+    }
+
+    /// The field reaches the browser under the name the console binds to.
+    /// `tsc` cannot check a hand-written interface against a Rust DTO; this is
+    /// that check, in the idiom the folded-aside test above set.
+    #[tokio::test]
+    async fn the_session_key_reaches_the_wire_as_camel_case() {
+        let rows = session_rows("/api/v1/companies/acme/agents/ceo/session").await;
+        assert!(
+            rows[0].get("openhuman_session_key").is_none(),
+            "snake_case would silently read as undefined in the console: {}",
+            rows[0]
+        );
+        assert!(rows[0].get("openhumanSessionKey").is_some(), "{}", rows[0]);
+    }
+
     /// Regression: a reply's tool-call timeline must survive a history reload —
     /// switching threads and coming back reloads `chat/history`, which used to
     /// return text only, so the steps vanished. They are now persisted on the
