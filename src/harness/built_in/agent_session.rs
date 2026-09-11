@@ -399,7 +399,7 @@ mod test {
                 by: by.clone(),
                 chat: None,
                 parent: None,
-                deliverable: false,
+                deliverable: None,
                 mentions: Vec::new(),
                 attachments: Vec::new(),
             };
