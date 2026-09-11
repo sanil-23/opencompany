@@ -211,8 +211,23 @@ describe("the raw-turns toggle in a DM", () => {
    * cross-channel view keeps its own address, and the pane links to it.
    */
   it("shows this conversation's turns, and links to the whole session", () => {
-    expect(room).toContain("rows.filter((row) => inDmWith(row, rawAgentId))");
+    expect(room).toContain("rows.filter((row) => inDmWith(row, agentId))");
     expect(room).toContain("?tab=session&raw");
+  });
+
+  /**
+   * `.../session` answers the agent's whole merged, cross-channel stream,
+   * capped at one page — so a single read can be entirely some other desk's
+   * traffic while this DM sits just past the cut, and a client-side filter
+   * over that one page would show an older, non-empty DM as if it said
+   * nothing (Codex P2). The fetch has to walk pages with `before` until this
+   * channel's own rows fill the window or the host's history runs out, not
+   * trust one page to contain them.
+   */
+  it("pages backward with `before` to fill the DM's own window, not just its first page", () => {
+    expect(room).toContain("async function fetchDmRawTurns(");
+    expect(room).toContain("before,");
+    expect(room).toContain("rows.length < RAW_TURN_PAGE || collected.length >= RAW_TURN_PAGE");
   });
 
   /**
