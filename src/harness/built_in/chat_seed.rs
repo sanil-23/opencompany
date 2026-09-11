@@ -216,7 +216,7 @@ impl ChatSeedRequest {
                     },
                     SessionAuthor::Operator => SeedEntry {
                         role: "user",
-                        speaker: Speaker::Operator(OPERATOR_LABEL.to_string()),
+                        speaker: Speaker::Operator(crate::server::chat_history::CUE_OPERATOR_LABEL.to_string()),
                         text: message.content,
                         parent: None,
                     },
@@ -617,14 +617,16 @@ fn prefix_every_line(label: &str, text: &str) -> String {
 /// How a human is named in a seed.
 ///
 /// The signed-in user's id when there is one, so two people on a desk are two
-/// speakers; [`OPERATOR_LABEL`] for a machine credential or a message journaled
+/// speakers; [`CUE_OPERATOR_LABEL`](crate::server::chat_history::CUE_OPERATOR_LABEL)
+/// for a machine credential or a message journaled
 /// before attribution existed, which is the same answer
 /// [`chat_history::MessageView::project`] gives that case.
 ///
 /// **Not the display name the console shows.** Resolving one costs a store read
 /// per distinct author, and this projection runs inside the per-company cycle
 /// lock on a path whose whole design note is that it must not do avoidable I/O.
-/// An id is stable, unique and already unforgeable (see [`OPERATOR_LABEL`]);
+/// An id is stable, unique and already unforgeable (see
+/// [`CUE_OPERATOR_LABEL`](crate::server::chat_history::CUE_OPERATOR_LABEL));
 /// a colleague's screen name is neither of the last two.
 pub(super) fn operator_label(by: &Option<crate::ports::types::Actor>) -> String {
     // Delegated rather than duplicated. The console's raw view renders this
@@ -633,14 +635,6 @@ pub(super) fn operator_label(by: &Option<crate::ports::types::Actor>) -> String 
     // what an operator is shown the agent was handed.
     crate::server::chat_history::cue_author(by)
 }
-
-/// The label a message with no resolvable human author carries.
-///
-/// Safe to sit in the same namespace as roster ids and user ids: a manifest
-/// refuses the reserved ids (`company/manifest.rs`), and a minted user id is
-/// not this word. Nothing a *body* can say matters here, because bodies are
-/// nested under their own speaker's label by [`prefix_every_line`].
-const OPERATOR_LABEL: &str = crate::server::chat_history::CUE_OPERATOR_LABEL;
 
 /// Keeps each root's **first** reply and drops the rest (issue #1890 D part 3).
 ///
@@ -1276,7 +1270,7 @@ mod tests {
     fn op_entry(text: &str) -> SeedEntry {
         SeedEntry {
             role: "user",
-            speaker: Speaker::Operator(OPERATOR_LABEL.to_string()),
+            speaker: Speaker::Operator(crate::server::chat_history::CUE_OPERATOR_LABEL.to_string()),
             text: text.to_string(),
             parent: None,
         }
