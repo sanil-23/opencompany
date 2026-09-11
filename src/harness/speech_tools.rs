@@ -2038,9 +2038,7 @@ members = ["engineer"]
         .await
         .expect("the tool runs");
         assert!(!result.is_error, "{result:?}");
-        let ToolContent::Text { text } = &result.content[0] else {
-            panic!("expected a text block, got {:?}", result.content);
-        };
+        let text = tool_result_text(&result);
         let first = text.find("first").expect("first present");
         let second = text.find("second").expect("second present");
         let third = text.find("third").expect("third present");
@@ -2084,9 +2082,7 @@ members = ["engineer"]
         .await
         .expect("the tool runs");
         assert!(!result.is_error, "{result:?}");
-        let ToolContent::Text { text } = &result.content[0] else {
-            panic!("expected a text block, got {:?}", result.content);
-        };
+        let text = tool_result_text(&result);
         assert!(text.contains("public line"), "{text}");
         assert!(
             !text.contains("a private aside between us"),
@@ -2138,9 +2134,7 @@ members = ["engineer"]
         .await
         .expect("the tool runs");
         assert!(!result.is_error, "{result:?}");
-        let ToolContent::Text { text } = &result.content[0] else {
-            panic!("expected a text block, got {:?}", result.content);
-        };
+        let text = tool_result_text(&result);
         assert!(
             text.contains("Older messages are not in this reply"),
             "budget exhaustion must be reported as truncation, not read as a complete \
