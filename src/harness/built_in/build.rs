@@ -1307,6 +1307,24 @@ pub fn build_agent(
         ))
         .model_name(model)
         .workspace_dir(workspace)
+        // One teammate, one *named* openhuman session.
+        //
+        // The builder defaults this pair to `("standalone", "internal")`, and
+        // this crate never set it — so every agent of every company on the
+        // process published `AgentTurnStarted`, `AgentTurnCompleted`,
+        // `AgentError` and its prompt-enforcement context under one shared
+        // session id. That was survivable only because one turn ran at a time.
+        // openhuman's library host now runs many sessions over one core
+        // concurrently, and an unlabelled event stream is exactly what stops
+        // being readable when turns overlap.
+        //
+        // See [`session_key`](crate::harness::session_key) for the shape and
+        // for why it must be a pure function of the two ids rather than
+        // anything a roster rebuild disturbs.
+        .event_context(
+            crate::harness::session_key::openhuman_session_key(company, &manifest_agent.id),
+            crate::harness::session_key::SESSION_CHANNEL,
+        )
         .agent_definition_name(agent_definition_name)
         .auto_save(false)
         .build()
