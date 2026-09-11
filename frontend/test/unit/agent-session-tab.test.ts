@@ -56,9 +56,18 @@ describe("the Session tab", () => {
    * `fromHistory` is the room's mapping and is reused whole. It is what carries
    * `referralConversation` and `asideConversation` through untouched; a
    * hand-rolled map here would be a second answer to "what is a chat line".
+   *
+   * Called once per row (`fromHistory([row])`), not once for the whole array
+   * (tinysweeper review): the old `fromHistory(rows)` shape correlated its
+   * output back to `rows` by array index, which held only because `fromHistory`
+   * happens to be a 1:1, order-preserving `.map` today — a later filter or
+   * reorder inside it would silently misattribute a row's `channel` with no
+   * type error to catch it. Per-row calls tie each message to its row
+   * structurally instead of positionally.
    */
   it("maps rows through the room's own history mapping", () => {
-    expect(session).toContain("fromHistory(rows)");
+    expect(session).toContain("fromHistory([row])");
+    expect(session).not.toContain("fromHistory(rows)");
   });
 
   /**
