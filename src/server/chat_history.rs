@@ -1081,6 +1081,10 @@ impl MessageView {
                 // ever reads this — named rather than left to drift.
                 cue_author: crate::ports::SYSTEM_AUTHOR.to_string(),
                 author: crate::ports::SYSTEM_AUTHOR.to_string(),
+                // `body_of` never delivers this marker to an agent (see the
+                // comment on `cue_author` above); equal to `text` for the same
+                // reason that one is named rather than left to drift.
+                cue_text: dispatch_marker_text(&column),
                 text: dispatch_marker_text(&column),
                 at_millis,
                 mine: false,
