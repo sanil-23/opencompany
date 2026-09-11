@@ -1709,7 +1709,7 @@ fn table_counts_and_intentional_widenings_are_explicit() {
     assert_eq!(EXTERNAL_AUTHORITY_ROUTES.len(), 4);
     assert_eq!(OVERLAPPING_EXTERNAL_ROUTES.len(), 1);
     assert_eq!(OPERATOR_AUTHORITY_ROUTES.len(), 16);
-    assert_eq!(OPERATOR_DIRECT_ROUTES.len(), 11);
+    assert_eq!(OPERATOR_DIRECT_ROUTES.len(), 13);
     assert_eq!(
         all_routes()
             .map(|route| route_patterns(route).len())
