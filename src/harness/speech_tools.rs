@@ -321,7 +321,7 @@ impl SpeechContext {
             let key = dm_journal_key(record, peer);
             let result = self.say(key, text.clone(), Vec::new()).await;
             if result.is_error {
-                failed_for.push((peer.clone(), result.into_text()));
+                failed_for.push((peer.clone(), tool_result_text(&result)));
                 continue;
             }
             // A DM is a hop from one openhuman session to another, and
