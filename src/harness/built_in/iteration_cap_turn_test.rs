@@ -319,6 +319,10 @@ async fn company_agent(
     CompanyAgent {
         agent_id: "ceo".to_string(),
         role: "Chief Executive".to_string(),
+        session_key: crate::harness::session_key::openhuman_session_key(
+            &crate::ports::CompanyId::new("test"),
+            "ceo",
+        ),
         budget_usd_daily,
         step_labels: crate::harness::steps::StepLabels::from_tools(agent.tools()),
         agent: tokio::sync::Mutex::new(agent),
