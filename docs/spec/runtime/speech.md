@@ -80,8 +80,8 @@ them **verbatim**. Nothing here invents a contract.
 
 | Tool | Effect |
 |---|---|
-| `desk_post { message }` | Say one thing to the whole channel. Collected, not appended — see below. |
-| `desk_dm { to, message }` | Say one thing to named teammates. Journals itself with `AgentReply.audience` set. |
+| `desk_post { message, desk? }` | Say one thing to a channel — the one being answered in, or any channel this agent sits on. Collected, not appended — see below. |
+| `desk_dm { to, message }` | Leave one thing for named teammates, one row in each of *their* channels. |
 | `desk_close { message }` | Say one last thing and report the work finished. |
 | `desk_read { limit }` | Read further back in this channel than the turn was handed. Clamped by the crate's own `READ_MAX`. |
 
@@ -100,8 +100,45 @@ the live SSE frame, the resolved mentions and the board-card correlation, none o
 which a tool holds. So `desk_post` and `desk_close` are collected in
 `delegation::TurnSpeech` and become the turn's reply.
 
-`desk_dm` is the exception and journals directly, because a narrowed audience is
-not something a turn's single reply can express.
+`desk_dm` is the exception and journals directly, because a row addressed to
+somebody else's channel is not something this turn's single reply can express.
+So is a `desk_post` that names a `desk` other than the one being answered in:
+the turn's reply belongs to the conversation the turn is in, so a line meant for
+elsewhere has to be its own row.
+
+### A DM goes to the recipient's channel
+
+One row per recipient, `chat_id` set to that teammate's own DM key, `audience`
+empty.
+
+It was built the other way first — one row in the **ambient** channel with
+`audience: [recipient]` — because that needed no journal migration, and a live
+run showed what it cost. Which channels reach an agent is decided by
+`chat_history::agent_channels`, and the speaker's own DM is never one of the
+recipient's. So the row sat in the *operator's* DM with the speaker: the one
+person named could not read it, the one person not named could, and the tool
+reported success. The agent then told the operator the message had been
+"passed to them directly (delivered)" — three times, for three messages that
+reached nobody.
+
+`audience` was the wrong field because it is the **asides** field, and an aside
+is a narrowing *within a desk everybody named is already on*. A DM has no such
+guarantee, so the narrowing has to be the channel itself. A non-empty `audience`
+would also make `fold_asides` lift the row out of the transcript as a
+deliberation aside, which it is not.
+
+### A post can name a desk
+
+`desk` is optional and defaults to the channel being answered in. A named one is
+resolved against `agent_channels` — the same function that decides which
+channels reach this agent's session — so an agent can speak exactly where it can
+hear, and nowhere else.
+
+A desk it does not sit on is refused, and the refusal names what it can reach.
+Reaching another desk is a **referral**: a crossing the library already models,
+with its own provenance chip and its own return path. Letting `desk_post` write
+into a room its author is not in would put a line in front of people with no
+record of who let it in.
 
 ### It never silences a turn
 
@@ -114,7 +151,11 @@ suppression is gated on `TurnSpeech::spoke()`, not on the manifest flag.
 
 `desk_dm` is one agent addressing another, so this is where the agent-to-agent
 edge stops being hypothetical. It stays an edge that **journals a row and runs
-nothing**. That is the rule `CompanyEvent::AgentReply` already states about its
+nothing**: the recipient reads it on its next turn, through its own session
+delta. The tool's result sentence says exactly that rather than reporting
+delivery — an agent told "Said." will tell the person who asked that the message
+was sent, which is how three undelivered messages were each reported as
+delivered. That is the rule `CompanyEvent::AgentReply` already states about its
 own `mentions`:
 
 > never consulted by dispatch … an agent naming another agent draws a chip and
