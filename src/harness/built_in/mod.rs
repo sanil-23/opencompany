@@ -1521,13 +1521,13 @@ impl CompanyAgent {
                     seeded,
                     "[harness] thread-transcript re-seed result"
                 );
-                // The session restarts at this turn's own message: everything
-                // older is now in the seed, and the next delta must not hand it
-                // back.
-                *session = agent_session::AgentSessionState::default();
-                if let Some(seq) = chat.message_seq {
-                    session.watermark = Some(seq);
-                }
+                // The seed just built only covers `incoming` — the turn's own
+                // channel — so only that channel's catch-up may be recorded.
+                // `reseeded` keeps this session's prior (company-wide)
+                // watermark exactly so an unseen row on some OTHER channel
+                // does not silently become "already delivered" underneath it;
+                // see its doc comment.
+                *session = session.reseeded(chat.message_seq);
             }
 
             let _ = switched;
