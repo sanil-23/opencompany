@@ -31,38 +31,53 @@ const row = (id: string, extra: Partial<ChatMessage> = {}): ChatMessage =>
   }) as ChatMessage;
 
 describe("reconcileTranscript", () => {
+  const crossing: ReferralConversationDto = {
+    askerId: "planner",
+    otherId: "sre",
+    otherDeskId: "eng",
+    otherDeskName: "Engineering",
+    direct: true,
+    lines: [
+      {
+        authorId: "planner",
+        authorLabel: "",
+        text: "what is the lag budget?",
+        outbound: true,
+      },
+      { authorId: "sre", authorLabel: "sre", text: "which path?", outbound: false },
+    ],
+  };
+
   it("applies a fold that landed on a row already held", () => {
-    const asked = row("h12");
-    const existing = [row("h11"), asked];
-    const crossing: ReferralConversationDto = {
-      askerId: "planner",
-      otherId: "sre",
-      otherDeskId: "eng",
-      otherDeskName: "Engineering",
-      direct: true,
-      lines: [
-        {
-          authorId: "planner",
-          authorLabel: "",
-          text: "what is the lag budget?",
-          outbound: true,
-        },
-        {
-          authorId: "sre",
-          authorLabel: "sre",
-          text: "which path?",
-          outbound: false,
-        },
-      ],
-    };
+    const existing = [row("h11"), row("h12")];
     const folded = row("h12", { referralConversation: crossing });
 
     const merged = reconcileTranscript(existing, [row("h11"), folded]);
 
     expect(merged).not.toBe(existing);
     expect(merged).toHaveLength(2);
-    expect(merged[1]).toBe(folded);
+    // The fold lands, and the rest of the row is the one already on screen —
+    // only the host-owned fields are taken, so a local decoration such as an
+    // optimistic reaction is not blinked away by a poll.
     expect(merged[1].referralConversation).toEqual(crossing);
+    expect(merged[1].id).toBe("h12");
+  });
+
+  it("keeps a local decoration the host has not caught up with", () => {
+    // Reactions are applied optimistically before the host has them. Taking the
+    // durable row wholesale would blink one off until its round trip landed —
+    // which is what keeping the held row was guarding against (tinysweeper).
+    const held = row("h12", {
+      reactions: [{ emoji: "\u2705", by: "You", mine: true }],
+    });
+    const durable = row("h12", {
+      referralConversation: crossing,
+    });
+
+    const merged = reconcileTranscript([held], [durable]);
+
+    expect(merged[0].referralConversation).toEqual(crossing);
+    expect(merged[0].reactions).toEqual([{ emoji: "\u2705", by: "You", mine: true }]);
   });
 
   it("still appends rows the transcript has never seen", () => {
@@ -130,6 +145,21 @@ describe("mergeHistoryInOrder", () => {
 
     expect(merged).toHaveLength(1);
     expect(merged[0].referralConversation?.lines).toHaveLength(4);
+  });
+
+  it("takes the host's answer even when it is shorter than what is held", () => {
+    // The reverse direction (tinysweeper): a held four-line exchange meeting a
+    // refreshed one-line copy. The host is the authority on its own fold, so
+    // this follows it rather than keeping whichever version is longer —
+    // "longest wins" would pin a transcript to a stale fold forever the moment
+    // one page disagreed. In practice the fold only grows, because it is folded
+    // from an append-only journal.
+    const held = row("h4", { referralConversation: crossing(4) });
+    const partial = row("h4", { referralConversation: crossing(1) });
+
+    const merged = mergeHistoryInOrder([held], [partial]);
+
+    expect(merged[0].referralConversation?.lines).toHaveLength(1);
   });
 
   it("still keeps the held object when nothing changed, so React can bail", () => {

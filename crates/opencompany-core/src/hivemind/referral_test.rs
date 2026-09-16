@@ -781,6 +781,7 @@ fn the_close_tells_a_local_question_from_a_crossing_one() {
         // These fixtures describe crossings that ran on a desk, not in a pair.
         conversation: None,
         opened: None,
+        closed: None,
         returned: false,
         crossed,
     };
@@ -846,6 +847,7 @@ fn the_close_reads_as_english_for_every_combination_of_referral_facts() {
             desk: "commercial".to_owned(),
             conversation: None,
             opened: None,
+            closed: None,
             returned: false,
             crossed: true,
         }]
@@ -2033,6 +2035,69 @@ async fn the_asker_is_handed_the_exchange_it_just_had_and_nothing_older() {
     assert!(
         !continuation.contains("ancient and unrelated"),
         "but not every other exchange this pair has ever had: {continuation}"
+    );
+}
+
+/// The exchange records BOTH of its ends, so a reader can take exactly it.
+///
+/// `opened` alone is a lower bound, and a pair thread is reused for every
+/// crossing those two teammates ever have — so a read from `opened` onward also
+/// admits whatever lands in that thread afterwards (tinysweeper + CodeRabbit,
+/// #2347). What the two bounds cannot separate is a row *interleaved* with this
+/// exchange, which is the correlation-id problem tracked on #2333: bounds
+/// narrow the window, they do not close it.
+#[tokio::test]
+async fn an_exchange_records_both_of_its_ends() {
+    const CHATTY: &str = "hive = { turn_budget = 8, quorum = 2, blind_round = false, \
+                          referral = { enabled = true, pair_messages = 4 } }";
+    let far = FarDesk::answering("The replica lag budget is 400ms.");
+    let (log, outcome) = run(
+        CHATTY,
+        &[
+            (
+                "planner",
+                "!question #lag What is the replica lag budget? @sre",
+            ),
+            ("scout", "!propose #stage Stage the rollout behind a flag."),
+            ("critic", "!support #stage ^1 Staging fits the lag budget."),
+            ("planner", "!commit #stage ^3 Recorded."),
+        ],
+        Some(&far),
+    )
+    .await;
+
+    let asked = outcome
+        .referrals
+        .asked
+        .first()
+        .expect("the crossing is on the ledger");
+    let opened = asked.opened.expect("the row it opened on is recorded");
+    let closed = asked.closed.expect("the row it closed on is recorded");
+    assert!(
+        opened < closed,
+        "an exchange of several rows spans them: {opened}..={closed}"
+    );
+
+    // The bounds are the exchange's own first and last rows, not an estimate:
+    // every row of the pair thread falls inside them, and the pair thread holds
+    // exactly this crossing.
+    let pair = super::referral::pair_conversation("planner", "sre");
+    assert_eq!(
+        log.replies(&pair).len(),
+        4,
+        "the whole exchange is in the thread: {:?}",
+        log.replies(&pair)
+    );
+    let rows = log.sequences(&pair);
+    assert_eq!(
+        rows.first().copied(),
+        Some(opened),
+        "`opened` is the question: {rows:?}"
+    );
+    assert_eq!(
+        rows.last().copied(),
+        Some(closed),
+        "`closed` is the last thing said: {rows:?}"
     );
 }
 

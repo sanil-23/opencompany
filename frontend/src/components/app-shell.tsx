@@ -2740,6 +2740,15 @@ export function AppShell({
    * the answerer for the rest of the episode.
    */
   const [referralWorking, setReferralWorking] = useState<Record<string, ReferralWorking>>({});
+  // Cleared on a company switch, for the reason `openTurns` and
+  // `liveStepsByMessage` are — twice over here: this is keyed by DESK id and it
+  // names a row by SEQUENCE, and two companies share both freely. A company
+  // with its own `order_ops` would otherwise inherit the last one's
+  // "Cancellations and Amendments are talking" over its own room, naming
+  // teammates the operator cannot see (Codex, #2347).
+  useEffect(() => {
+    setReferralWorking((prev) => (Object.keys(prev).length === 0 ? prev : {}));
+  }, [company]);
 
   const injectAgentReply = useCallback(
     (event: AgentReplyEvent) => {
@@ -3409,6 +3418,24 @@ export function AppShell({
         direct?: boolean;
         returning?: boolean;
       }) => {
+        // **A return is the crossing finishing, and clears it.**
+        //
+        // Waiting for the desk to speak again is the only end a same-desk pair
+        // has — it emits no return leg — but a cross-desk crossing DOES get one,
+        // and it is the better signal: the reply that would otherwise clear this
+        // is not guaranteed, since a continuation that merely repeats the
+        // original line is deliberately not journaled and a failed one emits
+        // nothing at all. Without this the row stayed marked running for the
+        // rest of the episode (Codex + tinysweeper, #2347).
+        if (event.returning) {
+          setReferralWorking((working) =>
+            working[event.chatId] === undefined
+              ? working
+              : Object.fromEntries(
+                  Object.entries(working).filter(([chat]) => chat !== event.chatId),
+                ),
+          );
+        }
         // A forward is a turn starting on the far side; a return is that turn
         // already finished and carried home, so it announces nobody.
         if (!event.returning) {

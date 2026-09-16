@@ -624,14 +624,48 @@ export function dispatchMarkerPlacement(
  * each one as changed and make the skip dead code.
  */
 /**
- * Whether two copies of one row carry the same content.
+ * The parts of a row the HOST computes, which a console cannot derive and must
+ * therefore accept from a re-read.
  *
- * By value, never by identity: `fromHistory` parses a fresh object for every
- * row on every round trip, so `!==` is true for rows that are word-for-word
- * identical and any caller using it to detect change would see change always.
+ * A referral's fold is the case this exists for: it is attached to the asking
+ * row by `chat/history` and by nothing else, so a merge that keeps the copy
+ * already on screen can never show it.
+ *
+ * Deliberately not "every field". `reactions` are applied optimistically here
+ * before the host has them, so taking the durable row wholesale would blink a
+ * reaction off until its round trip landed — the regression that keeping the
+ * held row was guarding against in the first place (tinysweeper, #2347). Live
+ * step timelines are not in this list either, and do not need to be: they live
+ * in the shell's own `liveStepsByMessage`, keyed by id, not on the row.
  */
-function sameMessage(one: ChatMessage, two: ChatMessage): boolean {
-  return JSON.stringify(one) === JSON.stringify(two);
+const HOST_OWNED = [
+  "referralConversation",
+  "asideConversation",
+  "steps",
+  "outputs",
+  "taskId",
+] as const satisfies readonly (keyof ChatMessage)[];
+
+/**
+ * `held` with the host's own fields taken from `durable`, or `held` itself when
+ * they already agree.
+ */
+function withHostUpdates(held: ChatMessage, durable: ChatMessage): ChatMessage {
+  // By value, never by identity: `fromHistory` parses a fresh object for every
+  // row on every round trip, so `!==` is true for fields that are word-for-word
+  // identical and every row would read as changed.
+  const changed = HOST_OWNED.filter(
+    (field) => JSON.stringify(held[field]) !== JSON.stringify(durable[field]),
+  );
+  if (changed.length === 0) return held;
+  const merged = { ...held };
+  for (const field of changed) {
+    // Narrowed per field rather than cast: each key is its own type, and a
+    // blanket assertion here would hide a field added to the list later that
+    // does not exist on the row.
+    Object.assign(merged, { [field]: durable[field] });
+  }
+  return merged;
 }
 
 export function reconcileTranscript(
@@ -649,11 +683,9 @@ export function reconcileTranscript(
       // this console's own, and a re-read must not delete it.
       return held;
     }
-    if (sameMessage(durable, held)) {
-      return held;
-    }
-    changed = true;
-    return durable;
+    const merged = withHostUpdates(held, durable);
+    if (merged !== held) changed = true;
+    return merged;
   });
   if (fresh.length === 0 && !changed) {
     return existing;
@@ -919,7 +951,7 @@ export function mergeHistoryInOrder(
   const persisted = hydrated.map((m) => {
     const held = existingById.get(m.id);
     if (!held) return m;
-    return sameMessage(held, m) ? held : m;
+    return withHostUpdates(held, m);
   });
   const consumedEchoes = new Set<ChatMessage>();
   const liveRows = existing.filter((m) => !historyIds.has(m.id));

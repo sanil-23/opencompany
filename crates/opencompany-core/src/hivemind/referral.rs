@@ -397,6 +397,14 @@ pub struct AskedQuestion {
     /// old private exchanges as though they were the answer it just received
     /// (tinysweeper, #2341).
     pub opened: Option<u64>,
+    /// The last row this exchange wrote, inside [`Self::conversation`].
+    ///
+    /// [`Self::opened`] alone is a lower bound, and a pair thread is reused for
+    /// every crossing those two ever have — so a read from `opened` onward also
+    /// admits whatever is appended to that thread afterwards, including a
+    /// concurrent episode's exchange between this one's opening and the asker's
+    /// continuation (tinysweeper + CodeRabbit, #2347).
+    pub closed: Option<u64>,
     /// Whether the question actually left this desk.
     ///
     /// `reach` widens strictly (`local` → `channels` → `desks`), so a desk that
@@ -1150,19 +1158,29 @@ impl<'a> EpisodeReferrals<'a> {
         // question and then a follow-up, which reads as the answer to it
         // (tinysweeper, #2341).
         let mut answered_in_thread = true;
-        if asked
-            && !deliberated
-            && let Err(error) = self
+        // The last row THIS exchange wrote, which is its upper bound. A pair
+        // thread is reused for every crossing those two ever have, so a lower
+        // bound alone leaves the read open at the top: a concurrent episode
+        // writing into the same thread between this one's opening and the
+        // asker's continuation would be folded in as part of this exchange
+        // (tinysweeper + CodeRabbit, #2347).
+        let mut closed = opened;
+        if asked && !deliberated {
+            match self
                 .journal(&pair, &referral.target_id, answer.clone())
                 .await
-        {
-            answered_in_thread = false;
-            tracing::warn!(
-                company = %self.company,
-                pair = %pair.desk_id,
-                error = %error,
-                "[hive] a referred answer could not be journaled in the pair's thread"
-            );
+            {
+                Ok(seq) => closed = Some(seq),
+                Err(error) => {
+                    answered_in_thread = false;
+                    tracing::warn!(
+                        company = %self.company,
+                        pair = %pair.desk_id,
+                        error = %error,
+                        "[hive] a referred answer could not be journaled in the pair's thread"
+                    );
+                }
+            }
         }
         // **A pair may keep talking, the way a desk keeps deliberating.**
         //
@@ -1214,14 +1232,18 @@ impl<'a> EpisodeReferrals<'a> {
                 if said.trim().is_empty() {
                     break;
                 }
-                if let Err(error) = self.journal(&pair, speaker, said.clone()).await {
-                    tracing::warn!(
-                        company = %self.company,
-                        pair = %pair.desk_id,
-                        error = %error,
-                        "[hive] a pair's follow-up could not be journaled; the exchange stops here"
-                    );
-                    break;
+                match self.journal(&pair, speaker, said.clone()).await {
+                    Ok(seq) => closed = Some(seq),
+                    Err(error) => {
+                        tracing::warn!(
+                            company = %self.company,
+                            pair = %pair.desk_id,
+                            error = %error,
+                            "[hive] a pair's follow-up could not be journaled; the exchange stops \
+                             here"
+                        );
+                        break;
+                    }
                 }
                 let label = match next_is_asker {
                     true => asker.clone(),
@@ -1244,8 +1266,10 @@ impl<'a> EpisodeReferrals<'a> {
             // Where it ran, when the host moved it off the desk.
             conversation: (pair.desk_id != referral.to.desk_id).then(|| pair.desk_id.clone()),
             // And where in it, so a reader can take this exchange rather than
-            // every exchange this pair has ever had.
+            // every exchange this pair has ever had. Both ends: the thread is
+            // reused, so an open top admits whatever lands next in it.
             opened: opened.map(EventSeq::value),
+            closed: closed.map(EventSeq::value),
             returned: false,
             crossed: referral.to.desk_id != self.home.desk_id,
         });

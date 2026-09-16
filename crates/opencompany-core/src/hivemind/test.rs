@@ -50,6 +50,22 @@ impl MemoryLog {
             .collect()
     }
 
+    /// The sequences of every reply on `chat`, in order.
+    ///
+    /// For a test about where an exchange begins and ends rather than what it
+    /// said — a pair thread is bounded by sequence, not by content.
+    pub(super) fn sequences(&self, chat: &str) -> Vec<u64> {
+        self.rows()
+            .into_iter()
+            .filter_map(|stored| match stored.event {
+                CompanyEvent::AgentReply { chat_id, .. } if chat_id == chat => {
+                    Some(stored.seq.value())
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
     /// Every reply on `chat` with the audience it was journaled under.
     ///
     /// Separate from [`Self::replies`] rather than a widening of it: most tests

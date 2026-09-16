@@ -52,7 +52,19 @@ export function ReferralRunningProvider({
   // its state changes, and a fresh Set each time would re-render every chip on
   // screen for a crossing that did not change.
   const key = rows.join(" ");
-  const deskKey = Object.keys(byDesk).sort().join(" ");
+  // The VALUES, not just which desks are present. A desk can stay in the map
+  // while the crossing under it is replaced — a second question to a different
+  // teammate, or the same pair's next exchange on a new row — and a key of desk
+  // names alone would hold the previous target and row on screen
+  // (tinysweeper, #2347).
+  const deskKey = Object.entries(byDesk)
+    .sort(([one], [two]) => one.localeCompare(two))
+    .map(([desk, crossing]) =>
+      crossing.direct
+        ? `${desk}:${crossing.asker}>${crossing.target}@${crossing.row ?? ""}`
+        : `${desk}:#${crossing.desk}@${crossing.row ?? ""}`,
+    )
+    .join(" ");
   const value = useMemo(
     () => ({ rows: new Set(rows), byDesk }),
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -790,10 +790,9 @@ impl<'a> EpisodeDriver<'a> {
                             ledger.asked.len() > answered_before
                                 && last.is_some_and(|asked| asked.returned || !asked.crossed),
                             last.and_then(|asked| {
-                                asked
-                                    .conversation
-                                    .clone()
-                                    .map(|thread| (thread, asked.opened, asked.target.clone()))
+                                asked.conversation.clone().map(|thread| {
+                                    (thread, (asked.opened, asked.closed), asked.target.clone())
+                                })
                             }),
                         )
                     };
@@ -819,10 +818,10 @@ impl<'a> EpisodeDriver<'a> {
                     // every past exchange with that teammate as though it were
                     // the answer it had just received (tinysweeper, #2341).
                     let mut carried = elsewhere.clone();
-                    if let Some((thread, opened, other)) = held_in.as_ref()
+                    if let Some((thread, (opened, closed), other)) = held_in.as_ref()
                         && answered
                         && let Some(rows) = self
-                            .conversation_rows(thread, &turn.agent_id, *opened)
+                            .conversation_rows(thread, &turn.agent_id, *opened, *closed)
                             .await
                     {
                         // Labelled by WHO, not by where. `thread` is the pair's
@@ -1157,10 +1156,15 @@ impl<'a> EpisodeDriver<'a> {
         &self,
         conversation: &str,
         viewer_id: &str,
-        // The row this exchange opened on. A pair thread is keyed on its two
-        // members and nothing else, so without this the projection returns
-        // every crossing those two have ever had inside `SESSION_WINDOW`.
+        // The rows this exchange opened and closed on. A pair thread is keyed
+        // on its two members and nothing else, so without a lower bound the
+        // projection returns every crossing those two have ever had inside
+        // `SESSION_WINDOW` — and without an upper one it also returns whatever
+        // lands in that thread afterwards, which a concurrent episode sharing
+        // this asker can write before the continuation reads (tinysweeper +
+        // CodeRabbit, #2347).
         since: Option<u64>,
+        until: Option<u64>,
     ) -> Option<Vec<tinyhivemind_hive::SessionMessage>> {
         let log = EventLogSessionLog::new(
             Arc::clone(&self.events),
@@ -1185,15 +1189,14 @@ impl<'a> EpisodeDriver<'a> {
         )
         .await
         .ok()?;
-        // Inclusive: `since` IS the question that opened the exchange, and an
-        // exchange rendered without it starts at the answer.
-        let rows: Vec<_> = match since {
-            Some(from) => rows
-                .into_iter()
-                .filter(|row| row.sequence.0 >= from)
-                .collect(),
-            None => rows,
-        };
+        // Inclusive at both ends: `since` IS the question that opened the
+        // exchange, and `until` IS its last row — an exchange rendered without
+        // either starts at the answer or stops before it.
+        let rows: Vec<_> = rows
+            .into_iter()
+            .filter(|row| since.is_none_or(|from| row.sequence.0 >= from))
+            .filter(|row| until.is_none_or(|to| row.sequence.0 <= to))
+            .collect();
         (!rows.is_empty()).then_some(rows)
     }
 
