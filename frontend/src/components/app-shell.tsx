@@ -98,6 +98,7 @@ import { foldLiveFrame } from "@/lib/live-frame";
 import {
   type ChatMessage,
   dispatchMarkerPlacement,
+  dispatchThreadKey,
   fromHistory,
   reconcileTranscript,
   hostMessageId,
@@ -2430,6 +2431,25 @@ export function AppShell({
    */
   const [referralWorking, setReferralWorking] = useState<Record<string, ReferralWorking>>({});
 
+  /**
+   * Threads whose dispatched work is still running, by {@link dispatchThreadKey}.
+   *
+   * A chat turn that dispatches **succeeds immediately** — handing the work over
+   * is the whole of what it did — so its working row settles while the real
+   * agent turn is only just starting. Every frame after that named a card and
+   * not a conversation, so the thread rendered minutes of live work as silence
+   * and then produced a reply from nowhere. This keeps the row up for the window
+   * between `task_dispatched` and `desk_task_completed`, both of which now carry
+   * the conversation that raised it.
+   *
+   * A count, not a flag: one thread can have several attempts in flight (a
+   * retry, or two asks), and a single terminal must not clear the others.
+   */
+  const [dispatchRunning, setDispatchRunning] = useState<Record<string, number>>({});
+  useEffect(() => {
+    setDispatchRunning((prev) => (Object.keys(prev).length === 0 ? prev : {}));
+  }, [company]);
+
   const injectAgentReply = useCallback(
     (event: AgentReplyEvent) => {
       // The desk speaking again is the end of any crossing it was waiting on.
@@ -3134,7 +3154,32 @@ export function AppShell({
     // Issue #377. Beside the board tick above, not instead of it: a settle both
     // moves a card between columns and needs saying in the conversation the
     // card came from.
-    onDispatchTerminal: injectDispatchMarker,
+    onDispatchTerminal: useCallback(
+      (event: CompanyStreamEvent) => {
+        // Closes the bracket the dispatch opened: the attempt is over, so the
+        // thread's working row comes down with it.
+        if (event.type === "desk_task_completed" && event.chatId !== undefined) {
+          const key = dispatchThreadKey(event.chatId, event.parentId);
+          setDispatchRunning((running) => {
+            const left = (running[key] ?? 0) - 1;
+            if (left > 0) return { ...running, [key]: left };
+            if (!(key in running)) return running;
+            const next = { ...running };
+            delete next[key];
+            return next;
+          });
+        }
+        injectDispatchMarker(event);
+      },
+      [injectDispatchMarker],
+    ),
+    onDispatchStarted: useCallback((event: CompanyStreamEvent) => {
+      // Only a dispatch that names a conversation: a board-created one belongs
+      // to no thread and must not raise a working row in whatever is open.
+      if (event.type !== "task_dispatched" || event.chatId === undefined) return;
+      const key = dispatchThreadKey(event.chatId, event.parentId);
+      setDispatchRunning((running) => ({ ...running, [key]: (running[key] ?? 0) + 1 }));
+    }, []),
     // The inline terminal marker is enough only while its origin channel is
     // actually on screen. Elsewhere — including another chat channel — the
     // event hook raises the linked completion toast (#1758).
@@ -3621,6 +3666,7 @@ export function AppShell({
           <RoomView
               client={client}
               company={company}
+              dispatchRunning={dispatchRunning}
               // What the agents in this company are allowed to do without
               // asking, rendered on the composer's toolbar row. Nothing renders
               // until the host has said what the tier is, rather than guessing

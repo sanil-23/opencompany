@@ -163,10 +163,41 @@ fn projects_task_dispatched() {
     let v = super::project_event(&stored(CompanyEvent::TaskDispatched {
         task_id: "t-42".into(),
         run_id: None,
+        origin_chat_id: None,
+        origin_parent: None,
     }))
     .expect("task_dispatched is an attention signal");
     assert_eq!(v["type"], "task_dispatched");
     assert_eq!(v["taskId"], "t-42");
+    assert!(
+        v.get("chatId").is_none() && v.get("parentId").is_none(),
+        "a board-created dispatch belongs to no conversation: {v}"
+    );
+}
+
+/// A dispatch raised from a thread says so, the way its completion already
+/// does.
+///
+/// Without this the thread that asked went silent from the moment it
+/// dispatched: the chat turn had genuinely succeeded — it handed the work over
+/// — so its working row settled, and every frame after it named only a card.
+/// The answer then arrived from nowhere minutes later, because
+/// `desk_task_completed` *is* addressed to the conversation.
+#[test]
+fn a_dispatch_raised_in_a_thread_names_that_thread() {
+    let v = super::project_event(&stored(CompanyEvent::TaskDispatched {
+        task_id: "t-42".into(),
+        run_id: Some("r-1".into()),
+        origin_chat_id: Some("main".into()),
+        origin_parent: Some(crate::ports::types::EventSeq::new(50)),
+    }))
+    .expect("task_dispatched is an attention signal");
+
+    assert_eq!(v["chatId"], "main", "the conversation that asked");
+    assert_eq!(
+        v["parentId"], "50",
+        "and the thread within it, as a string like every other parent here"
+    );
 }
 
 /// Issue #464: an opened card reaches the console as its own frame. This is

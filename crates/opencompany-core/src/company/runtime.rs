@@ -1459,20 +1459,40 @@ impl CompanyRuntime {
             // Who owns the card going INTO this attempt. Read here and not after
             // the cycle, because by then a hand-off has already overwritten it —
             // which is exactly the value a rollback needs.
-            let owner_before = self
+            let card_before = self
                 .ops
                 .tasks
                 .list(&self.id)
                 .await
                 .unwrap_or_default()
                 .into_iter()
-                .find(|c| c.id == task_id)
-                .map(|c| c.assignee)
+                .find(|c| c.id == task_id);
+            let owner_before = card_before
+                .as_ref()
+                .map(|c| c.assignee.clone())
                 .unwrap_or_default();
+            // **The conversation this attempt answers, carried onto the
+            // dispatch itself.**
+            //
+            // `DeskTaskCompleted` already stamps this pair, so a finished run is
+            // delivered into the thread that asked. The dispatch carried
+            // neither, so the *start* of the work reached the console naming
+            // only a card — and a thread that dispatched went silent from that
+            // moment until the answer arrived, because the chat turn had
+            // genuinely succeeded (it handed the work over) and its working row
+            // settled with it. Minutes of a real agent turn rendered as nothing,
+            // then a reply from nowhere.
+            //
+            // Read from the card rather than threaded through the call: the card
+            // is where `TaskOrigin` is recorded, and a second place deciding
+            // "which conversation is this?" is the drift #435 removed.
+            let origin = card_before.as_ref().and_then(|c| c.origin.clone());
             let report = match self
                 .run_cycle(vec![CompanyEvent::TaskDispatched {
                     task_id: task_id.clone(),
                     run_id: run_id.clone(),
+                    origin_chat_id: origin.as_ref().map(|o| o.origin_chat_id.clone()),
+                    origin_parent: origin.as_ref().and_then(|o| o.origin_parent),
                 }])
                 .await
             {

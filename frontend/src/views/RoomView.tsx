@@ -37,6 +37,7 @@ import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
+  dispatchThreadKey,
   fromHistory,
   isGeneralChannel,
   makeMessage,
@@ -184,6 +185,15 @@ interface Props {
    */
   transcripts: Transcripts;
   setTranscripts: Dispatch<SetStateAction<Transcripts>>;
+  /**
+   * Threads whose dispatched work is still running, by `dispatchThreadKey`.
+   *
+   * A chat turn that dispatches succeeds the moment it hands the work over, so
+   * its own working row settles while the real agent turn is only starting.
+   * Without this the thread renders that window as silence and the answer
+   * arrives from nowhere.
+   */
+  dispatchRunning?: Record<string, number>;
 
   /**
    * How far the shell's rehydration of each channel's history has got, so the
@@ -432,6 +442,7 @@ function threadRootOf(parentId: string | undefined): number | undefined {
 export function RoomView({
   client,
   company,
+  dispatchRunning,
   sub,
   routeOpen = true,
   onNavigate,
@@ -2007,6 +2018,18 @@ export function RoomView({
       ? turnStateKey(activeThreadId, threadRootOf(openThreadId))
       : undefined;
   const threadTurn = threadTurnKey ? openTurns?.[threadTurnKey]?.[0] : undefined;
+  // Is this conversation waiting on a dispatched attempt? Checked for the open
+  // thread first and then the channel itself, because a dispatch raised at
+  // channel level and one raised inside a thread are different waits.
+  const dispatchInFlight = (() => {
+    if (!activeThreadId || !dispatchRunning) return false;
+    const openRoot = openThreadId ? threadRootOf(openThreadId) : undefined;
+    const key = dispatchThreadKey(
+      activeThreadId,
+      openRoot === undefined ? undefined : String(openRoot),
+    );
+    return (dispatchRunning[key] ?? 0) > 0;
+  })();
   const openTurn = (() => {
     if (!activeThreadId) return undefined;
     const candidates = Object.entries(openTurns ?? {})
@@ -2906,7 +2929,10 @@ export function RoomView({
                   // every turn whenever any thread was open. `openTurn` now
                   // excludes the open thread's own turn, so the row can stay for
                   // the work that is genuinely the channel's.
-                  typing={sending || !!openTurn}
+                  // A dispatched attempt keeps the row up too: the turn that
+                  // handed the work over has already settled, and the work it
+                  // started is what the operator is waiting on.
+                  typing={sending || !!openTurn || dispatchInFlight}
                   queued={!!openTurn?.queued}
                   liveSteps={openThreadId ? undefined : liveSteps}
                   // NOT excluded when a thread is open: these rows render inside

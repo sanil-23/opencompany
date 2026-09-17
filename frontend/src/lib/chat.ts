@@ -575,6 +575,21 @@ export interface DispatchMarkerPlacement {
  *   was raised at channel level and the marker stays flat, which is where every
  *   marker sat before B.
  */
+/**
+ * The key a running dispatch is held under while its attempt runs.
+ *
+ * Thread-precise: a channel can have several threads in flight, and a working
+ * row belongs to the one that asked. `""` for the parent is the channel itself,
+ * which is where every unparented line hangs.
+ */
+export function dispatchThreadKey(
+  chatId: string,
+  parentId?: string,
+): string {
+  const threadId = chatId === "" ? MAIN_THREAD_ID : chatId;
+  return `${threadId}\u0000${parentId ?? ""}`;
+}
+
 export function dispatchMarkerPlacement(
   event: DispatchTerminalFrame,
   chatChannelByThread: Record<string, string>,

@@ -4453,13 +4453,37 @@ impl HarnessPool {
         chat: crate::runtime::delegation::ChatTarget<'_>,
         run_sink: Option<Arc<run_trace::RunTraceSink>>,
     ) -> crate::Result<TurnOutcome> {
+        // **Streams when — and only when — the turn names a conversation.**
+        //
+        // This was unconditionally `LiveStream::Off`, on a premise that was true
+        // when written: a dispatched card's turn "answers no conversation", so
+        // publishing its `tool_call` frames would misattribute them to whatever
+        // thread most recently sent (#125). The card has always recorded its
+        // origin, but nothing carried it here, so there was no thread to route
+        // to and silence was the honest answer.
+        //
+        // Now the caller passes it. A dispatch raised in a thread runs a real
+        // agent turn for minutes, and the operator watching that thread saw
+        // nothing at all — not the tool calls, not even that work had begun.
+        // Routing by the origin is exactly the fix `LiveStream::Workflow` made
+        // for a workflow node: by identity, never by recency.
+        //
+        // A turn that still names nothing — a board-created card — keeps the
+        // old behaviour, which is the one case the misattribution warning was
+        // ever about.
+        let live = match chat.chat_id {
+            Some(chat_id) => LiveStream::On {
+                chat_id: Some(chat_id),
+            },
+            None => LiveStream::Off,
+        };
         self.run_inner(
             company,
             agent_id,
             message,
             deps,
             Some(control),
-            LiveStream::Off,
+            live,
             chat,
             run_sink,
         )

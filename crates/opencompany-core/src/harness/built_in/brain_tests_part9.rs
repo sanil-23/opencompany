@@ -16,6 +16,8 @@ async fn steer_cancel_returns_to_todo_and_discards_partial() {
             request(vec![CompanyEvent::TaskDispatched {
                 task_id: "t1".into(),
                 run_id: None,
+                origin_chat_id: None,
+                origin_parent: None,
             }]),
             &NoopHost,
         )
@@ -49,6 +51,8 @@ async fn steer_pause_parks_in_paused_and_preserves_partial() {
             request(vec![CompanyEvent::TaskDispatched {
                 task_id: "t1".into(),
                 run_id: None,
+                origin_chat_id: None,
+                origin_parent: None,
             }]),
             &NoopHost,
         )
@@ -90,6 +94,8 @@ async fn steer_redirect_reruns_and_the_cap_finalizes_to_in_review() {
             request(vec![CompanyEvent::TaskDispatched {
                 task_id: "t1".into(),
                 run_id: None,
+                origin_chat_id: None,
+                origin_parent: None,
             }]),
             &NoopHost,
         )
