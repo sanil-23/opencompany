@@ -37,7 +37,8 @@ import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-  dispatchThreadKey,
+  type DispatchRunning,
+  isConversationWaiting,
   fromHistory,
   isGeneralChannel,
   makeMessage,
@@ -193,7 +194,7 @@ interface Props {
    * Without this the thread renders that window as silence and the answer
    * arrives from nowhere.
    */
-  dispatchRunning?: Record<string, string>;
+  dispatchRunning?: DispatchRunning;
 
   /**
    * How far the shell's rehydration of each channel's history has got, so the
@@ -2018,23 +2019,17 @@ export function RoomView({
       ? turnStateKey(activeThreadId, threadRootOf(openThreadId))
       : undefined;
   const threadTurn = threadTurnKey ? openTurns?.[threadTurnKey]?.[0] : undefined;
-  // Is this conversation waiting on a dispatched attempt? Checked for the open
-  // thread first and then the channel itself, because a dispatch raised at
-  // channel level and one raised inside a thread are different waits.
-  const dispatchInFlight = (() => {
-    if (!activeThreadId || !dispatchRunning) return false;
-    const waiting = new Set(Object.values(dispatchRunning));
-    // The channel's own key always counts: work raised at channel level is
-    // this conversation's too, and checking only the open thread's key made a
-    // channel-level dispatch invisible the moment any thread was opened
-    // (tinysweeper, #2369).
-    if (waiting.has(dispatchThreadKey(activeThreadId, undefined))) return true;
-    const openRoot = openThreadId ? threadRootOf(openThreadId) : undefined;
-    return (
-      openRoot !== undefined &&
-      waiting.has(dispatchThreadKey(activeThreadId, String(openRoot)))
-    );
-  })();
+  // Asked once per surface. A dispatch raised at channel level and one raised
+  // inside a thread are different waits, so the channel composer and the
+  // thread panel must not share one answer (#2369).
+  const openThreadRoot = openThreadId ? threadRootOf(openThreadId) : undefined;
+  const channelDispatchInFlight =
+    !!activeThreadId && !!dispatchRunning && isConversationWaiting(dispatchRunning, activeThreadId);
+  const threadDispatchInFlight =
+    !!activeThreadId &&
+    !!dispatchRunning &&
+    openThreadRoot !== undefined &&
+    isConversationWaiting(dispatchRunning, activeThreadId, String(openThreadRoot));
   const openTurn = (() => {
     if (!activeThreadId) return undefined;
     const candidates = Object.entries(openTurns ?? {})
@@ -2937,7 +2932,7 @@ export function RoomView({
                   // A dispatched attempt keeps the row up too: the turn that
                   // handed the work over has already settled, and the work it
                   // started is what the operator is waiting on.
-                  typing={sending || !!openTurn || dispatchInFlight}
+                  typing={sending || !!openTurn || channelDispatchInFlight}
                   queued={!!openTurn?.queued}
                   liveSteps={openThreadId ? undefined : liveSteps}
                   // NOT excluded when a thread is open: these rows render inside
@@ -3302,7 +3297,7 @@ export function RoomView({
                   // The thread's own dispatched work: `threadTurn` settles as
                   // soon as the turn hands it over, so without this the panel
                   // shows nothing for the minutes the attempt actually runs.
-                  dispatchInFlight={dispatchInFlight}
+                  dispatchInFlight={threadDispatchInFlight}
                   onTyping={() => onTyping?.(active.id, parent.id)}
                   onRetrySend={retrySend}
                   // A thread is not a lesser transcript (issue #1734): an echoed

@@ -98,7 +98,10 @@ import { foldLiveFrame } from "@/lib/live-frame";
 import {
   type ChatMessage,
   dispatchMarkerPlacement,
+  clearDispatchRunning,
+  type DispatchRunning,
   dispatchThreadKey,
+  markDispatchRunning,
   fromHistory,
   reconcileTranscript,
   hostMessageId,
@@ -2449,7 +2452,7 @@ export function AppShell({
    * (tinysweeper, #2369). One thread can have several attempts in flight (a
    * retry, two asks), and each is now removed by its own id.
    */
-  const [dispatchRunning, setDispatchRunning] = useState<Record<string, string>>({});
+  const [dispatchRunning, setDispatchRunning] = useState<DispatchRunning>({});
   // Keyed on `client` as well as `company`: a reseat replaces the client while
   // preserving the company (it edits a host address and keeps the connection
   // id), so a company-only reset leaves the old host's counts standing. No
@@ -3183,12 +3186,7 @@ export function AppShell({
           // By task id, so a completion can only clear the attempt it belongs
           // to. Keyed by conversation this removed whichever mark happened to
           // be there.
-          setDispatchRunning((running) => {
-            if (!(event.taskId in running)) return running;
-            const next = { ...running };
-            delete next[event.taskId];
-            return next;
-          });
+          setDispatchRunning((running) => clearDispatchRunning(running, event.taskId));
         }
         injectDispatchMarker(event);
       },
@@ -3197,9 +3195,12 @@ export function AppShell({
     onDispatchStarted: useCallback((event: CompanyStreamEvent) => {
       // Only a dispatch that names a conversation: a board-created one belongs
       // to no thread and must not raise a working row in whatever is open.
-      if (event.type !== "task_dispatched" || event.chatId === undefined) return;
-      const key = dispatchThreadKey(event.chatId, event.parentId);
-      setDispatchRunning((running) => ({ ...running, [event.taskId]: key }));
+      if (event.type !== "task_dispatched") return;
+      const chatId = event.chatId;
+      if (chatId === undefined) return;
+      setDispatchRunning((running) =>
+        markDispatchRunning(running, event.taskId, chatId, event.parentId),
+      );
     }, []),
     // The inline terminal marker is enough only while its origin channel is
     // actually on screen. Elsewhere — including another chat channel — the

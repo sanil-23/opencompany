@@ -175,6 +175,32 @@ fn projects_task_dispatched() {
     );
 }
 
+/// A dispatch raised at CHANNEL level names the desk and no thread.
+///
+/// A distinct branch from the threaded case, in the projection and in the
+/// console's keying alike: `parentId` absent beside a present `chatId` means
+/// the channel itself, while absent beside an absent `chatId` means no
+/// conversation at all. Only the threaded and the board-created cases were
+/// covered, so a regression that dropped channel-level origins would have gone
+/// unnoticed (tinysweeper, #2369).
+#[test]
+fn a_dispatch_raised_in_a_channel_names_the_channel_and_no_thread() {
+    let v = super::project_event(&stored(CompanyEvent::TaskDispatched {
+        task_id: "t-45".into(),
+        run_id: Some("r-2".into()),
+        origin_chat_id: Some("order_ops".into()),
+        origin_parent: None,
+    }))
+    .expect("task_dispatched is an attention signal");
+
+    assert_eq!(v["chatId"], "order_ops", "the desk that asked");
+    assert!(
+        v.get("parentId").is_none(),
+        "no thread: absent beside a present chatId is the channel itself, and \
+         a null would read as a thread whose root is nothing: {v}"
+    );
+}
+
 /// A dispatch's origin survives the round trip through the journal.
 ///
 /// The fields are additive (`serde(default)` + `skip_serializing_if`), and that

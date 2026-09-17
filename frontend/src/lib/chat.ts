@@ -615,6 +615,61 @@ export function dispatchMarkerPlacement(
 }
 
 /**
+ * In-flight dispatched work: which attempt is running, and for which thread.
+ *
+ * Keyed by **task id** rather than counted per thread. A count is decremented
+ * by whichever terminal arrives, so an unrelated card completing in the same
+ * thread takes a live attempt's row down and that attempt's own completion then
+ * finds nothing to clear (tinysweeper, #2369).
+ */
+export type DispatchRunning = Record<string, string>;
+
+/** Marks `taskId` as running on the thread `chatId`/`parentId` names. */
+export function markDispatchRunning(
+  running: DispatchRunning,
+  taskId: string,
+  chatId: string,
+  parentId?: string,
+): DispatchRunning {
+  return { ...running, [taskId]: dispatchThreadKey(chatId, parentId) };
+}
+
+/**
+ * Clears the mark `taskId` left, or returns `running` untouched when it holds
+ * none — a board-created card raises no mark, so its terminal must not remove
+ * somebody else's.
+ */
+export function clearDispatchRunning(
+  running: DispatchRunning,
+  taskId: string,
+): DispatchRunning {
+  if (!(taskId in running)) return running;
+  const next = { ...running };
+  delete next[taskId];
+  return next;
+}
+
+/**
+ * Whether the one conversation `threadId`/`parentId` names is waiting on
+ * dispatched work.
+ *
+ * An **exact** key match, deliberately. Work raised at channel level and work
+ * raised inside a thread are different waits, and a check that ORed them
+ * together painted a channel-level attempt's working row inside whatever
+ * thread happened to be open (tinysweeper, #2369). Callers ask once per
+ * surface: the channel composer with no `parentId`, the thread panel with its
+ * own root.
+ */
+export function isConversationWaiting(
+  running: DispatchRunning,
+  threadId: string,
+  parentId?: string,
+): boolean {
+  const key = dispatchThreadKey(threadId, parentId);
+  return Object.values(running).includes(key);
+}
+
+/**
  * Folds a freshly-read transcript into the rows a thread already holds.
  *
  * ## Why this is not "append the ids we have not seen"

@@ -2955,11 +2955,15 @@ impl Default for HarnessPool {
 
 /// Whether a turn tees its progress onto the live [`turn_stream`](crate::turn_stream)
 /// bus, and if so which chat thread its frames route to. `Off` for a turn with no
-/// operator chat bubble (a dispatched task card or workflow agent node) — those
-/// frames would misattribute to whatever thread most recently sent, so they
-/// publish nothing (#125 review). `On { chat_id }` streams; `chat_id` is the
-/// thread the durable reply is journaled under (`AgentReply.chat_id`), falling
-/// back to the default desk when the caller addressed none.
+/// operator chat bubble — a workflow agent node, or a card raised on the board
+/// rather than in a conversation — because those frames would misattribute to
+/// whatever thread most recently sent, so they publish nothing (#125 review).
+/// A card raised *in* a conversation does stream, routed by the origin it
+/// recorded rather than by recency (#2369, [`dispatch_live_stream`]).
+///
+/// `On { chat_id }` streams; `chat_id` is the thread the durable reply is
+/// journaled under (`AgentReply.chat_id`), falling back to the default desk
+/// when the caller addressed none.
 #[derive(Clone, Copy)]
 enum LiveStream<'a> {
     Off,
@@ -2988,6 +2992,25 @@ enum LiveStream<'a> {
         run_id: &'a str,
         node_id: &'a str,
     },
+}
+
+/// Where a **dispatched** card's turn streams its live frames.
+///
+/// Named rather than inlined so the rule is testable: the three destinations
+/// are a threaded origin (streams to its desk, with the thread carried on the
+/// `ChatTarget` since issue #1890 I), a channel-level origin (streams to the
+/// desk with no thread root), and a board-created card (streams nowhere).
+///
+/// That last case is the one worth pinning. A board card belongs to no
+/// conversation, so publishing its frames would attribute an agent's work to
+/// whatever thread happened to be open — the misattribution #125 removed.
+fn dispatch_live_stream<'a>(chat: &crate::runtime::delegation::ChatTarget<'a>) -> LiveStream<'a> {
+    match chat.chat_id {
+        Some(chat_id) => LiveStream::On {
+            chat_id: Some(chat_id),
+        },
+        None => LiveStream::Off,
+    }
 }
 
 /// Per-company serialization of the roster's policy-axis decision through its
@@ -4505,12 +4528,7 @@ impl HarnessPool {
         chat: crate::runtime::delegation::ChatTarget<'_>,
         run_sink: Option<Arc<run_trace::RunTraceSink>>,
     ) -> crate::Result<TurnOutcome> {
-        let live = match chat.chat_id {
-            Some(chat_id) => LiveStream::On {
-                chat_id: Some(chat_id),
-            },
-            None => LiveStream::Off,
-        };
+        let live = dispatch_live_stream(&chat);
         self.run_inner(
             company,
             agent_id,
