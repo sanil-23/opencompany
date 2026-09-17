@@ -2442,10 +2442,14 @@ export function AppShell({
    * between `task_dispatched` and `desk_task_completed`, both of which now carry
    * the conversation that raised it.
    *
-   * A count, not a flag: one thread can have several attempts in flight (a
-   * retry, or two asks), and a single terminal must not clear the others.
+   * Keyed by **task id**, valued by thread key — not a per-thread count. A
+   * count is decremented by whichever terminal arrives, so an unrelated card
+   * completing in the same thread would take a live attempt's row down, and
+   * that attempt's own completion would then find nothing to clear
+   * (tinysweeper, #2369). One thread can have several attempts in flight (a
+   * retry, two asks), and each is now removed by its own id.
    */
-  const [dispatchRunning, setDispatchRunning] = useState<Record<string, number>>({});
+  const [dispatchRunning, setDispatchRunning] = useState<Record<string, string>>({});
   // Keyed on `client` as well as `company`: a reseat replaces the client while
   // preserving the company (it edits a host address and keeps the connection
   // id), so a company-only reset leaves the old host's counts standing. No
@@ -2454,6 +2458,18 @@ export function AppShell({
   useEffect(() => {
     setDispatchRunning((prev) => (Object.keys(prev).length === 0 ? prev : {}));
   }, [company, client]);
+  /**
+   * Drops every in-flight mark, for a caller that has lost event continuity.
+   *
+   * A missed `desk_task_completed` — a stream gap, a reconnect — would
+   * otherwise leave a thread marked working for the life of the page, since
+   * nothing else clears an entry (tinysweeper, #2369). Clearing on resync is
+   * the conservative direction: a row that should still be up returns with the
+   * next frame from the attempt, while a stuck one never leaves on its own.
+   */
+  const forgetRunningDispatches = useCallback(() => {
+    setDispatchRunning((prev) => (Object.keys(prev).length === 0 ? prev : {}));
+  }, []);
 
   const injectAgentReply = useCallback(
     (event: AgentReplyEvent) => {
@@ -3163,14 +3179,14 @@ export function AppShell({
       (event: CompanyStreamEvent) => {
         // Closes the bracket the dispatch opened: the attempt is over, so the
         // thread's working row comes down with it.
-        if (event.type === "desk_task_completed" && event.chatId !== undefined) {
-          const key = dispatchThreadKey(event.chatId, event.parentId);
+        if (event.type === "desk_task_completed") {
+          // By task id, so a completion can only clear the attempt it belongs
+          // to. Keyed by conversation this removed whichever mark happened to
+          // be there.
           setDispatchRunning((running) => {
-            const left = (running[key] ?? 0) - 1;
-            if (left > 0) return { ...running, [key]: left };
-            if (!(key in running)) return running;
+            if (!(event.taskId in running)) return running;
             const next = { ...running };
-            delete next[key];
+            delete next[event.taskId];
             return next;
           });
         }
@@ -3183,7 +3199,7 @@ export function AppShell({
       // to no thread and must not raise a working row in whatever is open.
       if (event.type !== "task_dispatched" || event.chatId === undefined) return;
       const key = dispatchThreadKey(event.chatId, event.parentId);
-      setDispatchRunning((running) => ({ ...running, [key]: (running[key] ?? 0) + 1 }));
+      setDispatchRunning((running) => ({ ...running, [event.taskId]: key }));
     }, []),
     // The inline terminal marker is enough only while its origin channel is
     // actually on screen. Elsewhere — including another chat channel — the
@@ -3314,7 +3330,11 @@ export function AppShell({
       ownApprovalDecisionsRef.current.delete(approvalId);
       return mine;
     },
-    onResync: resyncDurableState,
+    onResync: useCallback(() => {
+      // Continuity is gone, so any mark held here may never see its terminal.
+      forgetRunningDispatches();
+      resyncDurableState();
+    }, [forgetRunningDispatches, resyncDurableState]),
     onRecoveryError: useCallback(() => {
       toast.error("Live updates couldn't be recovered", {
         description: "We couldn't refresh the latest company state. Check your connection and try again.",

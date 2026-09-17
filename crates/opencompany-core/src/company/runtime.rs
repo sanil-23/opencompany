@@ -1459,14 +1459,33 @@ impl CompanyRuntime {
             // Who owns the card going INTO this attempt. Read here and not after
             // the cycle, because by then a hand-off has already overwritten it —
             // which is exactly the value a rollback needs.
-            let card_before = self
-                .ops
-                .tasks
-                .list(&self.id)
-                .await
-                .unwrap_or_default()
-                .into_iter()
-                .find(|c| c.id == task_id);
+            // **A failed read is not an absent card.**
+            //
+            // `unwrap_or_default` was tolerable while this only fed
+            // `owner_before`, where an empty owner is a survivable fallback.
+            // The origin is different: a swallowed error silently omits the
+            // conversation, and the dispatch then renders as the very silence
+            // this change removes — indistinguishable from a board-created
+            // card that genuinely has no thread (tinysweeper, #2369).
+            //
+            // Still not fatal, for the reason the rest of this path gives:
+            // record-keeping does not fail the work it records. It is logged,
+            // so an omitted origin has a cause a reader can find instead of
+            // looking like a card that was never raised in a conversation.
+            let cards = match self.ops.tasks.list(&self.id).await {
+                Ok(cards) => cards,
+                Err(error) => {
+                    tracing::warn!(
+                        company = %self.id,
+                        task = %task_id,
+                        error = %error,
+                        "[dispatch] the board could not be read; this attempt runs without its \
+                         owner or its originating conversation"
+                    );
+                    Vec::new()
+                }
+            };
+            let card_before = cards.into_iter().find(|c| c.id == task_id);
             let owner_before = card_before
                 .as_ref()
                 .map(|c| c.assignee.clone())

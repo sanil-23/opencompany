@@ -193,7 +193,7 @@ interface Props {
    * Without this the thread renders that window as silence and the answer
    * arrives from nowhere.
    */
-  dispatchRunning?: Record<string, number>;
+  dispatchRunning?: Record<string, string>;
 
   /**
    * How far the shell's rehydration of each channel's history has got, so the
@@ -2023,12 +2023,17 @@ export function RoomView({
   // channel level and one raised inside a thread are different waits.
   const dispatchInFlight = (() => {
     if (!activeThreadId || !dispatchRunning) return false;
+    const waiting = new Set(Object.values(dispatchRunning));
+    // The channel's own key always counts: work raised at channel level is
+    // this conversation's too, and checking only the open thread's key made a
+    // channel-level dispatch invisible the moment any thread was opened
+    // (tinysweeper, #2369).
+    if (waiting.has(dispatchThreadKey(activeThreadId, undefined))) return true;
     const openRoot = openThreadId ? threadRootOf(openThreadId) : undefined;
-    const key = dispatchThreadKey(
-      activeThreadId,
-      openRoot === undefined ? undefined : String(openRoot),
+    return (
+      openRoot !== undefined &&
+      waiting.has(dispatchThreadKey(activeThreadId, String(openRoot)))
     );
-    return (dispatchRunning[key] ?? 0) > 0;
   })();
   const openTurn = (() => {
     if (!activeThreadId) return undefined;

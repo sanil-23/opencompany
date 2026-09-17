@@ -175,6 +175,56 @@ fn projects_task_dispatched() {
     );
 }
 
+/// A dispatch's origin survives the round trip through the journal.
+///
+/// The fields are additive (`serde(default)` + `skip_serializing_if`), and that
+/// combination is easy to get subtly wrong: a line written before they existed
+/// must still replay, and a dispatch that carries no conversation must
+/// serialize exactly as it did before — while one that does must come back with
+/// both halves intact (tinysweeper, #2369).
+#[test]
+fn a_dispatch_origin_survives_serialization() {
+    let raised = CompanyEvent::TaskDispatched {
+        task_id: "t-42".into(),
+        run_id: Some("r-1".into()),
+        origin_chat_id: Some("main".into()),
+        origin_parent: Some(crate::ports::types::EventSeq::new(50)),
+    };
+    let wire = serde_json::to_string(&raised).expect("serializes");
+    assert_eq!(
+        serde_json::from_str::<CompanyEvent>(&wire).expect("round trips"),
+        raised,
+        "both halves of the origin come back: {wire}"
+    );
+
+    // A board-created dispatch adds nothing to the log, which is what keeps
+    // every stored record from needing a migration.
+    let from_the_board = CompanyEvent::TaskDispatched {
+        task_id: "t-43".into(),
+        run_id: None,
+        origin_chat_id: None,
+        origin_parent: None,
+    };
+    let bare = serde_json::to_string(&from_the_board).expect("serializes");
+    assert!(
+        !bare.contains("origin_chat_id") && !bare.contains("origin_parent"),
+        "an absent origin is skipped, not written as null: {bare}"
+    );
+
+    // And a line from before the fields existed still replays, reading as the
+    // board-created case rather than failing to decode.
+    let old = r#"{"kind":"TaskDispatched","task_id":"t-44"}"#;
+    assert_eq!(
+        serde_json::from_str::<CompanyEvent>(old).expect("an older line replays"),
+        CompanyEvent::TaskDispatched {
+            task_id: "t-44".into(),
+            run_id: None,
+            origin_chat_id: None,
+            origin_parent: None,
+        },
+    );
+}
+
 /// A dispatch raised from a thread says so, the way its completion already
 /// does.
 ///
