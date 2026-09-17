@@ -1206,7 +1206,12 @@ impl HarnessBrain {
                         // are discarded into the note), so its live turn frames
                         // must not leak onto the console timeline — run it
                         // un-streamed (#125 review).
-                        .run_steered_background(
+                        // `run_steered_dispatch`, not `_background`: this is
+                        // the one path whose frames belong in a conversation.
+                        // Its sibling stays un-streamed for the approval
+                        // re-issue, which is addressed to a thread and must
+                        // still publish nothing (#1890 I).
+                        .run_steered_dispatch(
                             &self.record().id,
                             &responder,
                             &instruction,

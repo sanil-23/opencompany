@@ -2446,9 +2446,14 @@ export function AppShell({
    * retry, or two asks), and a single terminal must not clear the others.
    */
   const [dispatchRunning, setDispatchRunning] = useState<Record<string, number>>({});
+  // Keyed on `client` as well as `company`: a reseat replaces the client while
+  // preserving the company (it edits a host address and keeps the connection
+  // id), so a company-only reset leaves the old host's counts standing. No
+  // terminal from the new host ever clears them, and the thread shows a working
+  // row for an attempt that is not running anywhere (CodeRabbit, #2369).
   useEffect(() => {
     setDispatchRunning((prev) => (Object.keys(prev).length === 0 ? prev : {}));
-  }, [company]);
+  }, [company, client]);
 
   const injectAgentReply = useCallback(
     (event: AgentReplyEvent) => {

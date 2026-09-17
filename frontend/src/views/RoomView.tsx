@@ -3294,6 +3294,10 @@ export function RoomView({
                   onClose={() => setOpenThreadId(null)}
                   typingNames={resolveTypingNames?.(active.id, parent.id) ?? []}
                   openTurn={threadTurn}
+                  // The thread's own dispatched work: `threadTurn` settles as
+                  // soon as the turn hands it over, so without this the panel
+                  // shows nothing for the minutes the attempt actually runs.
+                  dispatchInFlight={dispatchInFlight}
                   onTyping={() => onTyping?.(active.id, parent.id)}
                   onRetrySend={retrySend}
                   // A thread is not a lesser transcript (issue #1734): an echoed

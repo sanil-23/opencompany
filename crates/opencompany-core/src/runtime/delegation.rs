@@ -241,6 +241,35 @@ pub trait RunTurn: Send + Sync {
         run_sink: Option<Arc<RunTraceSink>>,
     ) -> Result<TurnOutcome>;
 
+    /// A steerable turn that **streams** its live frames to the conversation
+    /// `chat` names — a dispatched card whose origin the card recorded.
+    ///
+    /// Beside [`run_steered_background`](Self::run_steered_background) rather
+    /// than a flag on it, because "does this turn belong to a conversation" and
+    /// "should its frames be published" are different questions that issue
+    /// #1890 I deliberately separated. An approval's re-issued call is the
+    /// proof: it is addressed to the thread the approval was raised in *and*
+    /// must stay un-streamed, because its answer arrives as the bubble the
+    /// caller returns. Inferring the stream from a present `chat_id` collapses
+    /// that distinction and leaks those frames onto whichever thread the
+    /// console is watching — the exact misattribution #125 fixed.
+    ///
+    /// Defaults to the un-streamed method, so the sentinel and every test
+    /// double inherit today's behaviour; only the streaming harness engine
+    /// overrides it.
+    async fn run_steered_dispatch(
+        &self,
+        company: &CompanyId,
+        agent_id: &str,
+        message: &str,
+        control: &SteerControl,
+        chat: ChatTarget<'_>,
+        run_sink: Option<Arc<RunTraceSink>>,
+    ) -> Result<TurnOutcome> {
+        self.run_steered_background(company, agent_id, message, control, chat, run_sink)
+            .await
+    }
+
     /// An un-streamed, un-steered turn — a workflow agent node, which shows no
     /// operator chat bubble. Its transient frames must not reach the console
     /// timeline, which is the same reason this method exists beside
