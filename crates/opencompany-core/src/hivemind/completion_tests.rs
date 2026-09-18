@@ -164,12 +164,36 @@ fn a_completion_reads_as_its_result_without_its_marker() {
 }
 
 #[test]
-fn a_bare_completion_reads_as_nothing() {
-    // Observed live: a seat reported finished and carried no result. That is a
-    // report to the host, not a line for a person, and it should not land in a
-    // transcript somebody reads.
-    assert_eq!(super::readable("!complete"), Some(String::new()));
+fn a_bare_marker_still_surfaces_as_a_sentence() {
+    // Observed live: a seat wrote its work as one reply and `!broadcast` alone
+    // as a second, which rendered to nothing. A row that disappears leaves an
+    // operator looking at a turn that appears not to have happened, so a bare
+    // marker is rendered rather than dropped — the marker is plumbing, the fact
+    // that it was written is not.
+    assert_eq!(
+        super::readable("!complete"),
+        Some("Reported this assignment finished.".to_owned())
+    );
+    assert_eq!(
+        super::readable("!broadcast"),
+        Some("Handed this on, but carried no detail with it.".to_owned())
+    );
     assert!(super::is_completion_line("!complete"));
+}
+
+#[test]
+fn a_bare_marker_earns_a_correction_the_seat_can_act_on() {
+    let broadcast = super::bare_marker_correction("!broadcast").expect("a bare broadcast is bare");
+    assert!(broadcast.contains("carried nothing"));
+    assert!(broadcast.contains("ONE line"));
+
+    let complete = super::bare_marker_correction("!complete").expect("a bare complete is bare");
+    assert!(complete.contains("no result"));
+
+    // A marker that carries its work is not corrected.
+    assert!(super::bare_marker_correction("!broadcast verify the k=7 case").is_none());
+    assert!(super::bare_marker_correction("!complete residue holds").is_none());
+    assert!(super::bare_marker_correction("ordinary prose").is_none());
 }
 
 #[test]

@@ -2514,19 +2514,19 @@ pub(crate) fn readable_moves(text: String) -> String {
         return text;
     }
     text.lines()
-        .filter_map(|line| {
+        .map(|line| {
             // Completion grammar first: `!broadcast` and `!complete` are this
             // host's markers addressed to the *host*, and a reader shown them
             // is being shown plumbing.
             if let Some(rendered) = crate::hivemind::completion::readable(line) {
-                // A bare `!complete` renders to nothing and is dropped. Only a
-                // line that WAS a marker may disappear — a blank line the
-                // author wrote is theirs and survives, which is why this is a
-                // `filter_map` over the rendering rather than a filter over
-                // every empty line.
-                return (!rendered.trim().is_empty()).then_some(rendered);
+                // Nothing is dropped: a marker line is part of what the member
+                // said, and a row rendering to nothing leaves an operator
+                // looking at a turn that appears not to have happened. A bare
+                // marker renders as a plain sentence instead — see
+                // `completion::readable`.
+                return rendered;
             }
-            Some(crate::hivemind::readable(line).unwrap_or_else(|| line.to_string()))
+            crate::hivemind::readable(line).unwrap_or_else(|| line.to_string())
         })
         .collect::<Vec<_>>()
         .join("\n")

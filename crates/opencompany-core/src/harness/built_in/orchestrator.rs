@@ -3697,21 +3697,30 @@ pub fn member_delegation_tools(
             company.clone(),
             store.clone(),
         )),
-        Box::new(DelegateToDeskTool::for_member(
-            queue.clone(),
-            company.clone(),
-            store.clone(),
-            scope.clone(),
-        )),
-        // Issue #884, D1: without this a desk lead can reach every desk its
-        // allowlist names and nobody at all on its own — the one hand-off it is
-        // best placed to make.
-        Box::new(DelegateToTeammateTool::for_member(
-            queue.clone(),
-            company,
-            store,
-            scope,
-        )),
+        // **Both `delegate_*` tools are withheld from an ordinary member.**
+        //
+        // Not because the hand-off is wrong — issue #884, D1 is right that a
+        // desk lead otherwise reaches every desk but nobody on its own — but
+        // because on a desk turn they cannot fire. The queue has no drain
+        // claimed there, so the tool refuses in the model's own turn:
+        //
+        //   [delegation] a delegation tool found no drain that would execute
+        //   it; refusing rather than queuing into a queue nothing will drain
+        //   tool=delegate_to_teammate reason=drain_unwired
+        //
+        // Observed live, and a refusal costs a whole turn — the comment below
+        // makes exactly that point about refusals. A seat with `desk_dm`
+        // withheld reached for this next, was refused, and only then wrote the
+        // `!broadcast` that works. Advertising a tool that cannot fire buys
+        // one wasted model call per hand-off.
+        //
+        // `spawn_task` stays: a tracked card is not a hand-off, and it is the
+        // one thing here `!broadcast` does not do. If it turns out to share the
+        // drain problem it should come out on the same grounds, but it was not
+        // what refused.
+        //
+        // Re-registering either is a one-line change once a desk turn claims
+        // the drain.
     ]
 }
 
