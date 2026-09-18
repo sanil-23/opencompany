@@ -21,7 +21,9 @@ fn conversation() -> Conversation {
 
 fn room(members: &[&str]) -> tinyhivemind_hive::CompletionEpisodeState {
     let assigned: Vec<String> = members.iter().map(|id| (*id).to_owned()).collect();
-    opened(conversation(), Sequence(10), &assigned).expect("a well-formed opening")
+    // Roster and assignment are the same list here: these tests are about
+    // what happens to members who DO owe a report.
+    opened(conversation(), Sequence(10), &assigned, &assigned).expect("a well-formed opening")
 }
 
 #[test]
@@ -99,7 +101,7 @@ fn reporting_for_somebody_who_was_never_assigned_is_refused() {
 
 #[test]
 fn an_opening_that_assigns_nobody_is_refused() {
-    let error = opened(conversation(), Sequence(10), &[])
+    let error = opened(conversation(), Sequence(10), &[], &[])
         .expect_err("an episode with no assignee can never end");
     assert!(
         error.to_string().contains("hive completion episode"),
@@ -143,4 +145,83 @@ fn a_reply_may_hand_on_and_then_report_finished() {
         Some("solver should re-run with exact arithmetic")
     );
     assert!(super::reply_reports_completion(reply));
+}
+
+#[test]
+fn a_broadcast_reads_as_the_work_without_its_marker() {
+    assert_eq!(
+        super::readable("!broadcast motion tokens need to land in the component spec"),
+        Some("motion tokens need to land in the component spec".to_owned())
+    );
+}
+
+#[test]
+fn a_completion_reads_as_its_result_without_its_marker() {
+    assert_eq!(
+        super::readable("!complete contrast passes AA at every variant"),
+        Some("contrast passes AA at every variant".to_owned())
+    );
+}
+
+#[test]
+fn a_bare_completion_reads_as_nothing() {
+    // Observed live: a seat reported finished and carried no result. That is a
+    // report to the host, not a line for a person, and it should not land in a
+    // transcript somebody reads.
+    assert_eq!(super::readable("!complete"), Some(String::new()));
+    assert!(super::is_completion_line("!complete"));
+}
+
+#[test]
+fn an_ordinary_line_is_not_completion_grammar() {
+    assert_eq!(super::readable("the palette passes AA"), None);
+    assert!(!super::is_completion_line("the palette passes AA"));
+    // Prose mentioning a marker mid-sentence is not a marker line.
+    assert!(!super::is_completion_line(
+        "I will !complete once checker signs"
+    ));
+}
+
+#[test]
+fn only_the_assigned_owe_a_report() {
+    // The bug this fixes, seen live: opening every seat pending meant a
+    // six-member desk could not end until all six spoke, and a member the work
+    // never reached wrote a bare `!complete` because it had nothing to report.
+    let roster: Vec<String> = ["lead", "solver", "checker"]
+        .iter()
+        .map(|id| (*id).to_owned())
+        .collect();
+    let state = opened(
+        conversation(),
+        Sequence(10),
+        &roster,
+        &["solver".to_owned()],
+    )
+    .expect("a well-formed opening");
+
+    assert_eq!(
+        pending(&state),
+        vec!["solver".to_owned()],
+        "only the routed member is waited on"
+    );
+
+    let state = completed(&state, "solver", Sequence(11)).expect("a valid report");
+    assert!(
+        pending(&state).is_empty(),
+        "and the room ends without lead or checker saying anything"
+    );
+}
+
+#[test]
+fn an_unassigned_seat_can_still_be_handed_work() {
+    // The roster is who MAY be assigned. A routed handoff reaches a seat that
+    // started finished.
+    let roster: Vec<String> = ["lead", "checker"]
+        .iter()
+        .map(|id| (*id).to_owned())
+        .collect();
+    let state = opened(conversation(), Sequence(10), &roster, &["lead".to_owned()]).expect("valid");
+
+    let state = assigned(&state, &["checker".to_owned()], Sequence(11)).expect("valid");
+    assert!(pending(&state).contains(&"checker".to_owned()));
 }

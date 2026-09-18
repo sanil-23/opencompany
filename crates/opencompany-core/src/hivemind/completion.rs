@@ -121,9 +121,61 @@ pub fn reply_reports_completion(reply: &str) -> bool {
 pub fn opened(
     conversation: tinyhivemind::Conversation,
     watermark: Sequence,
+    roster: &[String],
     assigned: &[String],
 ) -> Result<CompletionEpisodeState> {
-    CompletionEpisodeState::opened(conversation, watermark, assigned)
+    // **The roster says who MAY be assigned; only `assigned` owes a report.**
+    //
+    // Seeded complete and then assigned, which is what the reference runner
+    // does. Opening every seat pending instead looks equivalent and is not: a
+    // six-member desk could then not end until all six spoke, and a member the
+    // work never reached would be asked for an evidence-dense result it had no
+    // way to produce. Observed live — a seat wrote a bare `!complete` with
+    // nothing after it, because it had nothing to complete.
+    //
+    // It also keeps the opening route load-bearing: whoever routing selected is
+    // who the room is waiting on, rather than routing picking a first speaker
+    // and the termination ignoring it.
+    // A room with nobody in it reports Complete on its first pass, which reads
+    // as "the work is done" when what happened is that there was never any. A
+    // desk that cannot seat anybody is a caller bug, and saying so beats
+    // ending silently.
+    if roster.is_empty() {
+        return Err(OpenCompanyError::Config(
+            "hive completion episode: a room with no members can never do work".to_owned(),
+        ));
+    }
+    let mut state = CompletionEpisodeState {
+        conversation,
+        watermark,
+        participants: roster
+            .iter()
+            .map(|agent_id| tinyhivemind_hive::ParticipantCompletion {
+                agent_id: agent_id.clone(),
+                // Seeded BELOW the watermark, not at it: an assignment must
+                // land strictly after the completion it supersedes, and the
+                // opening assignment below is made at the watermark itself.
+                // Seeding level with it makes the library reject that
+                // assignment as a stale event.
+                assigned_at: Sequence(0),
+                completed_at: Some(Sequence(0)),
+            })
+            .collect(),
+    };
+    if !assigned.is_empty() {
+        state = assigned_at(&state, assigned, watermark)?;
+    }
+    Ok(state)
+}
+
+/// [`assigned`] under another name, so [`opened`] can use it before the public
+/// one is in scope for a caller.
+fn assigned_at(
+    state: &CompletionEpisodeState,
+    recipients: &[String],
+    at: Sequence,
+) -> Result<CompletionEpisodeState> {
+    apply_assignment(state, recipients, at)
         .map_err(|error| OpenCompanyError::Config(format!("hive completion episode: {error}")))
 }
 
@@ -180,3 +232,45 @@ pub fn pending(state: &CompletionEpisodeState) -> Vec<String> {
 #[cfg(test)]
 #[path = "completion_tests.rs"]
 mod tests;
+
+/// One completion-episode line as a person should read it, or `None` when the
+/// line carries no marker of this module's.
+///
+/// Three renderings, and the stored row is untouched by all of them — the fold
+/// reads markers off the journal, so a projection that rewrote them would leave
+/// the episode unable to read its own transcript. This mirrors
+/// [`moves::readable`](super::moves::readable), which does the same for the
+/// deliberation grammar.
+///
+/// * `!broadcast <work>` renders as the work alone. The marker is addressed to
+///   the host, not to the room: the room only ever needed the finding, and a
+///   reader who sees `!broadcast` is being shown plumbing.
+/// * `!complete <result>` renders as the result alone, for the same reason.
+/// * a **bare** `!complete` renders as nothing at all. It is a seat reporting
+///   to the host that its assignment is finished and carrying no result to
+///   report — a row with no content for a person, which belongs in the fold
+///   and not in a transcript somebody reads.
+#[must_use]
+pub fn readable(line: &str) -> Option<String> {
+    if let Some(work) = broadcast_body(line) {
+        return Some(work.to_owned());
+    }
+    if reports_completion(line) {
+        let rest = line
+            .trim_start()
+            .strip_prefix(COMPLETE_MARKER)
+            .unwrap_or_default()
+            .trim();
+        return Some(rest.to_owned());
+    }
+    None
+}
+
+/// Whether one line carries a marker this module owns.
+///
+/// The cheap pre-check `readable_moves` makes before rewriting anything, so a
+/// transcript with no completion grammar in it is returned untouched.
+#[must_use]
+pub fn is_completion_line(line: &str) -> bool {
+    broadcast_body(line).is_some() || reports_completion(line)
+}

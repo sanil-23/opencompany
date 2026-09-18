@@ -2507,14 +2507,27 @@ fn strip_relay_note(event: &CompanyEvent) -> Option<String> {
 /// line, so this rewrite lives here and nowhere earlier — a room whose own
 /// transcript had been cleaned could not count itself.
 pub(crate) fn readable_moves(text: String) -> String {
-    if !text
-        .lines()
-        .any(|line| crate::hivemind::line_kind(line).is_some())
-    {
+    if !text.lines().any(|line| {
+        crate::hivemind::line_kind(line).is_some()
+            || crate::hivemind::completion::is_completion_line(line)
+    }) {
         return text;
     }
     text.lines()
-        .map(|line| crate::hivemind::readable(line).unwrap_or_else(|| line.to_string()))
+        .filter_map(|line| {
+            // Completion grammar first: `!broadcast` and `!complete` are this
+            // host's markers addressed to the *host*, and a reader shown them
+            // is being shown plumbing.
+            if let Some(rendered) = crate::hivemind::completion::readable(line) {
+                // A bare `!complete` renders to nothing and is dropped. Only a
+                // line that WAS a marker may disappear — a blank line the
+                // author wrote is theirs and survives, which is why this is a
+                // `filter_map` over the rendering rather than a filter over
+                // every empty line.
+                return (!rendered.trim().is_empty()).then_some(rendered);
+            }
+            Some(crate::hivemind::readable(line).unwrap_or_else(|| line.to_string()))
+        })
         .collect::<Vec<_>>()
         .join("\n")
 }
