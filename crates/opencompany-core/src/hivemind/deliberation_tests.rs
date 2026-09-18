@@ -535,3 +535,68 @@ fn turn(agent: &str, phase: tinyhivemind_hive::Phase) -> tinyhivemind_hive::Hive
         round_start: tinyhivemind_hive::Sequence(u64::MAX),
     }
 }
+
+/// A completion-driven room must not be handed the deliberation rules.
+///
+/// The failure this guards is the one that shipped green: `Completion::next`
+/// synthesises `Phase::Deliberate` because `Phase` has no value meaning "was
+/// assigned", and `render` branched on it — so a `desk_dm` that should have
+/// produced work produced a `!question` line instead. Every scheduler test
+/// passed throughout, because none of them rendered a prompt.
+#[test]
+fn a_completion_turn_is_told_to_work_rather_than_to_score() {
+    let desk = desk_of(
+        &manifest_with("hive = { quorum = 2, blind_round = false }"),
+        "eng",
+    )
+    .expect("a room");
+    let member = desk.member("critic").expect("critic is seated").clone();
+    let quorum = desk.policy().quorum;
+
+    let prompt = EpisodePrompt::new(&member, &desk, "Verify the residue.", quorum, &[])
+        .completing(true)
+        // The very value `Completion::next` synthesises: the point is that the
+        // phase no longer decides.
+        .render(&turn("critic", tinyhivemind_hive::Phase::Deliberate), &[]);
+
+    assert!(
+        prompt.contains("!complete"),
+        "the seat must be told how to report it is done:\n{prompt}"
+    );
+    assert!(
+        prompt.contains("prose IS the result"),
+        "and that its prose is the deliverable:\n{prompt}"
+    );
+    assert!(
+        !prompt.contains("Reply with ONE line only"),
+        "it must NOT be told to answer in a single marker line:\n{prompt}"
+    );
+    assert!(
+        !prompt.contains("does not count"),
+        "nor given rules about a tally this room does not keep:\n{prompt}"
+    );
+}
+
+/// The same builder left off renders exactly as it always did.
+#[test]
+fn a_deliberating_turn_is_unchanged_by_the_new_branch() {
+    let desk = desk_of(
+        &manifest_with("hive = { quorum = 2, blind_round = false }"),
+        "eng",
+    )
+    .expect("a room");
+    let member = desk.member("critic").expect("critic is seated").clone();
+    let quorum = desk.policy().quorum;
+
+    let prompt = EpisodePrompt::new(&member, &desk, "Verify the residue.", quorum, &[])
+        .render(&turn("critic", tinyhivemind_hive::Phase::Deliberate), &[]);
+
+    assert!(
+        prompt.contains("Reply with ONE line only"),
+        "deliberation still gets its marker grammar:\n{prompt}"
+    );
+    assert!(
+        !prompt.contains("!complete"),
+        "and is not offered a move this room does not have:\n{prompt}"
+    );
+}
