@@ -591,6 +591,19 @@ fn a_completion_turn_is_told_to_work_rather_than_to_score() {
         prompt.contains("Do NOT name who should take it"),
         "and told not to address it, or routing has nothing to decide:\n{prompt}"
     );
+    // The discriminator a seat can actually apply to its own turn. Told apart
+    // by audience ("should another teammate take work"), a seat that had
+    // finished and documented a decision broadcast it anyway — a billed routing
+    // call, an answer of nobody, and one more turn to write the `!complete` it
+    // already meant. See `COMPLETE_RULES` for the run.
+    assert!(
+        prompt.contains("what is still OPEN"),
+        "and told which marker by what is left undone, not by how much it did:\n{prompt}"
+    );
+    assert!(
+        prompt.contains("Recording what you settled IS completing it"),
+        "so writing a decision down is not mistaken for handing it on:\n{prompt}"
+    );
 }
 
 /// The same builder left off renders exactly as it always did.
