@@ -122,16 +122,24 @@ yourself in the first person — never by your own id — and name colleagues by
 /// one line; prose IS the deliverable rather than something that costs the room
 /// a turn; and one marker, `!complete`, which reports rather than scores.
 const COMPLETE_RULES: &str = "\
-Do the work you were assigned, then say what you established and what you did \
-not finish. Your prose IS the result here — there is no marker grammar to \
-satisfy, nothing you write is counted as support, no option is being carried \
-and no vote is being tallied. Take as many turns as the work needs. When your \
-assignment is done and nothing is left open, end that turn with a line \
-beginning `!complete`, followed by your result and the evidence it rests on. \
-Do not write `!complete` while anything is still open: it is the one thing \
-that ends your part of this, and a premature one hands back work you have not \
-done. If somebody else needs to take this next, say plainly what they need and \
-why — naming the finding, not the person — and the room will route it.";
+End this turn with exactly one action: `!broadcast` when another teammate \
+should take work, or `!complete` when your assignment is done. Write the \
+marker at the start of its own line.\n\
+\n\
+`!broadcast` carries a SELF-CONTAINED message — the finding, the command and \
+its exact output, the counterexample — everything the next teammate needs \
+without re-reading your turn. Do NOT name who should take it: the room works \
+out who is best placed from what you wrote, so a vague broadcast is routed as \
+badly as it reads. Handing work on does not end your own assignment.\n\
+\n\
+`!complete` carries your evidence-dense final result and ends your part of \
+this. Do not write it while anything is still open — a premature one hands \
+back work you have not done.\n\
+\n\
+Everything you write is journaled on the desk and read by your teammates, so \
+say what you established and what you did not finish before the marker line. \
+Nothing here is counted as support, no option is being carried and no vote is \
+being tallied: take as many turns as the work needs.";
 
 const WORK_BEFORE_LINE: &str = "\
 Before you write that line, USE YOUR TOOLS. A turn is work and then one line, \
