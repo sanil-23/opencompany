@@ -410,12 +410,28 @@ pub const TRACE_FILE: &str = "routing-trace.jsonl";
 fn trace(source: &str, message: &str, plan: &RoutingPlan) {
     let recipients = recipients(plan);
     // The log line carries the shape; the file carries everything.
-    tracing::info!(
-        source,
-        recipients = ?recipients,
-        plan = ?std::mem::discriminant(plan),
-        "[hive] routed by meaning"
-    );
+    // A fallback is the interesting case, and it is the one that looks like
+    // success from outside: the message still reaches somebody. Logged at
+    // `warn` with its reason so a broken credential does not read as a healthy
+    // route for the rest of a run.
+    if let RoutingPlan::Fallback {
+        responder_id,
+        reason,
+    } = plan
+    {
+        tracing::warn!(
+            source,
+            responder = %responder_id,
+            ?reason,
+            "[hive] routing declined; fell back to the mechanical responder"
+        );
+    } else {
+        tracing::info!(
+            source,
+            recipients = ?recipients,
+            "[hive] routed by meaning"
+        );
+    }
 
     let Some(root) = std::env::var_os("OPENCOMPANY_DATA_DIR") else {
         // No instance root configured: the log line above is the whole record.

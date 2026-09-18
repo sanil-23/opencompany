@@ -48,19 +48,27 @@ pub const BASE_URL_ENV: &str = "OPENCOMPANY_TYPESAFE_BASE_URL";
 pub const MODEL_ENV: &str = "OPENCOMPANY_TYPESAFE_MODEL";
 /// The Jev model this host asks for unless the environment says otherwise.
 ///
-/// A concrete version, not `jev-latest`. The alias is what
-/// [`JevRouter`](tinyhivemind_typesafe::JevRouter) defaults to and it moves
-/// under you: routing quality would drift with no diff to review and no way to
-/// tell a behaviour change from a bad day, which is the same argument
-/// `rust-toolchain.toml` makes about pinning rustc. `1.13` is the version the
-/// only live evidence in hand was produced against — `tinyhivemind`'s PR #55
-/// records "live Jev 1.13 routing", and the TypeSafe adapter's own tests assert
-/// `model_identity == "jev-1.13"` round-tripping back.
+/// The moving alias, not a version — and deliberately, after pinning failed.
 ///
-/// A response carries the version that actually answered, so a pin that has
-/// been retired server-side shows up as a mismatch rather than silently
-/// resolving to something else.
-pub const DEFAULT_MODEL: &str = "jev-1.13";
+/// `jev-1.13` looked like the honest pin: `tinyhivemind`'s PR #55 records "live
+/// Jev 1.13 routing" and the TypeSafe adapter's own tests assert
+/// `model_identity == "jev-1.13"` round-tripping back. Neither is the service's
+/// list of servable ids, and the endpoint answers that pin with
+///
+/// ```text
+/// 400 {"detail":{"error_type":"api_usage_error","message":"Unknown model: jev-1.13"}}
+/// ```
+///
+/// A refused model fails closed — routing declines and the mechanical responder
+/// takes the message — which is the safe direction and also an invisible one:
+/// the handoff still lands, so a broken pin reads as a healthy fallback from
+/// outside. That is what the transport's error logging exists to catch.
+///
+/// A response carries the version that actually answered, so the way to pin
+/// honestly is to read `model_identity` off a successful call and set
+/// `OPENCOMPANY_TYPESAFE_MODEL` to it. Until somebody does, the alias is the
+/// only id known to be servable.
+pub const DEFAULT_MODEL: &str = "jev-latest";
 
 /// How long one routing question may take before it is a transport failure.
 ///
@@ -193,9 +201,21 @@ impl SystemOneTransport for TypeSafeTransport {
                 .json(request)
                 .send()
                 .await
-                .map_err(|error| Error::Transport {
-                    status: None,
-                    message: error.to_string(),
+                .map_err(|error| {
+                    // `route_semantic` matches `let Ok(..) else` and drops this,
+                    // so a failed route degrades to the mechanical pick with no
+                    // reason attached. Said here, where the reason still exists:
+                    // a broken credential and a healthy fallback are otherwise
+                    // indistinguishable from the outside.
+                    tracing::warn!(
+                        %error,
+                        endpoint = %self.base_url,
+                        "[typesafe] the routing request did not reach System One"
+                    );
+                    Error::Transport {
+                        status: None,
+                        message: error.to_string(),
+                    }
                 })?;
 
             let status = response.status();
@@ -204,22 +224,36 @@ impl SystemOneTransport for TypeSafeTransport {
                 // verbatim: a routing refusal that says only "400" is a support
                 // ticket, and nothing here is in a position to summarise it.
                 let message = response.text().await.unwrap_or_default();
+                // The provider's own words. A routing refusal that says only
+                // "400" is a support ticket; this is the line that names a
+                // retired model id, an unentitled key or a schema drift.
+                tracing::warn!(
+                    status = status.as_u16(),
+                    endpoint = %self.base_url,
+                    body = %message,
+                    "[typesafe] System One refused the routing request"
+                );
                 return Err(Error::Transport {
                     status: Some(status.as_u16()),
                     message,
                 });
             }
 
-            response
-                .json::<SystemOneResponse>()
-                .await
-                .map_err(|error| Error::Transport {
+            response.json::<SystemOneResponse>().await.map_err(|error| {
+                tracing::warn!(
+                    %error,
+                    status = status.as_u16(),
+                    "[typesafe] System One answered with a body this host cannot decode"
+                );
+                Error::Transport {
                     status: Some(status.as_u16()),
-                    // A success status with a body this host cannot decode is a
-                    // schema drift, not an outage, and the two are worth telling
-                    // apart in a log — so the status rides along.
+                    // A success status with a body this host cannot decode
+                    // is a schema drift, not an outage, and the two are
+                    // worth telling apart in a log — so the status rides
+                    // along.
                     message: format!("System One response did not decode: {error}"),
-                })
+                }
+            })
         })
     }
 }

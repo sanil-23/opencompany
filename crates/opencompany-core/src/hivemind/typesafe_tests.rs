@@ -161,4 +161,7 @@ fn the_routing_model_is_pinned_unless_the_environment_moves_it() {
         std::env::remove_var(super::MODEL_ENV);
     }
     assert_eq!(super::routing_model(), super::DEFAULT_MODEL);
+    // The alias, not a version: `jev-1.13` was refused live with
+    // `Unknown model`, and a refused pin fails closed as a silent fallback.
+    assert_eq!(super::DEFAULT_MODEL, "jev-latest");
 }
