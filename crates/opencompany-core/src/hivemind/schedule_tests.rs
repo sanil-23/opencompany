@@ -22,7 +22,7 @@ fn conversation() -> Conversation {
 fn opened(members: &[&str]) -> Completion {
     let assigned: Vec<String> = members.iter().map(|id| (*id).to_owned()).collect();
     Completion::new(
-        super::super::completion::opened(conversation(), Sequence(10), &assigned)
+        super::super::completion::opened(conversation(), Sequence(10), &assigned, &assigned)
             .expect("a well-formed opening"),
         25,
     )
@@ -109,8 +109,13 @@ fn a_row_from_somebody_this_episode_never_assigned_is_not_a_report() {
 #[test]
 fn the_turn_cap_stops_a_room_that_never_reports() {
     let mut scheduler = Completion::new(
-        super::super::completion::opened(conversation(), Sequence(10), &["checker".to_owned()])
-            .expect("valid"),
+        super::super::completion::opened(
+            conversation(),
+            Sequence(10),
+            &["checker".to_owned()],
+            &["checker".to_owned()],
+        )
+        .expect("valid"),
         2,
     );
 

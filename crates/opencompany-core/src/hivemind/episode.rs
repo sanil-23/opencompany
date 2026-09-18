@@ -184,6 +184,12 @@ pub struct EpisodeDriver<'a> {
     router: Option<std::sync::Arc<dyn tinyhivemind_embed::routing::Router + Send + Sync>>,
     /// Run this episode on explicit completion reports rather than on quorum.
     completion: bool,
+    /// Who the episode opens assigned to, when it is completion-driven.
+    ///
+    /// Empty means the desk's first member, which is the mechanical responder
+    /// and what this desk answered with before routing existed. A caller that
+    /// has routed the opening message supplies its recipients instead.
+    opening: Vec<String>,
 }
 
 impl std::fmt::Debug for EpisodeDriver<'_> {
@@ -253,7 +259,19 @@ impl<'a> EpisodeDriver<'a> {
             #[cfg(feature = "typesafe")]
             router: None,
             completion: false,
+            opening: Vec::new(),
         }
+    }
+
+    /// Open a completion-driven episode assigned to `ids`.
+    ///
+    /// Only these owe a `!complete`. Every other seat is seeded finished and
+    /// becomes pending only if a routed handoff assigns it — so a room ends
+    /// when the work is done, not when every chair has spoken.
+    #[must_use]
+    pub fn assigned_to(mut self, ids: Vec<String>) -> Self {
+        self.opening = ids;
+        self
     }
 
     /// Who should take one `!broadcast`, decided by meaning.
@@ -492,14 +510,23 @@ impl<'a> EpisodeDriver<'a> {
         // back and never the state behind it.
         let mut scheduler: Box<dyn super::schedule::Scheduler> = if self.completion {
             Box::new(super::schedule::Completion::new(
-                super::completion::opened(
-                    conversation.clone(),
-                    Sequence(trigger.value()),
-                    &members
-                        .iter()
-                        .map(|member| member.id.clone())
-                        .collect::<Vec<_>>(),
-                )?,
+                {
+                    let roster: Vec<String> =
+                        members.iter().map(|member| member.id.clone()).collect();
+                    // Falls to the desk's first member, which is the mechanical
+                    // responder this desk used before any of this existed.
+                    let opening = if self.opening.is_empty() {
+                        roster.first().cloned().into_iter().collect()
+                    } else {
+                        self.opening.clone()
+                    };
+                    super::completion::opened(
+                        conversation.clone(),
+                        Sequence(trigger.value()),
+                        &roster,
+                        &opening,
+                    )?
+                },
                 policy.turn_budget,
             ))
         } else {
