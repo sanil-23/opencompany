@@ -564,8 +564,8 @@ fn a_completion_turn_is_told_to_work_rather_than_to_score() {
         "the seat must be told how to report it is done:\n{prompt}"
     );
     assert!(
-        prompt.contains("prose IS the result"),
-        "and that its prose is the deliverable:\n{prompt}"
+        prompt.contains("journaled on the desk and read by your teammates"),
+        "and that what it writes is delivered, not private thinking:\n{prompt}"
     );
     assert!(
         !prompt.contains("Reply with ONE line only"),
@@ -574,6 +574,22 @@ fn a_completion_turn_is_told_to_work_rather_than_to_score() {
     assert!(
         !prompt.contains("does not count"),
         "nor given rules about a tally this room does not keep:\n{prompt}"
+    );
+    // The gap a live run exposed: the parser and the routing hook were wired
+    // and the protocol described the *effect* ("the room will route it")
+    // without ever naming the marker. An agent cannot write a move it is never
+    // told exists, so the handoff path was unreachable in practice while every
+    // test passed.
+    assert!(
+        prompt.contains("!broadcast"),
+        "the seat must be told how to hand work on:\n{prompt}"
+    );
+    // Copied from the reference runner's contract: a broadcast carries the
+    // work and never the teammate, because the message text is the whole of
+    // what the router matches against.
+    assert!(
+        prompt.contains("Do NOT name who should take it"),
+        "and told not to address it, or routing has nothing to decide:\n{prompt}"
     );
 }
 
