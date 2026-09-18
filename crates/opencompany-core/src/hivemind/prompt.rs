@@ -109,6 +109,30 @@ yourself in the first person — never by your own id — and name colleagues by
 /// So the one-line contract stays exactly as it was — the fold reads the final
 /// line and nothing else — and this says what the turn is allowed to do BEFORE
 /// that line, which is everything an ordinary turn may do.
+/// **What a completion-driven room is told instead.**
+///
+/// The deliberation protocol is a scoreboard's rules — "a support with no
+/// ^citation does not count", "only support moves an option towards a
+/// decision", "prose without a marker counts for nothing". A completion room
+/// has no scoreboard: nothing is counted, no option is carried, no decision is
+/// reached. Handed those rules it produces `!question` lines instead of work,
+/// which is the exact failure `desk_dm` exists to avoid.
+///
+/// So the inverse, point for point: as many turns as the work takes rather than
+/// one line; prose IS the deliverable rather than something that costs the room
+/// a turn; and one marker, `!complete`, which reports rather than scores.
+const COMPLETE_RULES: &str = "\
+Do the work you were assigned, then say what you established and what you did \
+not finish. Your prose IS the result here — there is no marker grammar to \
+satisfy, nothing you write is counted as support, no option is being carried \
+and no vote is being tallied. Take as many turns as the work needs. When your \
+assignment is done and nothing is left open, end that turn with a line \
+beginning `!complete`, followed by your result and the evidence it rests on. \
+Do not write `!complete` while anything is still open: it is the one thing \
+that ends your part of this, and a premature one hands back work you have not \
+done. If somebody else needs to take this next, say plainly what they need and \
+why — naming the finding, not the person — and the room will route it.";
+
 const WORK_BEFORE_LINE: &str = "\
 Before you write that line, USE YOUR TOOLS. A turn is work and then one line, \
 not one line instead of work. Look up what you need — the order, the item, the \
@@ -304,6 +328,8 @@ pub struct EpisodePrompt<'a> {
     /// second one carrying the crossing. The seat is not being asked to decide
     /// again; it is being asked what the answer changes.
     continuing: bool,
+    /// Whether a completion scheduler is driving this episode.
+    completing: bool,
     /// The episode's watermark — `EpisodeDriver::run`'s `trigger` — or `None`
     /// for a caller that never set one.
     ///
@@ -331,6 +357,7 @@ impl<'a> EpisodePrompt<'a> {
             task,
             quorum,
             pins,
+            completing: false,
             recall: &[],
             unspoken: &[],
             peers: Vec::new(),
@@ -392,6 +419,20 @@ impl<'a> EpisodePrompt<'a> {
         self
     }
 
+    /// Render for a **completion-driven** room rather than a deliberating one.
+    ///
+    /// Branches ahead of `turn.phase` rather than on it, because `Phase` is
+    /// `Deliberate | Commit` — the two stages of reaching a quorum decision —
+    /// and a completion room has no stages. Asking an enum that cannot answer
+    /// is what routed these turns into the deliberation rules in the first
+    /// place. Off by default, so every prompt that is not a completion turn
+    /// renders byte for byte as it did before.
+    #[must_use]
+    pub fn completing(mut self, completing: bool) -> Self {
+        self.completing = completing;
+        self
+    }
+
     /// Name the other desks this seat may ask a question of.
     ///
     /// Rendered only for a desk that opted in to referral and only when the
@@ -450,9 +491,14 @@ impl<'a> EpisodePrompt<'a> {
         // off and the topic the Commit phase names have to be the same fold,
         // or a seat could be told to record a topic the floor does not show.
         let standings = self.standings(visible);
-        let protocol = match turn.phase {
-            Phase::Commit => commit_protocol(&self.carried(&standings)),
-            Phase::Deliberate => self.deliberate_protocol(),
+        let protocol = if self.completing {
+            // Ahead of `phase`, which cannot describe a room that has none.
+            self.complete_protocol()
+        } else {
+            match turn.phase {
+                Phase::Commit => commit_protocol(&self.carried(&standings)),
+                Phase::Deliberate => self.deliberate_protocol(),
+            }
         };
         format!(
             "You are @{}, the {} on the {} desk. {sight}\n\n{}{}{}\n\n{protocol}\n\n{}{}{}{}{}{}{}\
@@ -533,6 +579,15 @@ impl<'a> EpisodePrompt<'a> {
     /// whatever the table says (see
     /// [`UNGATED_KINDS`](super::moves::UNGATED_KINDS)), so this block always
     /// offers a member with nothing to add something to say that is not prose.
+    /// What a member of a completion-driven room is told to do.
+    ///
+    /// Keeps the two rules that are true of any turn — use your tools before
+    /// you write, and write in the first person — and drops every rule about
+    /// markers, citations and topics, none of which this room counts.
+    fn complete_protocol(&self) -> String {
+        format!("{COMPLETE_RULES}\n{WORK_BEFORE_LINE}\n{FIRST_PERSON_RULE}")
+    }
+
     fn deliberate_protocol(&self) -> String {
         let allowed = self.desk.config.moves_for(&self.member.id);
         let assigned = allowed.len() < super::moves::MOVE_KINDS.len();
