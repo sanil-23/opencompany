@@ -12,6 +12,19 @@ use tinyhivemind_embed::{
     CandidateProbability, RouterFuture, RoutingEvaluation, RoutingPlan, RoutingRequest,
 };
 
+/// Serialises every test that routes.
+///
+/// [`super::trace`] reads `OPENCOMPANY_DATA_DIR`, which is PROCESS-wide, and
+/// `a_routing_decision_is_written_where_it_can_be_audited` sets it for its own
+/// window. Any test routing concurrently inside that window writes its own
+/// record into the same file, so an assertion about the first line reads
+/// somebody else's decision — observed as a 1-in-3 failure claiming
+/// `source == "desk_message"`. The variable is the shared resource, so the lock
+/// belongs on everything that can write through it, not on the one test that
+/// sets it.
+static ROUTING: std::sync::LazyLock<tokio::sync::Mutex<()>> =
+    std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
+
 /// Answers every request with one fixed distribution.
 struct Fixture {
     evaluation: RoutingEvaluation,
@@ -124,6 +137,7 @@ async fn routed(evaluation: RoutingEvaluation) -> Vec<String> {
 
 #[tokio::test]
 async fn a_confident_choice_reaches_exactly_one_teammate() {
+    let _routing = ROUTING.lock().await;
     // Sums to exactly 1.0, as every distribution here must: acceptance rejects
     // a partial one and falls back, which is how this test first failed.
     // 0.94 on the winner leaves nobody else above the 20% threshold.
@@ -133,6 +147,7 @@ async fn a_confident_choice_reaches_exactly_one_teammate() {
 
 #[tokio::test]
 async fn an_uncertain_choice_widens_rather_than_gambling() {
+    let _routing = ROUTING.lock().await;
     // Both alternatives clear 20%, so the round carries all three: uncertainty
     // is spent on reach, which is the whole point of the rule.
     let ids = routed(evaluation(
@@ -148,6 +163,7 @@ async fn an_uncertain_choice_widens_rather_than_gambling() {
 
 #[tokio::test]
 async fn an_option_at_or_below_the_threshold_is_not_invited() {
+    let _routing = ROUTING.lock().await;
     // Strictly above 20%, so exactly 20% does not qualify.
     let ids = routed(evaluation(
         "checker",
@@ -160,6 +176,7 @@ async fn an_option_at_or_below_the_threshold_is_not_invited() {
 
 #[tokio::test]
 async fn a_broadcast_naming_its_own_author_falls_back_without_asking_a_model() {
+    let _routing = ROUTING.lock().await;
     // `solver` is the author AND a candidate, which is a loop. The library
     // fails it closed; the deterministic destination stands in.
     struct NeverCalled;
@@ -208,6 +225,7 @@ fn a_fallback_plan_is_a_delivery_not_a_silence() {
 
 #[tokio::test]
 async fn an_explicit_mention_outranks_routing_and_spends_no_model_call() {
+    let _routing = ROUTING.lock().await;
     // A named teammate is the top rung of the responder ladder. Routing must
     // not be consulted at all — not consulted and then overridden.
     struct NeverCalled;
@@ -236,6 +254,7 @@ async fn an_explicit_mention_outranks_routing_and_spends_no_model_call() {
 
 #[tokio::test]
 async fn an_unaddressed_desk_message_is_routed_by_meaning() {
+    let _routing = ROUTING.lock().await;
     let ids = super::route_desk_message(
         &Fixture {
             evaluation: evaluation("checker", 940_000, &[("theory", 60_000)]),
@@ -257,6 +276,7 @@ async fn an_unaddressed_desk_message_is_routed_by_meaning() {
 
 #[tokio::test]
 async fn an_uncertain_opening_route_names_a_room_rather_than_one_responder() {
+    let _routing = ROUTING.lock().await;
     // `RoutingPlan::Hive`: the router deciding this message deserves a room.
     let ids = super::route_desk_message(
         &Fixture {
@@ -284,6 +304,7 @@ async fn an_uncertain_opening_route_names_a_room_rather_than_one_responder() {
 
 #[tokio::test]
 async fn a_routing_decision_is_written_where_it_can_be_audited() {
+    let _routing = ROUTING.lock().await;
     // The gap this closes: a call could be seen leaving the host and its
     // decision could not be reviewed afterwards — no distribution, no
     // confidence, no candidate list. A confident 0.94 and a coin-flip 0.34
