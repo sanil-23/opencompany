@@ -281,3 +281,38 @@ async fn an_uncertain_opening_route_names_a_room_rather_than_one_responder() {
     assert_eq!(ids[0], "checker", "the primary opens");
     assert!(ids.len() > 1, "and invitees join it: {ids:?}");
 }
+
+#[tokio::test]
+async fn a_routing_decision_is_written_where_it_can_be_audited() {
+    // The gap this closes: a call could be seen leaving the host and its
+    // decision could not be reviewed afterwards — no distribution, no
+    // confidence, no candidate list. A confident 0.94 and a coin-flip 0.34
+    // produce the same visible outcome.
+    let dir = std::env::temp_dir().join(format!("oc-route-trace-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("a scratch root");
+    // SAFETY: single-threaded within this test, and the variable is one this
+    // process owns for the duration.
+    unsafe {
+        std::env::set_var("OPENCOMPANY_DATA_DIR", &dir);
+    }
+
+    let ids = routed(evaluation("checker", 940_000, &[("theory", 60_000)])).await;
+    assert_eq!(ids, vec!["checker".to_owned()]);
+
+    let written = std::fs::read_to_string(dir.join(super::TRACE_FILE)).expect("a trace line");
+    let record: serde_json::Value =
+        serde_json::from_str(written.lines().next().expect("one line")).expect("valid json");
+
+    assert_eq!(record["source"], "broadcast");
+    assert_eq!(record["recipients"][0], "checker");
+    // The whole plan, so the distribution behind the pick is reviewable.
+    assert!(
+        record["plan"].to_string().contains("940000"),
+        "the probability that decided it must survive: {record}"
+    );
+
+    unsafe {
+        std::env::remove_var("OPENCOMPANY_DATA_DIR");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

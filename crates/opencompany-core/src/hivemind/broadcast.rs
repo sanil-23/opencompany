@@ -195,7 +195,9 @@ pub async fn route(router: &(dyn Router + '_), broadcast: Broadcast<'_>) -> Vec<
     // a decision this host has already declared cheap, and the policy above
     // never asks for one. Passing a router that cannot be reached would be the
     // more surprising choice.
-    recipients(&route_broadcast(Some(router), None, &request, fallback_responder).await)
+    let plan = route_broadcast(Some(router), None, &request, fallback_responder).await;
+    trace("broadcast", &request.message, &plan);
+    recipients(&plan)
 }
 
 /// Route one **unaddressed desk message** to whoever should answer it.
@@ -232,19 +234,19 @@ pub async fn route_desk_message(
         roster_version: opening.roster_version,
         policy: policy(),
     };
-    recipients(
-        &tinyhivemind_embed::route_message(
-            Some(router),
-            // No reasoning router, matching the reference runner: escalation is
-            // a second provider call on a decision this host has priced as
-            // cheap, and `policy()` never asks for one.
-            None,
-            &request,
-            explicit_responder,
-            fallback_responder,
-        )
-        .await,
+    let plan = tinyhivemind_embed::route_message(
+        Some(router),
+        // No reasoning router, matching the reference runner: escalation is a
+        // second provider call on a decision this host has priced as cheap, and
+        // `policy()` never asks for one.
+        None,
+        &request,
+        explicit_responder,
+        fallback_responder,
     )
+    .await;
+    trace("desk_message", &request.message, &plan);
+    recipients(&plan)
 }
 
 /// One unaddressed desk message needing a responder.
@@ -385,5 +387,63 @@ impl<R: Router + Send + Sync> tinyhivemind::responder::Selector for JevSelector<
                 confidence: evaluation.confidence,
             })
         })
+    }
+}
+
+/// Where a routing decision is written, under the instance data root.
+///
+/// One JSON object per line, appended. A routing rung nobody can audit is a
+/// rung nobody can tune: a confident `0.94` and a coin-flip `0.34` produce the
+/// same visible outcome, and without the distribution there is no way to tell a
+/// good decision from a lucky one. The reference runner writes
+/// `initial-route.json` and `routing-trace.json` for exactly this reason.
+///
+/// JSONL rather than one array, because a host appends across a run and a
+/// truncated array is unreadable where a truncated line loses one record.
+pub const TRACE_FILE: &str = "routing-trace.jsonl";
+
+/// Record one routing decision, both as a log line and durably.
+///
+/// Never fails a route: a trace that cannot be written is reported and the
+/// decision stands. Losing the audit trail is bad; refusing to route because the
+/// disk is full would be worse.
+fn trace(source: &str, message: &str, plan: &RoutingPlan) {
+    let recipients = recipients(plan);
+    // The log line carries the shape; the file carries everything.
+    tracing::info!(
+        source,
+        recipients = ?recipients,
+        plan = ?std::mem::discriminant(plan),
+        "[hive] routed by meaning"
+    );
+
+    let Some(root) = std::env::var_os("OPENCOMPANY_DATA_DIR") else {
+        // No instance root configured: the log line above is the whole record.
+        return;
+    };
+    let record = serde_json::json!({
+        "source": source,
+        // Bounded: a trace is for reviewing the decision, not for re-reading
+        // the message, and an unbounded copy of every routed message would make
+        // this file the largest thing in the data root.
+        "message": message.chars().take(400).collect::<String>(),
+        "recipients": recipients,
+        "plan": plan,
+    });
+    let path = std::path::Path::new(&root).join(TRACE_FILE);
+    let line = match serde_json::to_string(&record) {
+        Ok(line) => line,
+        Err(error) => {
+            tracing::warn!(%error, "[hive] a routing decision could not be encoded for the trace");
+            return;
+        }
+    };
+    if let Err(error) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .and_then(|mut file| std::io::Write::write_all(&mut file, format!("{line}\n").as_bytes()))
+    {
+        tracing::warn!(%error, path = %path.display(), "[hive] the routing trace could not be written");
     }
 }
