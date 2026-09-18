@@ -112,9 +112,31 @@ fn crate_description(name: &str) -> &'static str {
     }
     speech::tool_specs()
         .iter()
-        .find(|spec| spec.name == bare(name))
+        .find(|spec| spec.name == crate_spec_name(name))
         .map(|spec| spec.description)
         .unwrap_or("Say one thing to this channel.")
+}
+
+/// The name the crate lists one of this belt's tools under.
+///
+/// Usually just [`bare`]. The exception is `desk_close`: upstream renamed the
+/// spec to `complete_episode` — the seat is "reporting, not ending the desk",
+/// and the new spelling says so — while keeping `close` a valid *input*, both
+/// in `interpret` and as a serde alias on stored rows.
+///
+/// So the tool this host registers is unaffected at runtime and every journaled
+/// row still reads, but the spec lookup silently missed and
+/// [`crate_description`] fell through to its "Say one thing to this channel."
+/// default. That default is not a paraphrase of `complete_episode`, it is a
+/// different tool's sentence — a seat told it would have had no way to learn
+/// that this is the call that reports work finished. The belt's own test caught
+/// it; this mapping is the fix, and renaming the registered tool is a separate
+/// change with its own prompt and manifest fallout.
+fn crate_spec_name(name: &str) -> &str {
+    match bare(name) {
+        "close" => "complete_episode",
+        other => other,
+    }
 }
 
 /// What every speech tool needs: who is speaking, where, and the journal.
@@ -1071,7 +1093,11 @@ impl Tool for CloseTool {
             },
         );
         match call {
-            Ok(ToolCall::Speak(Utterance::Close { message })) => {
+            // Renamed upstream from `Close` to `CompleteEpisode`: the seat is
+            // "reporting, not ending the desk", and the new spelling says so.
+            // The wire is unchanged — the variant keeps `alias = "close"` — so
+            // `desk_close` still decodes and every stored row still reads.
+            Ok(ToolCall::Speak(Utterance::CompleteEpisode { message })) => {
                 Ok(self.0.post_to_channel(channel, message).await)
             }
             Ok(_) => Ok(ToolResult::error(
