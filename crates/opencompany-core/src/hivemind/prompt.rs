@@ -121,20 +121,55 @@ yourself in the first person — never by your own id — and name colleagues by
 /// So the inverse, point for point: as many turns as the work takes rather than
 /// one line; prose IS the deliverable rather than something that costs the room
 /// a turn; and one marker, `!complete`, which reports rather than scores.
+///
+/// # Why the two markers are separated by what is OPEN
+///
+/// The first version told them apart by audience — "`!broadcast` when another
+/// teammate should take work" — and a live run showed that is not a test a seat
+/// can apply to its own turn. `ui_designer` finished a token decision, wrote it
+/// to a workspace note, and handed on:
+///
+/// ```text
+/// !broadcast icon stroke weight settled at 1.5px, documented at
+///            agents/ui-designer/icon-stroke-token.md … Ready to merge.
+/// ```
+///
+/// Which is a completion wearing the wrong marker. It cost three things at
+/// once: a billed routing call, an answer of nobody (`none` at 0.55, plan
+/// `Clarify`, no recipient assigned), and — because handing work on does not
+/// end your own assignment — a further turn from the same seat to write the
+/// `!complete` it already meant. That is most of why a room that had finished
+/// its work still took several turns to say so.
+///
+/// Both markers accept a summary-shaped body, so "should someone take this?"
+/// resolves to yes for any seat pleased with what it wrote. The test that
+/// actually discriminates is what remains undone, which a seat *does* know:
+/// name the open task or report that there is none.
 const COMPLETE_RULES: &str = "\
-End this turn with exactly one action: `!broadcast` when another teammate \
-should take work, or `!complete` when your assignment is done. Write the \
-marker at the start of its own line.\n\
+End this turn with exactly one action: `!broadcast` when work is left that \
+somebody else must do, or `!complete` when nothing is left for anybody. Write \
+the marker at the start of its own line.\n\
+\n\
+The two are told apart by what is still OPEN, not by how much you got done. \
+Ask what the next teammate would have to DO. If that is a task, broadcast it. \
+If it is nothing — you decided it, you wrote it down, it is ready — then \
+`!complete`, however much work it took to get there. A line that ends in \
+\"done\", \"in place\" or \"ready to merge\" is a completion wearing the wrong \
+marker: it names no open task, so it reaches nobody, and your own assignment \
+stays open anyway.\n\
 \n\
 `!broadcast` carries a SELF-CONTAINED message — the finding, the command and \
 its exact output, the counterexample — everything the next teammate needs \
-without re-reading your turn. Do NOT name who should take it: the room works \
-out who is best placed from what you wrote, so a vague broadcast is routed as \
-badly as it reads. Handing work on does not end your own assignment.\n\
+without re-reading your turn. Write the OPEN task, not your finished one: what \
+is left to do and what it starts from. Do NOT name who should take it: the \
+room works out who is best placed from what you wrote, so a vague broadcast is \
+routed as badly as it reads. Handing work on does not end your own \
+assignment.\n\
 \n\
 `!complete` carries your evidence-dense final result and ends your part of \
-this. Do not write it while anything is still open — a premature one hands \
-back work you have not done.\n\
+this. Recording what you settled IS completing it — writing a decision down is \
+not handing it on. Do not write it while anything is still open — a premature \
+one hands back work you have not done.\n\
 \n\
 Everything you write is journaled on the desk and read by your teammates, so \
 say what you established and what you did not finish before the marker line. \
