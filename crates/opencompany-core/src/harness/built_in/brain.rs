@@ -4176,7 +4176,48 @@ impl HarnessBrain {
                         // unlike the federation above: this hands a member what
                         // it can already see, not permission to ask anyone
                         // anything.
-                        .with_context_desks(crate::hivemind::company_desks(&self.record()));
+                        .with_context_desks(crate::hivemind::company_desks(&self.record()))
+                        // **An operator message to a desk runs completion-driven.**
+                        //
+                        // The room ends when every assigned member has reported
+                        // `!complete`, not when a quorum can be named. That is
+                        // what the reference runner in `tinyhivemind`'s OpenHuman
+                        // example does, and it is the only form defined for a
+                        // room of one — `deliberates()` floors a quorum room at
+                        // two members and `desk_episode` additionally needs the
+                        // configured quorum still reachable.
+                        //
+                        // `Quorum` stays reachable for the cross-desk crossing
+                        // below, which asks another room to *decide* something
+                        // rather than to do work.
+                        .completing();
+                        #[cfg(feature = "typesafe")]
+                        {
+                            // Handoffs route by meaning where a credential is
+                            // configured; `None` leaves `!broadcast` falling to
+                            // the desk's first other member, which is what this
+                            // path did before routing existed.
+                            driver = driver.with_router(
+                                match crate::hivemind::broadcast::router_from_env() {
+                                    Ok(router) => router.map(|router| {
+                                        std::sync::Arc::new(router)
+                                            as std::sync::Arc<
+                                                dyn tinyhivemind_embed::routing::Router
+                                                    + Send
+                                                    + Sync,
+                                            >
+                                    }),
+                                    Err(error) => {
+                                        tracing::warn!(
+                                            %error,
+                                            "[hive] the routing credential is present but unusable; \
+                                             handoffs fall back to the mechanical responder"
+                                        );
+                                        None
+                                    }
+                                },
+                            );
+                        }
                         if let Some(federation) = federation {
                             driver = driver.with_federation(federation, &runner);
                         }
