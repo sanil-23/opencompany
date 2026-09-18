@@ -1453,7 +1453,31 @@ impl<'a> EpisodeDriver<'a> {
     ) -> Result<String> {
         let allowed = self.desk.config.moves_for(agent_id);
         let (line, rode) = split_reply(&self.runner.speak(agent_id, prompt).await?);
+
+        // **A marker carrying nothing is a malformed move, not a message.**
+        //
+        // Observed live: a seat wrote its work as one reply and then `!broadcast`
+        // alone as a second. A bare marker routes nobody — `broadcast_body`
+        // finds no work for the Choice to match — and reports nothing, so it is
+        // a turn that looks taken and did nothing.
+        //
+        // Corrected rather than dropped, on the crate's own rule for a
+        // malformed tool call: the seat is told inside its own turn, "while it
+        // can still call again". Dropping would hide the failure from the room
+        // and from the operator; correcting gets the hand-off the turn was for.
+        let (line, rode) =
+            if let Some(correction) = super::completion::bare_marker_correction(&line) {
+                let corrected = format!("{prompt}\n\n{correction}");
+                // The retry stands even if it is bare again: a second empty marker
+                // is the seat's answer, and journaling it keeps the transcript
+                // honest about a turn that happened. It still surfaces — the row is
+                // the member's reply either way.
+                split_reply(&self.runner.speak(agent_id, &corrected).await?)
+            } else {
+                (line, rode)
+            };
         scratch.aside = rode;
+
         let Some(kind) = moves::line_kind(&line).filter(|kind| !allowed.contains(kind)) else {
             return self
                 .grounded_and_regraded(agent_id, prompt, visible, line, &allowed, scratch)

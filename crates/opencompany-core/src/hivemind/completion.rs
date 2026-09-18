@@ -261,7 +261,20 @@ pub fn readable(line: &str) -> Option<String> {
             .strip_prefix(COMPLETE_MARKER)
             .unwrap_or_default()
             .trim();
+        // A bare marker that survived the correction retry still SURFACES: it
+        // is the member's reply, and a row that renders to nothing would leave
+        // an operator looking at a turn that appears not to have happened.
+        // Rendered as the plain sentence rather than the marker, because the
+        // marker is addressed to the host and the fact is addressed to the room.
+        if rest.is_empty() {
+            return Some("Reported this assignment finished.".to_owned());
+        }
         return Some(rest.to_owned());
+    }
+    // Same for a broadcast whose body did not survive: `broadcast_body` refuses
+    // an empty one, so it falls through to here rather than above.
+    if line.trim_start().strip_prefix(BROADCAST_MARKER).is_some() {
+        return Some("Handed this on, but carried no detail with it.".to_owned());
     }
     None
 }
@@ -273,4 +286,42 @@ pub fn readable(line: &str) -> Option<String> {
 #[must_use]
 pub fn is_completion_line(line: &str) -> bool {
     broadcast_body(line).is_some() || reports_completion(line)
+}
+
+/// The correction a seat is handed when its marker carried nothing, or `None`
+/// when the line is fine.
+///
+/// A bare `!broadcast` reaches nobody: [`broadcast_body`] finds no work, so the
+/// router has nothing to match a candidate against and the hand-off silently
+/// does not happen. A bare `!complete` reports a finished assignment and no
+/// result, which is a completion the room cannot check.
+///
+/// Written to be read by the seat mid-turn, the way
+/// [`moves::correction`](super::moves::correction) is — it is shown inside the
+/// same turn, so the fix is one retry rather than a lost hand-off.
+#[must_use]
+pub fn bare_marker_correction(line: &str) -> Option<String> {
+    let trimmed = line.trim_start();
+    let bare = |marker: &str| {
+        trimmed
+            .strip_prefix(marker)
+            .is_some_and(|rest| rest.trim().is_empty())
+    };
+    if bare(BROADCAST_MARKER) {
+        return Some(format!(
+            "That `{BROADCAST_MARKER}` carried nothing, so it reached nobody. The work and the \
+             marker are ONE line: `{BROADCAST_MARKER}` then the finding, the command and its \
+             output, the counterexample — everything the next teammate needs without re-reading \
+             your turn. Write that line now. Do not name who should take it."
+        ));
+    }
+    if bare(COMPLETE_MARKER) {
+        return Some(format!(
+            "That `{COMPLETE_MARKER}` carried no result, so nothing can be checked. The result \
+             and the marker are ONE line: `{COMPLETE_MARKER}` then what you established and the \
+             evidence it rests on. Write that line now, or hand the work on with \
+             `{BROADCAST_MARKER}` if it is not finished."
+        ));
+    }
+    None
 }
