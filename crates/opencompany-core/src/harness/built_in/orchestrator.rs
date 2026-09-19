@@ -3689,7 +3689,13 @@ pub fn member_delegation_tools(
     queue: &DelegationQueue,
     company: CompanyId,
     store: Arc<dyn CompanyStore>,
-    scope: MemberScope,
+    // Unused while both `delegate_*` tools are withheld below — they were its
+    // only readers. Kept in the signature rather than removed because the
+    // withholding is a ONE-LINE reversal by design (see the comment in the
+    // body), and deleting the parameter would make restoring either tool a
+    // change to every call site instead. `_`-prefixed so that stays a
+    // deliberate parked argument rather than a warning nobody reads.
+    _scope: MemberScope,
 ) -> Vec<Box<dyn Tool>> {
     vec![
         Box::new(SpawnTaskTool::new(
