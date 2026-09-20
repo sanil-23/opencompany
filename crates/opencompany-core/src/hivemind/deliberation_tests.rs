@@ -629,3 +629,91 @@ fn a_deliberating_turn_is_unchanged_by_the_new_branch() {
         "and is not offered a move this room does not have:\n{prompt}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// 5. A deliberating room never spends a routing call
+// ---------------------------------------------------------------------------
+
+/// A `!broadcast` in a QUORUM room must not reach the router.
+///
+/// The boundary between the two schedulers, and the only place the new feature
+/// can reach the old path. `episode.rs` gates routing on
+/// `scheduler.completing()`, and `Quorum::assign` is a trait-default no-op
+/// underneath that — two mechanisms, and until this test neither was pinned.
+/// Delete the gate and every quorum episode starts paying for a provider call
+/// per handoff whose answer has nowhere to land: a quorum room picks its own
+/// next speaker through the attention market, so an assigned recipient is
+/// discarded.
+///
+/// Asserted with a router that PANICS rather than one returning a plan that is
+/// then checked. "Was not consulted" is the property — a consulted-then-ignored
+/// router still costs the money and the latency this gate exists to save, and
+/// an assertion on the outcome alone cannot tell the two apart.
+#[cfg(feature = "typesafe")]
+#[tokio::test]
+async fn a_deliberating_room_never_spends_a_routing_call_on_a_handoff() {
+    struct NeverCalled;
+    impl tinyhivemind_embed::routing::Router for NeverCalled {
+        fn evaluate<'a>(
+            &'a self,
+            _request: &'a tinyhivemind_embed::RoutingRequest,
+        ) -> tinyhivemind_embed::RouterFuture<'a> {
+            panic!("a quorum room must not route: the recipient has nowhere to land");
+        }
+    }
+
+    let log = Arc::new(MemoryLog::default());
+    let trigger = open(&log).await;
+    let manifest = manifest_with(
+        "hive = { turn_budget = 12, quorum = 2, blind_round = false, require_evidential = true }",
+    );
+    let desk = desk_of(&manifest, "eng").expect("a room");
+    // The converging script from the first test, with one handoff added.
+    //
+    // `critic` carries it, and carries it LAST, because `^N` is an absolute
+    // sequence: a row inserted before a cited one shifts every citation after
+    // it, `require_evidential` then declines to count the support, and the room
+    // reports `Exhausted` on an answer it was one citation away from carrying —
+    // with no violation to say why. Appending after everything cited leaves the
+    // original numbering intact.
+    let runner = Runner::new(&[
+        (
+            "planner",
+            "!propose #stage Stage the rollout behind a flag.",
+        ),
+        (
+            "scout",
+            "!evidence #stage ^1 The last full rollout took checkout down for 40 minutes.",
+        ),
+        (
+            "scout",
+            "!support #stage ^3 The outage is the reason to stage.",
+        ),
+        (
+            "critic",
+            "!broadcast the flag needs a kill switch before we stage anything",
+        ),
+        ("critic", "!commit #stage ^3 Recorded."),
+        ("planner", "!commit #stage ^3 Recorded."),
+    ]);
+
+    let outcome = EpisodeDriver::new(
+        MemoryLog::company(),
+        desk,
+        Arc::clone(&log) as Arc<dyn EventLog>,
+        &runner,
+        "Decide the rollout.",
+    )
+    // Wired, not absent: absent would pass this test for the wrong reason —
+    // it would prove only that `None` cannot be called. The router is present
+    // and the scheduler is what must decline to use it.
+    .with_router(Some(Arc::new(NeverCalled)))
+    .run(trigger)
+    .await
+    .expect("the episode runs");
+
+    assert!(
+        matches!(&outcome.ending, EpisodeEnding::Converged { topic, .. } if topic == "stage"),
+        "the room still reaches its decision with a handoff line in it: {outcome:?}"
+    );
+}
