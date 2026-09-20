@@ -249,3 +249,54 @@ fn an_unassigned_seat_can_still_be_handed_work() {
     let state = assigned(&state, &["checker".to_owned()], Sequence(11)).expect("valid");
     assert!(pending(&state).contains(&"checker".to_owned()));
 }
+
+/// A desk answering its FIRST message opens a room.
+///
+/// The bug this pins: participants were seeded `assigned_at: Sequence(0)` on
+/// the reasoning that 0 is below any watermark. It is not below 0.
+/// `apply_assignment` refuses an assignment that does not strictly advance
+/// (`at <= assigned_at`), so on a fresh desk — trigger `Sequence(0)` — the
+/// opening assignment was rejected and the whole episode failed with
+/// `stale completion event for <id> at sequence Sequence(0)`.
+///
+/// It passed every scheduler test because each opens at a non-zero watermark,
+/// and it surfaced only in the brain's cycle, where a desk answering its first
+/// message really does trigger at zero.
+#[test]
+fn a_room_opened_on_the_very_first_row_is_not_rejected_as_stale() {
+    let state = super::opened(
+        conversation(),
+        tinyhivemind_hive::Sequence(0),
+        &["planner".to_owned(), "scout".to_owned()],
+        &["planner".to_owned()],
+    )
+    .expect("a trigger of zero is a real desk answering its first message");
+
+    // The assigned seat owes a report; the other does not, which is what lets
+    // a room of one terminate.
+    let pending = super::pending(&state);
+    assert_eq!(pending, vec!["planner".to_owned()], "{state:?}");
+}
+
+/// A bare `!broadcast` is recognised, and `!broadcasting` is not.
+///
+/// `is_completion_line` is the cheap pre-check `readable_moves` makes before
+/// rewriting anything, and it used to ask `broadcast_body(..).is_some()` — which
+/// is `None` for a BARE marker, so the rewrite was skipped and the raw
+/// `!broadcast` reached the console. A retry can return a second bare marker,
+/// so the case is reachable. The check is exact rather than `starts_with`,
+/// because `!broadcasting the results` is prose. (CodeRabbit on #2412.)
+#[test]
+fn a_bare_handoff_marker_is_recognised_but_a_word_starting_with_it_is_not() {
+    assert!(super::is_completion_line("!broadcast"));
+    assert!(super::is_completion_line("!broadcast carry this on"));
+    assert!(super::is_completion_line("  !broadcast"));
+    assert!(!super::is_completion_line("!broadcasting the results"));
+    assert!(!super::is_completion_line("we will !broadcast it later"));
+    // And the renderer gives the bare one a sentence rather than the marker.
+    assert_eq!(
+        super::readable("!broadcast").as_deref(),
+        Some("Handed this on, but carried no detail with it.")
+    );
+    assert_eq!(super::readable("!broadcasting the results"), None);
+}

@@ -552,8 +552,27 @@ impl<'a> EpisodePrompt<'a> {
             self.room(),
             self.remembered(),
             self.board(),
-            self.topic_discipline(turn.phase),
-            self.floor(&standings),
+            // Suppressed for a completion turn for exactly the reason the
+            // protocol block above is: both describe a SCOREBOARD, and both
+            // branch on `turn.phase` — which `Completion::next` synthesises as
+            // `Phase::Deliberate` because `Phase` has no value meaning "was
+            // assigned". A completion room was therefore still being told
+            // "every !propose, !support and !evidence about the answer uses
+            // exactly this id" and "an option carries once N different members
+            // have backed it", directly under `COMPLETE_RULES` saying nothing
+            // is counted and no option is carried. Fixing only the protocol
+            // block left the contradiction in place one paragraph down.
+            // (CodeRabbit on #2412.)
+            if self.completing {
+                String::new()
+            } else {
+                self.topic_discipline(turn.phase)
+            },
+            if self.completing {
+                String::new()
+            } else {
+                self.floor(&standings)
+            },
             self.missing(),
             self.peers(),
             self.elsewhere(),

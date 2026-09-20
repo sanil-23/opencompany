@@ -434,14 +434,27 @@ fn speech_tools_respect_the_resolved_enabled_value() {
     }
 }
 
+/// Speech is on by default, and `desk_dm` is still NOT on the belt.
+///
+/// It used to assert the opposite. `desk_dm` is withheld now — not because it
+/// is redundant, but because it is attractive: given a private channel a seat
+/// takes it and the desk goes dark, which a live run showed. `DM_TOOL` is
+/// therefore no longer in `SPEECH_TOOLS`, and this pins the *rest* of the
+/// default-on belt so the withholding cannot quietly take the others with it.
 #[test]
-fn a_manifest_without_a_speech_section_still_builds_the_dm_tool() {
+fn a_manifest_without_a_speech_section_still_builds_the_speech_belt() {
     let manifest: crate::company::CompanyManifest =
         toml::from_str("[company]\nname = \"Acme\"\n").expect("manifest parses");
     let names = built_tool_names_with_speech(manifest.speech.is_enabled());
+    for tool in crate::harness::speech_tools::SPEECH_TOOLS {
+        assert!(
+            names.contains(&tool.to_string()),
+            "default-on speech must put {tool} on the actual belt: {names:?}"
+        );
+    }
     assert!(
-        names.contains(&crate::harness::speech_tools::DM_TOOL.to_string()),
-        "default-on speech must put desk_dm on the actual belt: {names:?}"
+        !names.contains(&crate::harness::speech_tools::DM_TOOL.to_string()),
+        "`desk_dm` is withheld from the belt: {names:?}"
     );
 }
 

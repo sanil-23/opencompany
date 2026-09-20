@@ -116,6 +116,35 @@ impl TypeSafeTransport {
     ///
     /// As [`new`](Self::new).
     pub fn with_base_url(api_key: String, base_url: String) -> Result<Self, Error> {
+        // **The endpoint must be encrypted, or loopback.**
+        //
+        // `evaluate` posts the routing JSON with the API key as a bearer
+        // header on every request, so a plain-`http` endpoint on a container
+        // network would put the credential on the wire in the clear. Refusing
+        // the URL beats warning about it: by the time a warning is read the
+        // key has already been sent. Refusing redirects does not cover this —
+        // that protects the SECOND hop, and this is the first.
+        //
+        // The same rule, and the same function, as the analytics collector
+        // (`OPENCOMPANY_ANALYTICS_ENDPOINT`), whose reasoning this repeats
+        // verbatim: `https` anywhere, `http` only to a loopback host. A second
+        // spelling of "is this safe to send a secret to" is how the two would
+        // drift, and one of them would be the lenient one.
+        //
+        // Loopback stays allowed because the offline tests serve a canned
+        // response on an ephemeral 127.0.0.1 port, which is the shape
+        // `chargebee::client_tests` uses and puts nothing on a network.
+        // (CodeRabbit on #2412, CWE-319.)
+        if !crate::analytics::config::is_secure_endpoint(&base_url) {
+            return Err(Error::Transport {
+                status: None,
+                message: format!(
+                    "System One endpoint `{base_url}` is not encrypted: the API key rides every \
+                     request as a bearer header, so `{BASE_URL_ENV}` must be `https`, or `http` \
+                     to a loopback host"
+                ),
+            });
+        }
         let http = reqwest::Client::builder()
             .timeout(REQUEST_TIMEOUT)
             // See the module docs: the bearer token would survive a redirect.

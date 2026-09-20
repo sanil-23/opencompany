@@ -141,14 +141,46 @@ async fn two_hive_desk_episodes_in_one_cycle_do_not_fold_into_each_other() {
     );
     let report_a = &result.channel_responses[0].text;
     let report_b = &result.channel_responses[1].text;
+    // Both rooms terminate. An operator message to a desk runs
+    // completion-driven, so the ending is `Completed` rather than `Converged`
+    // and neither report carries a topic — "Finished in N turns: <who>
+    // reported the work done" is the same sentence for both episodes.
+    for (label, report) in [("A", report_a), ("B", report_b)] {
+        assert!(
+            report.contains("reported the work done"),
+            "episode {label} must finish rather than spend its budget: {report}"
+        );
+    }
+
+    // So isolation is read off the JOURNALED REPLIES, which is where it
+    // actually lives: each episode's turns are parented to its own triggering
+    // message, so episode B cannot see episode A's rows. Before the fix this
+    // test was written for, B read A's traces as its own and answered A's
+    // question having said nothing itself.
+    let rows = events
+        .read_from(&company, crate::ports::types::EventSeq::new(0), 512)
+        .await
+        .expect("the journal reads back");
+    let replies: Vec<String> = rows
+        .iter()
+        .filter_map(|row| match &row.event {
+            CompanyEvent::AgentReply { text, .. } => Some(text.clone()),
+            _ => None,
+        })
+        .collect();
     assert!(
-        report_a.contains("#alpha"),
-        "episode A must settle on its own question: {report_a}"
+        replies.iter().any(|text| text.contains("alpha")),
+        "episode A answered its own question: {replies:?}"
     );
     assert!(
-        report_b.contains("#beta") && !report_b.contains("#alpha"),
-        "episode B must settle on its OWN question rather than inheriting \
-         episode A's already-carried #alpha vote: {report_b}"
+        replies.iter().any(|text| text.contains("beta")),
+        "episode B answered its own question: {replies:?}"
+    );
+    assert!(
+        !replies
+            .iter()
+            .any(|text| text.contains("alpha") && text.contains("beta")),
+        "no single turn may answer both questions: {replies:?}"
     );
 
     // The journal itself must show the two episodes parented to their own

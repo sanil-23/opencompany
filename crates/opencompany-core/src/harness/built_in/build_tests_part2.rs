@@ -243,13 +243,16 @@ fn dispatched_desk_agent_tool_belt_is_pinned() {
         // to hit something only the operator can answer, and its
         // alternatives are guessing or going quiet.
         "escalate_to_human",
-        // The hand-off tools, on every roster agent's belt whatever its
-        // `delegates_to` says (an empty list is unrestricted, not unwired):
-        // a teammate that cannot reach the colleague beside it, and cannot
-        // open a card, is one the runtime had to card *for* — which is how
-        // every desk message became a task nobody asked for.
-        "delegate_to_desk",
-        "delegate_to_teammate",
+        // `spawn_task` only. The two `delegate_*` tools were here for the
+        // reason still worth stating — a teammate that cannot reach the
+        // colleague beside it, and cannot open a card, is one the runtime had
+        // to card *for*, which is how every desk message became a task nobody
+        // asked for — but they are withheld now because on a desk turn no
+        // drain claims the queue and they refuse inside the model's own turn
+        // (`reason=drain_unwired`). A refusal costs a whole turn, so the
+        // capability was not reaching anybody anyway. The reasoning lives on
+        // `orchestrator::member_delegation_tools`, and re-registering either
+        // is a one-line change once a desk turn claims the drain.
         "spawn_task",
     ];
     // The global baseline installs skills in every company (issue: global
@@ -453,18 +456,22 @@ fn every_built_agent_states_a_raised_tool_iteration_cap() {
     );
 }
 
-/// (b) A dispatched desk agent carries the three **hand-off** tools and
-/// none of the orchestrator's **authority**; the orchestrator carries both.
-/// Building both from the same grant and contrasting them is the
-/// registration check that a desk lead can reach a colleague without
-/// becoming a second CEO.
+/// (b) A dispatched desk agent carries `spawn_task` and none of the
+/// orchestrator's **authority**; the orchestrator carries both. Building both
+/// from the same grant and contrasting them is the registration check that a
+/// desk lead can reach a colleague without becoming a second CEO.
 ///
-/// Issue #176 wired the hand-off tools only onto a member that opted in
-/// with `delegates_to`; they are now on every belt, and the list only
-/// narrows where they reach — see [`a_narrowed_member_gets_the_same_belt`].
+/// Issue #176 wired the hand-off tools only onto a member that opted in with
+/// `delegates_to`; they went onto every belt, and both `delegate_*` are now
+/// withheld again — see `orchestrator::member_delegation_tools`, which carries
+/// the reason: on a desk turn no drain claims the queue, so they refuse in the
+/// model's own turn (`reason=drain_unwired`) and a refusal costs a whole turn.
+/// `spawn_task` is unaffected, which is why the contrast this test draws still
+/// has something on both sides.
 #[test]
 fn dispatched_agent_has_the_hand_off_tools_but_not_the_orchestrators_authority() {
-    let hand_off = ["spawn_task", "delegate_to_desk", "delegate_to_teammate"];
+    let hand_off = ["spawn_task"];
+    let withheld = ["delegate_to_desk", "delegate_to_teammate"];
     let authority = [
         "query_company",
         "assign_task",
@@ -480,6 +487,12 @@ fn dispatched_agent_has_the_hand_off_tools_but_not_the_orchestrators_authority()
         assert!(
             dispatched.contains(&tool.to_string()),
             "dispatched desk agent MUST receive hand-off tool `{tool}`: {dispatched:?}"
+        );
+    }
+    for tool in withheld {
+        assert!(
+            !dispatched.contains(&tool.to_string()),
+            "`{tool}` is withheld from an ordinary member: {dispatched:?}"
         );
     }
     for tool in authority {

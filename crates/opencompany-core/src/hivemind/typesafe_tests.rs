@@ -165,3 +165,47 @@ fn the_routing_model_is_pinned_unless_the_environment_moves_it() {
     // `Unknown model`, and a refused pin fails closed as a silent fallback.
     assert_eq!(super::DEFAULT_MODEL, "jev-latest");
 }
+
+/// A cleartext endpoint is refused, not warned about.
+///
+/// `evaluate` sends the API key as a bearer header on EVERY request, so a
+/// plain-`http` endpoint on a container network puts the credential on the
+/// wire. By the time a warning is read the key has already gone, so the URL is
+/// rejected at construction. Refusing redirects does not cover this: that
+/// protects the second hop and this is the first. (CodeRabbit on #2412.)
+#[test]
+fn a_cleartext_endpoint_is_refused_before_the_key_can_be_sent() {
+    let refused = super::TypeSafeTransport::with_base_url(
+        "sk-live-secret".to_owned(),
+        "http://routing.example.com/v1/systemone".to_owned(),
+    );
+    let error = refused.expect_err("plain http to a remote host must not be built");
+    let rendered = error.to_string();
+    assert!(
+        rendered.contains("not encrypted"),
+        "the refusal must say why: {rendered}"
+    );
+    assert!(
+        !rendered.contains("sk-live-secret"),
+        "and must not quote the key back: {rendered}"
+    );
+
+    // Loopback is allowed: the offline tests serve a canned response on an
+    // ephemeral 127.0.0.1 port, which puts nothing on a network.
+    assert!(
+        super::TypeSafeTransport::with_base_url(
+            "sk".to_owned(),
+            "http://127.0.0.1:8080/v1/systemone".to_owned(),
+        )
+        .is_ok(),
+        "loopback over http is how the stub tests run"
+    );
+    // And a host that merely looks like loopback is not one.
+    assert!(
+        super::TypeSafeTransport::with_base_url(
+            "sk".to_owned(),
+            "http://127.0.0.1.evil.example/v1/systemone".to_owned(),
+        )
+        .is_err()
+    );
+}

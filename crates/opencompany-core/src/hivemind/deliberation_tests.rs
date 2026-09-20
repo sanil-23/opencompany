@@ -604,6 +604,17 @@ fn a_completion_turn_is_told_to_work_rather_than_to_score() {
         prompt.contains("Recording what you settled IS completing it"),
         "so writing a decision down is not mistaken for handing it on:\n{prompt}"
     );
+    // The scoreboard's OTHER blocks, which branch on the same `Phase` the
+    // protocol block did and were left contradicting `COMPLETE_RULES` one
+    // paragraph below it. Asserting the absence of two strings was not enough
+    // to catch that, which is why these name the grammar itself.
+    for scoreboard in ["!propose", "!support", "!evidence", "carries once"] {
+        assert!(
+            !prompt.contains(scoreboard),
+            "a completion room keeps no tally, so `{scoreboard}` must not \
+             appear:\n{prompt}"
+        );
+    }
 }
 
 /// The same builder left off renders exactly as it always did.

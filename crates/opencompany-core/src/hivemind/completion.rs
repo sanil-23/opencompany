@@ -73,9 +73,29 @@ pub const BROADCAST_MARKER: &str = "!broadcast";
 /// The text after the marker is both the desk row and what the router matches
 /// against — there is no separate routing hint, so a vague broadcast is
 /// simultaneously a poor transcript row and a poor routing signal.
+/// Whether one authored line IS a handoff marker, bodied or bare.
+///
+/// Exact, not `starts_with`: `!broadcasting the results` opens with the
+/// marker's letters and is prose, so it must be left alone. Mirrors
+/// [`reports_completion`]'s rule — the marker, then end-of-line or a space.
+#[must_use]
+pub fn is_broadcast(line: &str) -> bool {
+    line.trim_start()
+        .strip_prefix(BROADCAST_MARKER)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with(char::is_whitespace))
+}
+
 #[must_use]
 pub fn broadcast_body(line: &str) -> Option<&str> {
     let rest = line.trim_start().strip_prefix(BROADCAST_MARKER)?;
+    // The marker must END here, or `!broadcasting the results` parses as a
+    // handoff carrying "ing the results" — and this feeds `reply_broadcast`,
+    // which feeds `route_handoff`, so a sentence about broadcasting would have
+    // spent a real routing call on a fragment of its own verb. Same rule
+    // `reports_completion` already applied to `!complete`.
+    if !rest.is_empty() && !rest.starts_with(char::is_whitespace) {
+        return None;
+    }
     let body = rest.trim();
     (!body.is_empty()).then_some(body)
 }
@@ -152,31 +172,43 @@ pub fn opened(
             .iter()
             .map(|agent_id| tinyhivemind_hive::ParticipantCompletion {
                 agent_id: agent_id.clone(),
-                // Seeded BELOW the watermark, not at it: an assignment must
-                // land strictly after the completion it supersedes, and the
-                // opening assignment below is made at the watermark itself.
-                // Seeding level with it makes the library reject that
-                // assignment as a stale event.
-                assigned_at: Sequence(0),
-                completed_at: Some(Sequence(0)),
+                // Everyone opens COMPLETE at the watermark, and the opening
+                // assignment below reopens only those who owe work. A seat
+                // never assigned therefore owes no report and cannot hold the
+                // room open — which is what makes a room of one terminate.
+                //
+                // Seeded AT the watermark, not below it. `Sequence(0)` was the
+                // obvious floor and it is wrong: `apply_assignment` refuses an
+                // assignment that does not strictly advance
+                // (`at <= assigned_at`), so seeding at 0 works only while the
+                // trigger is itself above 0. A desk answering its FIRST message
+                // has a trigger of `Sequence(0)`, and the opening assignment
+                // was then rejected as a stale event — the whole episode
+                // failing with `stale completion event for <id> at sequence
+                // Sequence(0)`. Caught by two brain tests that run a hive
+                // episode through a fresh cycle.
+                assigned_at: watermark,
+                completed_at: Some(watermark),
             })
             .collect(),
     };
-    if !assigned.is_empty() {
-        state = assigned_at(&state, assigned, watermark)?;
+    // Reopened by hand rather than through [`assigned`], for the same reason:
+    // the opening assignment lands ON the watermark, which that function reads
+    // as failing to advance. Nothing is superseded here — these seats have done
+    // no work yet — so there is no staleness to guard against.
+    for id in assigned {
+        let Some(participant) = state
+            .participants
+            .iter_mut()
+            .find(|participant| &participant.agent_id == id)
+        else {
+            return Err(OpenCompanyError::Config(format!(
+                "hive completion episode: `{id}` was assigned opening work but is not seated"
+            )));
+        };
+        participant.completed_at = None;
     }
     Ok(state)
-}
-
-/// [`assigned`] under another name, so [`opened`] can use it before the public
-/// one is in scope for a caller.
-fn assigned_at(
-    state: &CompletionEpisodeState,
-    recipients: &[String],
-    at: Sequence,
-) -> Result<CompletionEpisodeState> {
-    apply_assignment(state, recipients, at)
-        .map_err(|error| OpenCompanyError::Config(format!("hive completion episode: {error}")))
 }
 
 /// Record that `agent_id` reported its current assignment finished.
@@ -273,7 +305,7 @@ pub fn readable(line: &str) -> Option<String> {
     }
     // Same for a broadcast whose body did not survive: `broadcast_body` refuses
     // an empty one, so it falls through to here rather than above.
-    if line.trim_start().strip_prefix(BROADCAST_MARKER).is_some() {
+    if is_broadcast(line) {
         return Some("Handed this on, but carried no detail with it.".to_owned());
     }
     None
@@ -285,7 +317,13 @@ pub fn readable(line: &str) -> Option<String> {
 /// transcript with no completion grammar in it is returned untouched.
 #[must_use]
 pub fn is_completion_line(line: &str) -> bool {
-    broadcast_body(line).is_some() || reports_completion(line)
+    // `is_broadcast`, not `broadcast_body().is_some()`: a BARE `!broadcast`
+    // has no body, so the old form answered `false` for it and
+    // `readable_moves` skipped the rewrite entirely — leaking the raw marker
+    // into the console, which is the one thing this pre-check exists to stop.
+    // A retry can return a second bare marker, so the case is reachable.
+    // (CodeRabbit on #2412.)
+    is_broadcast(line) || reports_completion(line)
 }
 
 /// The correction a seat is handed when its marker carried nothing, or `None`

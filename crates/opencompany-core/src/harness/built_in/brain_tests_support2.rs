@@ -448,16 +448,6 @@ members = ["engineer", "designer"]
 /// touching the journal directly).
 pub(super) struct HiveTopicProvider;
 
-/// The topic a `commit_protocol` block is telling this seat to record, if
-/// the prompt carries one — i.e. the room already reached quorum.
-pub(super) fn carried_topic(prompt: &str) -> Option<String> {
-    let marker = "carried `#";
-    let start = prompt.find(marker)? + marker.len();
-    let rest = &prompt[start..];
-    let end = rest.find('`')?;
-    Some(rest[..end].to_string())
-}
-
 #[async_trait]
 impl ChatModel<()> for HiveTopicProvider {
     async fn invoke(&self, _state: &(), request: ModelRequest) -> TaResult<ModelResponse> {
@@ -470,9 +460,14 @@ impl ChatModel<()> for HiveTopicProvider {
         if !all_text.contains("You are @engineer") && !all_text.contains("You are @designer") {
             return Ok(ModelResponse::assistant("(not a hive turn)".to_string()));
         }
-        let line = if let Some(topic) = carried_topic(&all_text) {
-            format!("!commit #{topic} ^1 because the room already carried it.")
-        } else {
+        // An operator message to a desk runs COMPLETION-driven, so the reply
+        // is `!complete` rather than the quorum grammar this used to speak.
+        // The distinguishing token rides in the completion's own text, because
+        // a completion report carries no topic — `EpisodeEnding::Completed`
+        // renders "Finished in N turns: <who> reported the work done", which
+        // is identical for both episodes. The isolation this test exists to
+        // prove therefore has to be read off the journaled replies.
+        let line = {
             // The desk's own memory recall can surface a PAST episode's
             // task and outcome as remembered context (by design — see
             // `a_desk_reasons_with_what_it_stored_in_an_earlier_episode`),
@@ -489,7 +484,7 @@ impl ChatModel<()> for HiveTopicProvider {
             } else {
                 "beta"
             };
-            format!("!propose #{topic} Because the marker says so.")
+            format!("!complete Recorded the {topic} answer.")
         };
         Ok(ModelResponse::assistant(line))
     }

@@ -536,10 +536,19 @@ async fn the_depth_bound_is_read_from_the_manifest_at_call_time() {
     assert_eq!(queue.queued(), 0);
 }
 
-/// The member's belt is exactly `spawn_task` + the two hand-off tools —
-/// never the orchestrator's authority tools.
+/// The member's belt is `spawn_task` and nothing else.
+///
+/// It used to be `spawn_task` + the two hand-off tools. Both `delegate_*` are
+/// withheld now — not because the hand-off is wrong (issue #884, D1 is right
+/// that a desk lead otherwise reaches every desk but nobody on its own) but
+/// because on a desk turn no drain claims the queue, so they refuse inside the
+/// model's own turn with `reason=drain_unwired` and a refusal costs a whole
+/// turn. Observed live, twice in one turn.
+///
+/// `spawn_task` stays: a tracked card is not a hand-off, and it is the one
+/// thing here `!broadcast` does not do.
 #[test]
-fn a_members_delegation_belt_is_the_two_hand_off_tools() {
+fn a_members_delegation_belt_is_spawn_task_alone() {
     let company = CompanyId::new("acme");
     let queue = DelegationQueue::default();
     let store: Arc<dyn CompanyStore> = Arc::new(MemStore::seeded(nested_desks_record(&company)));
@@ -554,14 +563,12 @@ fn a_members_delegation_belt_is_the_two_hand_off_tools() {
     );
     let mut names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
     names.sort();
-    assert_eq!(
-        names,
-        [
-            DELEGATE_TO_DESK_TOOL,
-            DELEGATE_TO_TEAMMATE_TOOL,
-            SPAWN_TASK_TOOL
-        ]
-    );
+    assert_eq!(names, [SPAWN_TASK_TOOL]);
+    // Named rather than implied by the list above: re-registering either is a
+    // one-line change, and this is the test that should fail when somebody
+    // does it without meaning to.
+    assert!(!names.contains(&DELEGATE_TO_DESK_TOOL));
+    assert!(!names.contains(&DELEGATE_TO_TEAMMATE_TOOL));
 }
 
 /// D1 at the boundary: the lead's hand-off to the peer beside it is
