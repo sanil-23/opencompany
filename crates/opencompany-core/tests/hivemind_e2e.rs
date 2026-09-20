@@ -677,19 +677,35 @@ async fn one_agent_uses_speech_to_coordinate_multiple_dm_sessions_without_cards(
     let response = client.say(SOLO_DESK, "Coordinate the launch").await;
     assert!(response["responses"].is_array(), "{response}");
 
+    // **`desk_dm` is withheld, so the private pairing never happens.**
+    //
+    // This test used to assert the opposite — that the two `desk_dm` calls
+    // scripted above each opened a private transcript and drew a reply back
+    // into it. The tool is off the belt now, not because it is redundant but
+    // because it is attractive: given a private channel a seat takes it and
+    // the desk goes dark, which a live run showed — a seat DM'd two teammates,
+    // got its answer, and wrote nothing to the desk while the operator who
+    // asked saw silence.
+    //
+    // So the scripted calls reach no tool, and what the test pins now is that
+    // absence. Inverted rather than deleted: this is the exact behaviour the
+    // withholding is supposed to produce, and re-registering `DmTool` is a
+    // one-line change that should fail a test rather than pass quietly.
     for recipient in [THEORIST, PROGRAMMER] {
         let conversation = opencompany::hivemind::referral::pair_conversation("greeter", recipient);
         let dm = replies(&runtime, &conversation).await;
         assert!(
-            dm.iter().any(|(_, author, _)| author == "greeter"),
-            "the outbound DM must be in the private {conversation} transcript: {dm:?}"
-        );
-        assert!(
-            dm.iter()
-                .any(|(_, author, text)| author == recipient && text == "Checked and ready."),
-            "the recipient's tool-call reply must return to the same DM: {dm:?}"
+            dm.is_empty(),
+            "`desk_dm` is withheld, so {conversation} must never open: {dm:?}"
         );
     }
+    // And the work still reaches the desk, which is the point of withholding
+    // it: the operator who asked can see what happened.
+    let desk_rows = replies(&runtime, SOLO_DESK).await;
+    assert!(
+        !desk_rows.is_empty(),
+        "the turn must still answer on the desk itself: {desk_rows:?}"
+    );
     let cards = runtime.tasks().list(runtime.id()).await.unwrap();
     assert!(
         cards.is_empty(),

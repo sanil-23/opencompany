@@ -4162,6 +4162,20 @@ impl HarnessBrain {
                         // the block, so the driver below is byte-identical to
                         // the one that ran before referral existed.
                         let federation = crate::hivemind::desk_federation(&self.record(), &desk);
+                        // **Did this desk ASK to deliberate?**
+                        //
+                        // `HiveConfig::enabled` is `Option<bool>` precisely so
+                        // the three states differ: `None` is "a room once there
+                        // are two members", `Some(false)` is the opt-out, and
+                        // `Some(true)` — in that field's own words — "says what
+                        // the operator wants". A desk whose manifest reads
+                        // `enabled = true, quorum = 3, blind_round = true` has
+                        // asked for a room that COUNTS, and answering it with a
+                        // completion room ignores configuration somebody wrote
+                        // on purpose.
+                        //
+                        // Read before `desk` moves into the driver below.
+                        let asked_to_deliberate = desk.config.enabled == Some(true);
                         let mut driver = crate::hivemind::EpisodeDriver::new(
                             self.record().id.clone(),
                             desk,
@@ -4189,8 +4203,19 @@ impl HarnessBrain {
                         //
                         // `Quorum` stays reachable for the cross-desk crossing
                         // below, which asks another room to *decide* something
-                        // rather than to do work.
-                        .completing();
+                        // rather than to do work — and for a desk that
+                        // explicitly asked to deliberate, per
+                        // `asked_to_deliberate` above. Without that exemption
+                        // this path answers `quorum = 3, blind_round = true`
+                        // with a room that counts nothing, which is not a
+                        // default being applied but a setting being overruled.
+                        // It also made the whole of `tests/hivemind_e2e.rs`
+                        // unreachable — the suite this branch cites as evidence
+                        // that deliberation is undisturbed.
+                        ;
+                        if !asked_to_deliberate {
+                            driver = driver.completing();
+                        }
                         #[cfg(feature = "typesafe")]
                         {
                             // Handoffs route by meaning where a credential is
