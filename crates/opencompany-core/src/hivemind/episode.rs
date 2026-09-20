@@ -327,8 +327,8 @@ impl<'a> EpisodeDriver<'a> {
                 author,
                 desk_id: &self.desk.id,
                 desk_purpose: self.desk.description.clone(),
+                roster_version: super::broadcast::roster_version(&candidates),
                 candidates,
-                roster_version: members.len() as u64,
                 fallback_responder: &mechanical,
             },
         )

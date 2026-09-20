@@ -164,6 +164,48 @@ pub struct Broadcast<'a> {
     pub fallback_responder: &'a str,
 }
 
+/// A version for one candidate snapshot, stable across processes.
+///
+/// `RoutingRequest.roster_version` and `RoutingEvaluation.roster_version` are a
+/// staleness guard, and it is the FIRST thing `accept_inner` checks: an
+/// evaluation whose version differs from the request's is rejected as
+/// `StaleRoster` before the domain check or any policy threshold. What it
+/// catches is an answer computed against a DIFFERENT candidate list than the
+/// one just sent — a cached or replayed evaluation, or a provider that
+/// substitutes — so a message cannot be routed to somebody who has since left
+/// the desk.
+///
+/// Both call sites used to pass a **count** (`candidates.len()`), which made
+/// the guard decorative: a count changes only when the desk changes *size*, so
+/// swapping one member for another left the version identical and a stale
+/// evaluation naming the departed seat would have been accepted. Since the
+/// provider echoes the number back unchanged, the two sides always agreed and
+/// the check could not fire for any input.
+///
+/// FNV-1a over the ids rather than `DefaultHasher`, whose output is not
+/// promised to be stable across processes or std versions. That instability
+/// would only ever cause a false `StaleRoster` — the safe direction, since it
+/// falls back — but a guard that rejects valid answers after a restart is its
+/// own bug, and a fixed algorithm costs five lines.
+pub(super) fn roster_version(candidates: &[RouteCandidate]) -> u64 {
+    // Order is part of the identity on purpose: `candidates` is built in
+    // declared desk order, and that order is what decides the mechanical
+    // fallback (`desk_lead` → the first active member). A desk whose members
+    // were reordered is a desk whose fallback moved, so it is a different
+    // snapshot even when the same people are on it.
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for candidate in candidates {
+        for byte in candidate.id.as_bytes() {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(0x100_0000_01b3);
+        }
+        // A separator, so ["ab","c"] and ["a","bc"] are different snapshots.
+        hash ^= 0xff;
+        hash = hash.wrapping_mul(0x100_0000_01b3);
+    }
+    hash
+}
+
 /// Route one agent-authored broadcast to the teammates best placed to take it.
 ///
 /// The author is excluded from `candidates` by the caller **and** re-checked by
@@ -205,6 +247,33 @@ pub async fn route(router: &(dyn Router + '_), broadcast: Broadcast<'_>) -> Vec<
 /// The opening decision, where [`route`] is the mid-episode handoff. Same
 /// router, same fallback discipline, different provenance:
 /// [`RoutingSource::DeskMessage`] rather than `AgentBroadcast`.
+///
+/// # NOT WIRED — staged for the crossing
+///
+/// **Nothing calls this.** Said plainly because the rest of this comment reads
+/// like shipped behaviour, and the tests below it pass.
+///
+/// The port of the reference runner's opening route
+/// (`route_message` in `pe1006_hive.rs`), written as the pair to [`route`]'s
+/// `route_broadcast`. Its two possible jobs are both taken: *who responds to a
+/// desk message* is answered by [`JevSelector`] through this host's own
+/// responder ladder, which also resolves an `@mention` and honours the spend
+/// cap; and *who opens a completion episode* is the desk's first active member
+/// — the lead on a `Lead` desk, the shared deterministic fallback on an `Auto`
+/// one (issue #1835), which is deliberate and not a placeholder.
+///
+/// What it can do that neither can is return [`RoutingPlan::Hive`]: a primary
+/// **and** invitees, opening a room rather than naming one responder.
+/// `Selector` returns a single `choice`, so the ladder cannot express that.
+///
+/// The case it is staged for is the **crossing**, not the episode opening. A
+/// referral resolves `@#desk` to that desk's first active member — see
+/// `referral::ReferralConfig::deliberates`, whose own comment says "asking a
+/// desk and being answered by whichever seat happens to be listed first is the
+/// thing deliberation exists to stop". The existing remedy is to spend a whole
+/// room; matching the question against the desk's members would be cheaper.
+/// A crossing has no lead contract to respect, which is why it fits here and
+/// the episode opening does not.
 ///
 /// `explicit_responder` is this host's already-resolved `@mention` and
 /// short-circuits before any provider call — a named teammate outranks routing,
@@ -365,7 +434,7 @@ impl<R: Router + Send + Sync> tinyhivemind::responder::Selector for JevSelector<
                 },
                 desk_purpose: self.desk_purpose.clone(),
                 thread_context: Vec::new(),
-                roster_version: candidates.len() as u64,
+                roster_version: roster_version(&candidates),
                 candidates,
                 policy: policy(),
             };

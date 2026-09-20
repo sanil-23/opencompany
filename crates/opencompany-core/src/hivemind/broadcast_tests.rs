@@ -337,3 +337,38 @@ async fn a_routing_decision_is_written_where_it_can_be_audited() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A desk that swapped a member is a different snapshot.
+///
+/// The bug this pins: both call sites passed `candidates.len()`, so the version
+/// changed only when the desk changed SIZE. Swap one member for another and it
+/// was identical — and since the provider echoes the number back unchanged, the
+/// two sides always agreed and `accept_inner`'s `StaleRoster` check could not
+/// fire for any input. A cached evaluation naming the departed seat would have
+/// been accepted and routed to somebody no longer on the desk.
+#[test]
+fn a_swapped_member_changes_the_roster_version() {
+    let with = |ids: &[&str]| -> u64 {
+        let candidates: Vec<_> = ids.iter().map(|id| candidate(id, id, None, None)).collect();
+        super::roster_version(&candidates)
+    };
+
+    // The case a count misses entirely: same size, different people.
+    assert_ne!(
+        with(&["checker", "theory", "lead"]),
+        with(&["checker", "theory", "scribe"]),
+        "a swap must be a new snapshot"
+    );
+    // Order decides the mechanical fallback (`desk_lead` is the first active
+    // member), so a reordered desk is a different snapshot too.
+    assert_ne!(
+        with(&["checker", "theory"]),
+        with(&["theory", "checker"]),
+        "reordering moves the fallback, so it is not the same snapshot"
+    );
+    // And the same desk must round-trip to the same number, or every
+    // evaluation would be rejected as stale.
+    assert_eq!(with(&["checker", "theory"]), with(&["checker", "theory"]));
+    // Ids are separated, so a boundary shift is not the same snapshot.
+    assert_ne!(with(&["ab", "c"]), with(&["a", "bc"]));
+}
