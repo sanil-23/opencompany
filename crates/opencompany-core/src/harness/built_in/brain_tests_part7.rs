@@ -161,25 +161,41 @@ async fn two_hive_desk_episodes_in_one_cycle_do_not_fold_into_each_other() {
         .read_from(&company, crate::ports::types::EventSeq::new(0), 512)
         .await
         .expect("the journal reads back");
-    let replies: Vec<String> = rows
+    // Carried WITH its parent, not as bare text. Checking alpha and beta
+    // across all replies globally would pass even if the two were swapped —
+    // the alpha answer parented to B's message and the beta answer to A's —
+    // which is precisely the folding this test exists to catch. The parent is
+    // the thing that says which episode a turn belongs to.
+    // (CodeRabbit on #2412.)
+    let replies: Vec<(Option<crate::ports::types::EventSeq>, String)> = rows
         .iter()
         .filter_map(|row| match &row.event {
-            CompanyEvent::AgentReply { text, .. } => Some(text.clone()),
+            CompanyEvent::AgentReply { text, parent, .. } => Some((*parent, text.clone())),
             _ => None,
         })
         .collect();
+    let answered = |trigger: crate::ports::types::EventSeq, token: &str| {
+        replies
+            .iter()
+            .any(|(parent, text)| *parent == Some(trigger) && text.contains(token))
+    };
     assert!(
-        replies.iter().any(|text| text.contains("alpha")),
-        "episode A answered its own question: {replies:?}"
+        answered(seq_a, "alpha"),
+        "episode A must answer ITS OWN question, parented to seq_a: {replies:?}"
     );
     assert!(
-        replies.iter().any(|text| text.contains("beta")),
-        "episode B answered its own question: {replies:?}"
+        answered(seq_b, "beta"),
+        "episode B must answer ITS OWN question, parented to seq_b: {replies:?}"
+    );
+    // And neither may answer the other's, which a global text check misses.
+    assert!(
+        !answered(seq_a, "beta") && !answered(seq_b, "alpha"),
+        "no episode may inherit the other's question: {replies:?}"
     );
     assert!(
         !replies
             .iter()
-            .any(|text| text.contains("alpha") && text.contains("beta")),
+            .any(|(_, text)| text.contains("alpha") && text.contains("beta")),
         "no single turn may answer both questions: {replies:?}"
     );
 

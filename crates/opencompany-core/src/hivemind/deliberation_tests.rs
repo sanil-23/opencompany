@@ -608,7 +608,13 @@ fn a_completion_turn_is_told_to_work_rather_than_to_score() {
     // protocol block did and were left contradicting `COMPLETE_RULES` one
     // paragraph below it. Asserting the absence of two strings was not enough
     // to catch that, which is why these name the grammar itself.
-    for scoreboard in ["!propose", "!support", "!evidence", "carries once"] {
+    for scoreboard in [
+        "!propose",
+        "!support",
+        "!evidence",
+        "carries once",
+        "!defer",
+    ] {
         assert!(
             !prompt.contains(scoreboard),
             "a completion room keeps no tally, so `{scoreboard}` must not \

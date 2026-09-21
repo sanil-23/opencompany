@@ -300,3 +300,26 @@ fn a_bare_handoff_marker_is_recognised_but_a_word_starting_with_it_is_not() {
     );
     assert_eq!(super::readable("!broadcasting the results"), None);
 }
+
+/// A room that assigns nobody is refused, not silently finished.
+///
+/// Every seat opens COMPLETE and the opening assignment reopens those that owe
+/// work, so an empty assignment leaves nobody pending and `step` answers
+/// `Complete` on the first pass — which reads as "the work is done" when what
+/// happened is that none was given out. The driver cannot reach this (it falls
+/// back to the desk's first member), but `opened` is public and this is its
+/// documented contract. (CodeRabbit on #2412.)
+#[test]
+fn a_room_that_assigns_nobody_is_refused() {
+    let refused = super::opened(
+        conversation(),
+        tinyhivemind_hive::Sequence(7),
+        &["planner".to_owned(), "scout".to_owned()],
+        &[],
+    );
+    let error = refused.expect_err("an unassigned opening is a caller bug");
+    assert!(
+        error.to_string().contains("at least one member"),
+        "the refusal must say what was wrong: {error}"
+    );
+}

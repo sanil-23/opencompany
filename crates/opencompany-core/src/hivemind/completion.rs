@@ -165,6 +165,20 @@ pub fn opened(
             "hive completion episode: a room with no members can never do work".to_owned(),
         ));
     }
+    // Opening with nobody assigned is the same bug one step along: every seat
+    // is seeded COMPLETE, so a room that reopens none of them reports
+    // `Complete` on its first pass — "the work is done" when no work was ever
+    // given out. `desk_episode` cannot reach this (it falls back to the
+    // desk's first member), but this function is public and its contract is
+    // "the members that have been assigned its opening work". Refusing beats
+    // ending silently, for the same reason the empty roster does.
+    // (CodeRabbit on #2412.)
+    if assigned.is_empty() {
+        return Err(OpenCompanyError::Config(
+            "hive completion episode: opening work must be assigned to at least one member"
+                .to_owned(),
+        ));
+    }
     let mut state = CompletionEpisodeState {
         conversation,
         watermark,

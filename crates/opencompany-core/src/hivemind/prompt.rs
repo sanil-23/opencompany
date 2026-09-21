@@ -573,7 +573,18 @@ impl<'a> EpisodePrompt<'a> {
             } else {
                 self.floor(&standings)
             },
-            self.missing(),
+            // The third scoreboard block, and the last of them. `missing()`
+            // names who has not spoken and tells the seat to `!question` or
+            // `!defer #topic` about it — moves a completion room does not have
+            // and a tally it does not keep. It survives here because `unspoken`
+            // can still be non-empty when one member takes the floor twice,
+            // which is ordinary in a FIFO-scheduled completion room.
+            // (CodeRabbit on #2412.)
+            if self.completing {
+                String::new()
+            } else {
+                self.missing()
+            },
             self.peers(),
             self.elsewhere(),
             self.crossed(),
