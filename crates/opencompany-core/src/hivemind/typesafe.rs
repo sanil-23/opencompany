@@ -77,11 +77,81 @@ pub const DEFAULT_MODEL: &str = "jev-latest";
 /// matches the bound the other outbound clients in this crate use.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Where the bearer token on each request comes from.
+///
+/// Two tiers, because routing has two ways to be paid for and they differ in
+/// more than the string. A BYO System One provider hands over a fixed key. The
+/// managed platform may instead project a **rotating**, audience-bound identity
+/// into a file, so the credential has to be re-read rather than captured once —
+/// which is what [`TinyhumansTokenSource::current`] does, cache window and all.
+#[derive(Clone)]
+enum Credential {
+    /// `OPENCOMPANY_TYPESAFE_API_KEY`: this company's own provider.
+    Own(String),
+    /// The platform credential every other managed call already presents.
+    /// Behind an `Arc` on that type's own instruction: the projected-file
+    /// tier keeps a cache, and cloning the source would clone the cache and
+    /// defeat it — so every clone of this transport shares one reader.
+    Managed(std::sync::Arc<crate::company::credentials::TinyhumansTokenSource>),
+}
+
+impl Credential {
+    /// The token to present on the next request.
+    async fn bearer(&self) -> Result<String, Error> {
+        match self {
+            Self::Own(key) => Ok(key.clone()),
+            // Re-read per request, not captured: a projected file rotates in
+            // place, and a transport holding the first read would keep
+            // presenting a token the platform has already retired.
+            Self::Managed(source) => source.current().await.map_err(|error| Error::Transport {
+                status: None,
+                message: format!("the platform routing credential could not be read: {error}"),
+            }),
+        }
+    }
+}
+
+/// Where OpenRouter itself serves System One.
+///
+/// The endpoint the managed proxy forwards to — `systemOne.ts` posts to
+/// `${OPENROUTER_BASE_URL}/systemone` — so a company holding its OWN OpenRouter
+/// key can reach the same evaluator directly, without the platform in the
+/// middle and without a second credential to provision.
+///
+/// Whether that key's account is entitled to Jev is not knowable from here. A
+/// refusal arrives as a non-success status, `route_semantic` declines, and the
+/// handoff falls to the mechanical responder — the same degrade as any other
+/// routing failure, and now a logged one.
+pub const OPENROUTER_SYSTEM_ONE_URL: &str = "https://openrouter.ai/api/v1/systemone";
+
+/// Where `api.tinyhumans.ai` serves System One.
+///
+/// Appended to the platform API base. The backend registers this alias
+/// deliberately — its own route docs say it "lets TypeSafe-compatible clients
+/// use `https://api.tinyhumans.ai/agent-integrations/openrouter` as their base
+/// URL while continuing to append `/v1/systemone` themselves", which is exactly
+/// what this transport does.
+pub const MANAGED_SYSTEM_ONE_PATH: &str = "/agent-integrations/openrouter/v1/systemone";
+
+/// The platform API base the managed tier routes against.
+///
+/// `TINYHUMANS_API_URL` so a staging instance points at its own backend,
+/// matching how `RuntimeConfig` resolves the same value — read from the
+/// environment here rather than threaded through, because this transport is
+/// built from the environment and the variable is the same one.
+fn managed_api_url() -> String {
+    std::env::var("TINYHUMANS_API_URL")
+        .ok()
+        .map(|value| value.trim().trim_end_matches('/').to_owned())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| crate::app::config::DEFAULT_API_URL.to_owned())
+}
+
 /// A live System One transport bound to one endpoint and one credential.
 #[derive(Clone)]
 pub struct TypeSafeTransport {
     http: reqwest::Client,
-    api_key: String,
+    credential: Credential,
     base_url: String,
 }
 
@@ -116,6 +186,15 @@ impl TypeSafeTransport {
     ///
     /// As [`new`](Self::new).
     pub fn with_base_url(api_key: String, base_url: String) -> Result<Self, Error> {
+        Self::with_credential(Credential::Own(api_key), base_url)
+    }
+
+    /// The constructor both tiers share, once the credential is decided.
+    ///
+    /// # Errors
+    ///
+    /// As [`with_base_url`](Self::with_base_url).
+    fn with_credential(credential: Credential, base_url: String) -> Result<Self, Error> {
         // **The endpoint must be encrypted, or loopback.**
         //
         // `evaluate` posts the routing JSON with the API key as a bearer
@@ -156,7 +235,7 @@ impl TypeSafeTransport {
             })?;
         Ok(Self {
             http,
-            api_key,
+            credential,
             base_url,
         })
     }
@@ -165,6 +244,22 @@ impl TypeSafeTransport {
     #[must_use]
     pub fn base_url(&self) -> &str {
         &self.base_url
+    }
+
+    /// Build a transport against OpenRouter's own System One endpoint.
+    ///
+    /// The third tier: a company that brought its own OpenRouter key reaches
+    /// Jev directly with it. Same evaluator the managed proxy forwards to, one
+    /// hop shorter.
+    ///
+    /// # Errors
+    ///
+    /// As [`with_base_url`](Self::with_base_url).
+    pub fn with_openrouter_key(api_key: String) -> Result<Self, Error> {
+        Self::with_credential(
+            Credential::Own(api_key),
+            OPENROUTER_SYSTEM_ONE_URL.to_owned(),
+        )
     }
 
     /// Build a transport from the process environment, or `None` when this
@@ -188,19 +283,46 @@ impl TypeSafeTransport {
     /// As [`new`](Self::new), when a key is present but the client cannot be
     /// built.
     pub fn from_env() -> Result<Option<Self>, Error> {
-        let Some(api_key) = std::env::var(API_KEY_ENV)
-            .ok()
-            .map(|value| value.trim().to_owned())
-            .filter(|value| !value.is_empty())
-        else {
+        let trimmed = |name: &str| {
+            std::env::var(name)
+                .ok()
+                .map(|value| value.trim().to_owned())
+                .filter(|value| !value.is_empty())
+        };
+
+        // **A company's own provider outranks the platform's.**
+        //
+        // Same precedence `OPENCOMPANY_INFERENCE_KEY` takes over
+        // `TINYHUMANS_API_KEY`: an instance that went to the trouble of
+        // configuring its own System One endpoint means it, and a managed
+        // credential lying around in the environment must not quietly win.
+        if let Some(api_key) = trimmed(API_KEY_ENV) {
+            let base_url = trimmed(BASE_URL_ENV).unwrap_or_else(|| DEFAULT_BASE_URL.to_owned());
+            return Self::with_credential(Credential::Own(api_key), base_url).map(Some);
+        }
+
+        // **Otherwise the managed platform serves it, if this instance has one.**
+        //
+        // `api.tinyhumans.ai` proxies System One at
+        // `/agent-integrations/openrouter/v1/systemone`, and that alias exists
+        // for exactly this: its own docs say it "lets TypeSafe-compatible
+        // clients use `https://api.tinyhumans.ai/agent-integrations/openrouter`
+        // as their base URL while continuing to append `/v1/systemone`
+        // themselves". It authenticates with the same bearer identity every
+        // other managed call presents, and accepts the same Jev ids this host
+        // pins (`jev-latest`, `jev-1.13.0`, optionally `typesafe/`-prefixed).
+        //
+        // So routing arrives with managed inference rather than needing a
+        // third credential of its own — which is the question this feature left
+        // open, answered in the direction that costs an operator nothing.
+        // Still `None` when neither exists: routing off, not a failure.
+        let Some(source) = crate::company::credentials::TinyhumansTokenSource::from_env(
+            &crate::app::config::ProcessEnv,
+        ) else {
             return Ok(None);
         };
-        let base_url = std::env::var(BASE_URL_ENV)
-            .ok()
-            .map(|value| value.trim().to_owned())
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| DEFAULT_BASE_URL.to_owned());
-        Self::with_base_url(api_key, base_url).map(Some)
+        let base_url = format!("{}{MANAGED_SYSTEM_ONE_PATH}", managed_api_url());
+        Self::with_credential(Credential::Managed(std::sync::Arc::new(source)), base_url).map(Some)
     }
 }
 
@@ -223,10 +345,13 @@ pub fn routing_model() -> String {
 impl SystemOneTransport for TypeSafeTransport {
     fn evaluate<'a>(&'a self, request: &'a SystemOneRequest) -> SystemOneTransportFuture<'a> {
         Box::pin(async move {
+            // Resolved per request, because the managed tier may be a rotating
+            // projected file. The own-key tier is a clone of a `String`.
+            let bearer = self.credential.bearer().await?;
             let response = self
                 .http
                 .post(&self.base_url)
-                .bearer_auth(&self.api_key)
+                .bearer_auth(&bearer)
                 .json(request)
                 .send()
                 .await

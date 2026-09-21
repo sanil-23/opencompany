@@ -372,3 +372,115 @@ fn a_swapped_member_changes_the_roster_version() {
     // Ids are separated, so a boundary shift is not the same snapshot.
     assert_ne!(with(&["ab", "c"]), with(&["a", "bc"]));
 }
+
+/// The routing ladder's third rung: only OpenRouter serves System One.
+///
+/// `ollama` is local models and `openai_compatible` is an arbitrary gateway —
+/// neither answers `/systemone`, so a company on either stops at routing-off
+/// rather than presenting its credential to an endpoint that cannot understand
+/// it. The two are the whole of what this host supports besides `openrouter`
+/// (`company::inference::provider_slug`), so this is the complete set.
+///
+/// It also pins the property that matters more than the gate: what tier 3
+/// sends is the company's OWN stored key, never the platform credential.
+/// `resolve_endpoint`'s own note is that "sending the platform token to an
+/// arbitrary override would leak it", and `openrouter` is dual-mode — a
+/// proxied company holds no key of its own, so it must fall through rather
+/// than reach OpenRouter directly on somebody else's credential.
+mod ladder {
+    use super::super::router_for_company;
+    use crate::company::inference::HarnessScope;
+    use crate::error::Result;
+    use crate::ports::secrets::SecretStore;
+    use crate::ports::types::{CompanyId, SecretValue};
+    use async_trait::async_trait;
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+
+    struct MemSecrets(Mutex<HashMap<String, String>>);
+
+    #[async_trait]
+    impl SecretStore for MemSecrets {
+        async fn get(&self, _company: &CompanyId, key: &str) -> Result<Option<SecretValue>> {
+            Ok(self
+                .0
+                .lock()
+                .expect("poisoned")
+                .get(key)
+                .map(|value| SecretValue(value.clone())))
+        }
+        async fn set(&self, _company: &CompanyId, key: &str, value: SecretValue) -> Result<()> {
+            self.0
+                .lock()
+                .expect("poisoned")
+                .insert(key.to_owned(), value.0);
+            Ok(())
+        }
+    }
+
+    fn store(entries: &[(&str, &str)]) -> Arc<dyn SecretStore> {
+        let map = entries
+            .iter()
+            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+            .collect();
+        Arc::new(MemSecrets(Mutex::new(map)))
+    }
+
+    /// Cleared so rungs 1 and 2 cannot answer before rung 3 is reached.
+    fn without_instance_credentials() {
+        // SAFETY: single-threaded within this test module's cases, which run
+        // against distinct stores and touch only these names.
+        unsafe {
+            for name in [
+                super::super::super::typesafe::API_KEY_ENV,
+                super::super::super::typesafe::BASE_URL_ENV,
+                crate::company::credentials::API_KEY_ENV,
+                crate::company::credentials::TOKEN_FILE_ENV,
+            ] {
+                std::env::remove_var(name);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_provider_that_does_not_serve_system_one_is_routing_off() {
+        without_instance_credentials();
+        let company = CompanyId::new("acme");
+        // A key IS present, so what stops these is the provider, not the store.
+        let secrets = store(&[
+            ("provider/ollama/key", "sk-local"),
+            ("provider/openai_compatible/key", "sk-gateway"),
+            ("inference/key", "sk-legacy"),
+        ]);
+        for slug in ["ollama", "openai_compatible"] {
+            let router =
+                router_for_company(&company, Some(&secrets), slug, &HarnessScope::default())
+                    .await
+                    .expect("an unsupported provider is not an error");
+            assert!(
+                router.is_none(),
+                "`{slug}` does not serve System One, so it must not be routed to"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn an_openrouter_company_with_no_key_of_its_own_falls_through() {
+        without_instance_credentials();
+        let company = CompanyId::new("acme");
+        // The proxied half of `openrouter`'s dual mode: the subscription pays
+        // and the company stores nothing. Tier 3 must not invent a credential.
+        let router = router_for_company(
+            &company,
+            Some(&store(&[])),
+            "openrouter",
+            &HarnessScope::default(),
+        )
+        .await
+        .expect("a keyless company is not an error");
+        assert!(
+            router.is_none(),
+            "a proxied company holds no key of its own, so tier 3 declines"
+        );
+    }
+}

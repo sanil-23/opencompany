@@ -57,6 +57,78 @@ pub fn router_from_env()
         .map(|transport| JevRouter::with_model(transport, super::typesafe::routing_model())))
 }
 
+/// The full routing ladder for one company, tried in order.
+///
+/// ```text
+///   1. OPENCOMPANY_TYPESAFE_API_KEY   this instance's own System One (dev override)
+///   2. the platform credential        api.tinyhumans.ai proxies System One
+///   3. the company's OpenRouter key   OpenRouter serves System One directly
+///   4. none of the above              routing off; handoffs go mechanically
+/// ```
+///
+/// Steps 1 and 2 are [`router_from_env`], which is instance-wide and needs no
+/// company. Step 3 is why this function exists: a company's inference
+/// credential lives in its own secret store, so it cannot be read from the
+/// environment and cannot be resolved without knowing whose it is.
+///
+/// The order is the one the rest of the host already uses for cognition — an
+/// explicitly configured endpoint outranks the account's — and the last rung is
+/// the same fail-open every other routing decline takes: the worst case of the
+/// semantic rung is the mechanical one.
+///
+/// **Entitlement is not checked here, and cannot be.** Whether an OpenRouter
+/// account may call Jev is the provider's answer, and it arrives as a non-success
+/// status on the first real request. `route_semantic` declines, the handoff falls
+/// to the desk's first other member, and the transport logs the provider's own
+/// words — which is what stops a refused model reading as healthy routing.
+///
+/// # Errors
+///
+/// Only when a credential is present and the HTTP client cannot be built. A
+/// company with no key at all is `Ok(None)`: routing off, not a failure.
+pub async fn router_for_company(
+    company: &crate::ports::types::CompanyId,
+    secrets: Option<&std::sync::Arc<dyn crate::ports::secrets::SecretStore>>,
+    provider_slug: &str,
+    scope: &crate::company::inference::HarnessScope,
+) -> Result<Option<JevRouter<super::typesafe::TypeSafeTransport>>, tinyhivemind_typesafe::Error> {
+    // Steps 1 and 2 first: an instance that named a router meant it, and the
+    // platform credential is the answer for every managed company.
+    if let Some(router) = router_from_env()? {
+        return Ok(Some(router));
+    }
+    // Step 3. Only OpenRouter serves System One, so any other provider slug
+    // stops here rather than presenting its key to an endpoint that would not
+    // understand it.
+    let Some(secrets) = secrets else {
+        return Ok(None);
+    };
+    if crate::company::inference::normalize_provider(provider_slug) != "openrouter" {
+        return Ok(None);
+    }
+    let Ok(key) = crate::company::inference::load_inference_key_scoped(
+        company,
+        secrets.as_ref(),
+        provider_slug,
+        None,
+        scope,
+    )
+    .await
+    else {
+        // A company that has not stored a key yet is routing-off, exactly as
+        // an absent environment variable is. Not an error: its turns still run
+        // on whatever cognition it does have.
+        return Ok(None);
+    };
+    if key.trim().is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(JevRouter::with_model(
+        super::typesafe::TypeSafeTransport::with_openrouter_key(key)?,
+        super::typesafe::routing_model(),
+    )))
+}
+
 /// Largest opening round a broadcast may assign, including the primary.
 ///
 /// Four, not the roster size: the >20% rule already keeps a confident route

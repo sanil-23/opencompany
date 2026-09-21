@@ -139,14 +139,35 @@ fn an_explicit_base_url_is_kept_verbatim() {
     assert_eq!(transport.base_url(), "http://127.0.0.1:9/so");
 }
 
+/// Serialises every test that reads `from_env`.
+///
+/// `from_env` now consults FOUR process-wide variables — its own key and base
+/// URL, plus the platform credential and API base it falls back to — so these
+/// can no longer stay honest by each touching one variable. The lock is the
+/// shared resource, exactly as in `broadcast_tests`.
+static ENV: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Clears every variable `from_env` reads, so each test starts from "nothing
+/// configured" rather than from whatever the developer's shell exports.
+fn clear_env() {
+    // SAFETY: the caller holds `ENV`, so no other test is reading these.
+    unsafe {
+        for name in [
+            super::API_KEY_ENV,
+            super::BASE_URL_ENV,
+            crate::company::credentials::API_KEY_ENV,
+            crate::company::credentials::TOKEN_FILE_ENV,
+            "TINYHUMANS_API_URL",
+        ] {
+            std::env::remove_var(name);
+        }
+    }
+}
+
 #[test]
 fn no_credential_is_routing_off_rather_than_a_failure() {
-    // Serialised against the other env tests by reading only what this one
-    // sets; `from_env` treats an absent OR blank key identically so the
-    // ordering between them cannot matter.
-    unsafe {
-        std::env::remove_var(super::API_KEY_ENV);
-    }
+    let _guard = ENV.lock().expect("poisoned");
+    clear_env();
     assert!(
         TypeSafeTransport::from_env()
             .expect("an absent key is not an error")
@@ -155,8 +176,91 @@ fn no_credential_is_routing_off_rather_than_a_failure() {
     );
 }
 
+/// With only a MANAGED credential, routing goes through the platform.
+///
+/// The question this feature left open — whether routing needs a credential of
+/// its own — answered in the direction that costs an operator nothing:
+/// `api.tinyhumans.ai` proxies System One, so routing arrives with managed
+/// inference. The path is the alias the backend registers for exactly this, and
+/// the model ids this host pins (`jev-latest`) are the ones its `JEV_MODEL_RE`
+/// accepts.
+#[test]
+fn a_managed_instance_routes_through_the_platform_without_its_own_key() {
+    let _guard = ENV.lock().expect("poisoned");
+    clear_env();
+    // SAFETY: guarded by `ENV` above.
+    unsafe {
+        std::env::set_var(crate::company::credentials::API_KEY_ENV, "platform-token");
+    }
+    let transport = TypeSafeTransport::from_env()
+        .expect("a managed credential is usable")
+        .expect("managed inference brings routing with it");
+    assert_eq!(
+        transport.base_url(),
+        format!(
+            "https://api.tinyhumans.ai{}",
+            super::MANAGED_SYSTEM_ONE_PATH
+        ),
+    );
+    clear_env();
+}
+
+/// A company's OWN provider outranks the platform's.
+///
+/// Same precedence `OPENCOMPANY_INFERENCE_KEY` takes over `TINYHUMANS_API_KEY`:
+/// an instance that configured its own System One endpoint meant it, and a
+/// managed credential sitting in the same environment must not quietly win.
+#[test]
+fn an_own_provider_outranks_a_managed_credential() {
+    let _guard = ENV.lock().expect("poisoned");
+    clear_env();
+    // SAFETY: guarded by `ENV` above.
+    unsafe {
+        std::env::set_var(crate::company::credentials::API_KEY_ENV, "platform-token");
+        std::env::set_var(super::API_KEY_ENV, "own-key");
+        std::env::set_var(
+            super::BASE_URL_ENV,
+            "https://routing.example.com/v1/systemone",
+        );
+    }
+    let transport = TypeSafeTransport::from_env()
+        .expect("both configured is not an error")
+        .expect("the own key is used");
+    assert_eq!(
+        transport.base_url(),
+        "https://routing.example.com/v1/systemone",
+        "the company's own endpoint wins, not the platform's"
+    );
+    clear_env();
+}
+
+/// A staging backend serves the managed tier from its own host.
+#[test]
+fn the_managed_base_follows_the_platform_api_url() {
+    let _guard = ENV.lock().expect("poisoned");
+    clear_env();
+    // SAFETY: guarded by `ENV` above.
+    unsafe {
+        std::env::set_var(crate::company::credentials::API_KEY_ENV, "platform-token");
+        // Trailing slash included deliberately: the join must not double it.
+        std::env::set_var("TINYHUMANS_API_URL", "https://staging-api.tinyhumans.ai/");
+    }
+    let transport = TypeSafeTransport::from_env()
+        .expect("usable")
+        .expect("configured");
+    assert_eq!(
+        transport.base_url(),
+        format!(
+            "https://staging-api.tinyhumans.ai{}",
+            super::MANAGED_SYSTEM_ONE_PATH
+        ),
+    );
+    clear_env();
+}
+
 #[test]
 fn the_routing_model_is_pinned_unless_the_environment_moves_it() {
+    let _guard = ENV.lock().expect("poisoned");
     unsafe {
         std::env::remove_var(super::MODEL_ENV);
     }

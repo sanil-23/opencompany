@@ -3574,7 +3574,14 @@ impl HarnessBrain {
         // An `@mention` never reaches either: `choose_responder` resolves it on
         // a rung above this one, without a provider call.
         #[cfg(feature = "typesafe")]
-        let jev = match crate::hivemind::broadcast::router_from_env() {
+        let jev = match crate::hivemind::broadcast::router_for_company(
+            &company,
+            self.deps.secrets.as_ref(),
+            &self.deps.provider_slug,
+            &crate::company::inference::HarnessScope::default(),
+        )
+        .await
+        {
             Ok(router) => router,
             Err(error) => {
                 tracing::warn!(
@@ -4223,7 +4230,14 @@ impl HarnessBrain {
                             // the desk's first other member, which is what this
                             // path did before routing existed.
                             driver = driver.with_router(
-                                match crate::hivemind::broadcast::router_from_env() {
+                                match crate::hivemind::broadcast::router_for_company(
+                                    &self.record().id,
+                                    self.deps.secrets.as_ref(),
+                                    &self.deps.provider_slug,
+                                    &crate::company::inference::HarnessScope::default(),
+                                )
+                                .await
+                                {
                                     Ok(router) => router.map(|router| {
                                         std::sync::Arc::new(router)
                                             as std::sync::Arc<
