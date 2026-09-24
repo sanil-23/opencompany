@@ -318,36 +318,66 @@ impl Tool for HandOffTool {
                 max_rounds: 2,
                 ..crate::hive::routing::desk_routing(&record, &channel)
             };
+            // **A wall-clock bound as well as a turn bound**, because the
+            // turn bound cannot stop a seat that never returns.
+            //
+            // `turn_wall` is checked in `Phase::Wall`, which the wave machine
+            // only reaches once every turn in the wave has come back. A seat
+            // that hangs therefore blocks the wave *before* the bound is
+            // consulted, and the room waits on the runner's own per-turn
+            // timeout instead -- a hardcoded 300s upstream, which
+            // `HostedRunner::seat` takes no parameter for, so
+            // `routing.turn_timeout_secs` (600s by default, resolved and
+            // validated) reaches nothing. Observed live: a seat timed out, two
+            // turns never settled, and the room sat open through six
+            // checkpoints.
+            //
+            // So the room is bounded in time too. Reaching it is not a
+            // failure for the same reason reaching the turn wall is not: the
+            // ask is journaled in the pair channel and the receiver owns the
+            // work whether or not the room is still open.
+            let wall = routing
+                .turn_timeout()
+                .saturating_mul(u32::from(routing.round_width.min(u8::MAX as usize) as u8));
             let router = crate::hive::dispatch::host_router();
-            let report = crate::hive::conducted::run(crate::hive::conducted::Episode {
-                record: Arc::clone(&record),
-                deps: Arc::new(deps),
-                pool: Arc::clone(&pool),
-                events: Arc::clone(&events),
-                desk: &room,
-                routing: &routing,
-                router: router.as_deref(),
-                episode_id: uuid::Uuid::new_v4().simple().to_string(),
-                thread_root: Some(handed_at),
-                opened_at: handed_at,
-                // The receiver opens: the handing teammate has already said
-                // its piece, in the row this episode is rooted at.
-                starters: vec![receiving.clone()],
-                plan: crate::hive::routing::RoutingPlanDto::Fallback {
-                    primary_id: receiving.clone(),
-                    reason: "handed_off".to_owned(),
-                },
-                parking: None,
-                mentions: None,
-                // **Detached, so no seat sits inside somebody else's turn.**
-                // Awaiting it pinned the handing teammate open for the whole
-                // room -- minutes, at this model's turn time -- while the
-                // operator watched an empty channel. It has nothing to wait
-                // for: its reply is "I handed this to @to", true the moment
-                // the row above lands.
-                originator: None,
-            })
-            .await;
+            let report = tokio::time::timeout(
+                wall,
+                crate::hive::conducted::run(crate::hive::conducted::Episode {
+                    record: Arc::clone(&record),
+                    deps: Arc::new(deps),
+                    pool: Arc::clone(&pool),
+                    events: Arc::clone(&events),
+                    desk: &room,
+                    routing: &routing,
+                    router: router.as_deref(),
+                    episode_id: uuid::Uuid::new_v4().simple().to_string(),
+                    thread_root: Some(handed_at),
+                    opened_at: handed_at,
+                    // The receiver opens: the handing teammate has already said
+                    // its piece, in the row this episode is rooted at.
+                    starters: vec![receiving.clone()],
+                    plan: crate::hive::routing::RoutingPlanDto::Fallback {
+                        primary_id: receiving.clone(),
+                        reason: "handed_off".to_owned(),
+                    },
+                    parking: None,
+                    mentions: None,
+                    // **Detached, so no seat sits inside somebody else's turn.**
+                    // Awaiting it pinned the handing teammate open for the whole
+                    // room -- minutes, at this model's turn time -- while the
+                    // operator watched an empty channel. It has nothing to wait
+                    // for: its reply is "I handed this to @to", true the moment
+                    // the row above lands.
+                    originator: None,
+                }),
+            )
+            .await
+            .unwrap_or_else(|_| {
+                Err(OpenCompanyError::Harness(format!(
+                    "the hand-over room ran past {}s and was abandoned",
+                    wall.as_secs()
+                )))
+            });
             // **A wall is not a failure here.** The room is bounded precisely
             // because a hand-over has nothing to converge on, so running to
             // the bound is the expected ending, not a broken one: the ask is
@@ -355,7 +385,9 @@ impl Tool for HandOffTool {
             // Only a room that could not run at all is worth telling the
             // operator about.
             let failed = match &report {
-                Err(OpenCompanyError::Harness(text)) => !text.contains(TURN_WALL_MARKER),
+                Err(OpenCompanyError::Harness(text)) => {
+                    !text.contains(TURN_WALL_MARKER) && !text.contains("ran past")
+                }
                 Err(_) => true,
                 Ok(_) => false,
             };
