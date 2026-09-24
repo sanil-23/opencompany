@@ -16,8 +16,11 @@ fn the_brief_leads_with_answering_and_did_not_grow() {
     let answer_first = brief
         .find("MOST MESSAGES ARE QUESTIONS OR QUICK READS")
         .expect("the answering default is stated");
+    // `delegate_to_desk` led this list until both delegation tools came off
+    // every belt; `consult_teammates` is what the brief now reaches for first
+    // when a request is not the orchestrator's alone to answer.
     for later in [
-        "delegate_to_desk",
+        "consult_teammates",
         "spawn_task",
         "create_workflow",
         "add_agent",
@@ -37,7 +40,19 @@ fn the_brief_leads_with_answering_and_did_not_grow() {
     );
     // The #442 two-decisions block survives the restructure.
     assert!(brief.contains("they are INDEPENDENT"), "{brief}");
-    assert!(brief.contains("the hand-off IS the card"), "{brief}");
+    // It used to close decision (2) with "the hand-off IS the card" — true
+    // while `delegate_to_desk` opened one automatically, and false now that
+    // both delegation tools are off the belt. `consult_teammates` and
+    // `hand_off` open no card, so the rule is the plainer one: a card is only
+    // ever `spawn_task`, and it is not how you reach a person.
+    assert!(
+        brief.contains("Nothing said in chat is tracked unless an agent tracks it"),
+        "{brief}"
+    );
+    assert!(
+        brief.contains("Work that is waiting on a PERSON is not a card"),
+        "{brief}"
+    );
     // A "create a workflow" ask is authored now, not parked.
     assert!(
         brief.contains("author it NOW with `create_workflow`"),

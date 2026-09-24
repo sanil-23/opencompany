@@ -303,14 +303,14 @@ company's durable facts, recent activity, saved workflows, team roster and desks
 before answering rather than guessing, then answer directly and concisely. A board write is the \
 exception and needs a reason. \
 When there IS work, two decisions come up and they are INDEPENDENT — do not collapse them into \
-one. (1) WHO SHOULD DO THIS: when a request belongs to a specialist desk, hand it to that desk \
-with `delegate_to_desk`, naming a desk id from Your team above; when it names one PERSON, hand it \
-to them with `delegate_to_teammate`, naming a roster id from Your team — a desk is not a person, \
-so pick the tool that matches the target; when it is yours to answer, answer it. Your teammates \
-are one call away: never say you cannot reach one. (2) SHOULD THIS BE TRACKED: you do not have to decide this, and you must not pick a \
-tool in order to influence it. Anything substantial handed to a desk or a teammate is opened as a board card \
-automatically — the hand-off IS the card, so never call `spawn_task` alongside a `delegate_to_desk` \
-for the same work. Nothing else said in chat is tracked unless an agent tracks it: reach for \
+one. (1) WHO SHOULD DO THIS: when answering needs colleagues — a call that crosses their work, a \
+trade-off with more than one right answer — bring them into a room with `consult_teammates`, \
+naming roster ids from Your team; they talk to each other, and you get the whole exchange back \
+and answer the operator yourself. When the conversation turns out to belong to somebody else \
+outright, give it to them with `hand_off`, naming one roster id — that ends your part, and they \
+carry on with the operator in their own channel. When it is yours to answer, answer it. Every \
+teammate in Your team is reachable by both: never say you cannot reach one. (2) SHOULD THIS BE TRACKED: you do not have to decide this, and you must not pick a \
+tool in order to influence it. Nothing said in chat is tracked unless an agent tracks it: reach for \
 `spawn_task` for work that belongs on the board but must NOT start in this turn — something for \
 later, or for somebody else — and for real work you take on yourself that outlasts this reply. Work that is waiting on a PERSON is not a card — a card notifies nobody and resumes \
 nothing. When you cannot proceed without something only the operator can give you, call \
@@ -1350,7 +1350,7 @@ impl Tool for QueryCompanyTool {
     }
 
     fn description(&self) -> &str {
-        "Read the company's durable facts, recent activity, saved workflows, team roster, desks, and a board summary to ground an answer in whole-company context — use this to answer \"what workflows do we have?\", \"who is on the team?\", \"which desks can take work?\", or \"what's in flight?\" instead of guessing, and to get the exact desk id `delegate_to_desk` needs. For a specific card's full attempt history and output, use `list_tasks` / `read_task` instead. Optionally pass a `query` to filter facts by a case-insensitive substring."
+        "Read the company's durable facts, recent activity, saved workflows, team roster, desks, and a board summary to ground an answer in whole-company context — use this to answer \"what workflows do we have?\", \"who is on the team?\", \"which desks can take work?\", or \"what's in flight?\" instead of guessing, and to get the exact roster ids `consult_teammates` and `hand_off` need. For a specific card's full attempt history and output, use `list_tasks` / `read_task` instead. Optionally pass a `query` to filter facts by a case-insensitive substring."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -1631,7 +1631,7 @@ impl Tool for QueryCompanyTool {
             for (id, lead) in &desks {
                 match lead {
                     Some(lead) => md.push_str(&format!(
-                        "- **{id}** — lead: {lead} (delegate with `delegate_to_desk` desk=`{id}`)\n"
+                        "- **{id}** — lead: {lead} (bring its members into a room by name with `consult_teammates`)\n"
                     )),
                     // A leadless answer is two different facts (issue #1835):
                     // an `auto` channel has members but no lead by design —
@@ -1643,7 +1643,7 @@ impl Tool for QueryCompanyTool {
                         .is_some_and(|r| !r.desk_responder_mode(id).is_lead()) =>
                     {
                         md.push_str(&format!(
-                            "- **{id}** — channel without a lead; who answers is picked per message. `delegate_to_desk` cannot target it — use `delegate_to_teammate` with one of its members\n"
+                            "- **{id}** — channel without a lead; who answers is picked per message. Bring its members into a room by name with `consult_teammates`\n"
                         ))
                     }
                     None => md.push_str(&format!(
@@ -2733,7 +2733,7 @@ impl Tool for SpawnTaskTool {
     }
 
     fn description(&self) -> &str {
-        "Open a task card on the company's board. Nothing said in chat is tracked unless an agent tracks it, so use this when an ask is real work that should be visible and followed up — something you are taking on that outlasts this reply, something for later, or something for somebody else. Provide a `title`, an optional `note` brief, and an optional `assignee` (a desk or teammate id). Do NOT use this to get a hand-off tracked: work you hand off with `delegate_to_desk` or `delegate_to_teammate` already opens its own card, and calling both for the same work opens two."
+        "Open a task card on the company's board. Nothing said in chat is tracked unless an agent tracks it, so use this when an ask is real work that should be visible and followed up — something you are taking on that outlasts this reply, something for later, or something for somebody else. Provide a `title`, an optional `note` brief, and an optional `assignee` (a desk or teammate id). A card tracks work; it does not start it and it notifies nobody, so never use it to reach a colleague — `consult_teammates` and `hand_off` do that."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -3634,33 +3634,44 @@ fn optional_str(args: &Value, key: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-/// The orchestrator's delegation and lifecycle tools over a shared queue:
-/// `spawn_task`, `delegate_to_desk`, and — since #186 part b — `assign_task`
-/// and `review_task`. `query_company` is built separately because it needs the
-/// read ports, not the queue.
+/// The orchestrator's board and lifecycle tools over a shared queue:
+/// `spawn_task`, and — since #186 part b — `assign_task` and `review_task`.
+/// `query_company` is built separately because it needs the read ports, not
+/// the queue.
 ///
-/// `delegate_to_desk` additionally takes the company id + store, which it reads
-/// at call time to ground the delegation target against the company's real
-/// desks (issue #272).
+/// **No delegation tool is here any more.** `member_tracking_tools` took
+/// `delegate_to_desk` and `delegate_to_teammate` off a teammate's belt and
+/// left the orchestrator's copies standing, on the reasoning that the
+/// orchestrator is a different job. A live run said otherwise: the
+/// orchestrator IS the teammate answering the operator in a direct message,
+/// so the tools were still one `mcp_list_tools` away. Asked to get two
+/// engineers into a room, the orchestrator was refused by `consult_teammates`
+/// (a bound since widened), found `delegate_to_teammate` in the catalogue,
+/// called it twice, was told "they will answer this turn" — and then spent
+/// fifteen tool calls hunting the board, the ledgers, memory and the
+/// workspace for answers that land in none of them, before escalating. The
+/// tool promises a reply it has no way to deliver.
+///
+/// What replaces it is what replaced it for everyone else:
+/// `consult_teammates` convenes the people it names as a room that actually
+/// talks and hands the exchange back, and `hand_off` gives the conversation to
+/// whoever should own it. Both return something the caller can use.
+///
+/// What stays is the board: `spawn_task` opens a card, `assign_task` moves
+/// one, `review_task` closes one. Those track work rather than claiming to
+/// have run it.
+///
+/// The delegation machinery behind the removed tools — the queue, the
+/// `Delegation` variants, the card lifecycle, the policy classification — is
+/// untouched and now unreachable from any belt. Deleting it is a separate
+/// change with its own blast radius.
 pub fn delegation_tools(
     queue: &DelegationQueue,
     company: CompanyId,
     store: Arc<dyn CompanyStore>,
 ) -> Vec<Box<dyn Tool>> {
     vec![
-        Box::new(SpawnTaskTool::new(
-            queue.clone(),
-            company.clone(),
-            store.clone(),
-        )),
-        Box::new(DelegateToDeskTool::new(
-            queue.clone(),
-            company.clone(),
-            store.clone(),
-        )),
-        // Issue #884: the orchestrator can now reach a named teammate directly
-        // rather than only whoever leads their desk.
-        Box::new(DelegateToTeammateTool::new(queue.clone(), company, store)),
+        Box::new(SpawnTaskTool::new(queue.clone(), company, store)),
         Box::new(AssignTaskTool::new(queue.clone())),
         Box::new(ReviewTaskTool::new(queue.clone())),
     ]

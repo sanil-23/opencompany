@@ -169,8 +169,8 @@ impl Tool for HandOffTool {
          They pick it up in their own channel with the operator and open the conversation \
          themselves, so do not promise to come back with anything. After calling this, say in \
          your reply who you handed to and why — that sentence is what the operator reads. If you \
-         only need something from a teammate and are still the one answering, delegate to them \
-         instead; this gives the conversation away."
+         only need something from a teammate and are still the one answering, consult them with \
+         `consult_teammates` instead; this gives the conversation away."
     }
 
     fn parameters_schema(&self) -> Value {

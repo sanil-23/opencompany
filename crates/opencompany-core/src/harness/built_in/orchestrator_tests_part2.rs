@@ -147,33 +147,39 @@ fn the_teammate_hand_off_is_an_internal_delegation_tool() {
     assert!(is_delegation_tool(DELEGATE_TO_TEAMMATE_TOOL));
 }
 
-/// The orchestrator is actually handed the new tools.
+/// The orchestrator's belt is the board and its lifecycle — and **no
+/// delegation tool**.
+///
+/// It used to carry `delegate_to_desk` and `delegate_to_teammate` beside
+/// these. `member_tracking_tools` took both off a teammate's belt and left the
+/// orchestrator's copies standing, on the reasoning that the orchestrator is a
+/// different job. A live run said otherwise: the orchestrator IS the teammate
+/// answering the operator in a direct message, so both were still one
+/// `mcp_list_tools` away. Asked to get two engineers into a room, it found
+/// `delegate_to_teammate`, was told "they will answer this turn", and then
+/// spent fifteen tool calls hunting the board and the ledgers for answers that
+/// land nowhere before escalating.
+///
+/// What stays is tracking: a card opened, assigned, reviewed. Reaching a
+/// colleague is `consult_teammates` and `hand_off`, which return something the
+/// caller can use.
 #[test]
-fn delegation_tools_include_the_lifecycle_tools() {
+fn delegation_tools_are_the_board_lifecycle_and_nothing_that_delegates() {
     let company = CompanyId::new("acme");
     let store = Arc::new(MemStore::seeded(seeded_record(&company)));
     let names: Vec<String> = delegation_tools(&DelegationQueue::default(), company, store)
         .iter()
         .map(|t| t.name().to_string())
         .collect();
+    assert!(names.contains(&SPAWN_TASK_TOOL.to_string()), "{names:?}");
     assert!(names.contains(&ASSIGN_TASK_TOOL.to_string()), "{names:?}");
     assert!(names.contains(&REVIEW_TASK_TOOL.to_string()), "{names:?}");
-    // …without dropping the ones that were already there.
-    assert!(names.contains(&SPAWN_TASK_TOOL.to_string()), "{names:?}");
-    assert!(
-        names.contains(&DELEGATE_TO_DESK_TOOL.to_string()),
-        "{names:?}"
-    );
-    // Issue #884: and the teammate hand-off, exactly once — a duplicate name
-    // on one belt is what the `else if` in `build` exists to prevent.
-    assert_eq!(
-        names
-            .iter()
-            .filter(|n| *n == DELEGATE_TO_TEAMMATE_TOOL)
-            .count(),
-        1,
-        "{names:?}"
-    );
+    for gone in [DELEGATE_TO_DESK_TOOL, DELEGATE_TO_TEAMMATE_TOOL] {
+        assert!(
+            !names.contains(&gone.to_string()),
+            "`{gone}` is unreachable from every belt now: {names:?}"
+        );
+    }
 }
 
 #[tokio::test]

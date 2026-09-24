@@ -5913,12 +5913,13 @@ pub(crate) fn build_episode_seat(
 const EPISODE_WITHHELD_TOOLS: [&str; 3] =
     ["spawn_task", "delegate_to_desk", "delegate_to_teammate"];
 
-// The two delegation names are kept here although a teammate's belt no longer
-// carries them (`member_tracking_tools`): the orchestrator's belt still does,
-// and an orchestrator can be seated. Withholding a name nothing offers costs
-// one `contains` and removes a way for this list to be wrong later; dropping
-// them would make the set right only for as long as no seat is an
-// orchestrator.
+// The two delegation names are kept here although no belt carries them any
+// more -- not a teammate's (`member_tracking_tools`) and, since the live run
+// that found the orchestrator still reaching `delegate_to_teammate` through
+// `mcp_list_tools`, not the orchestrator's either (`delegation_tools`). The
+// tool types and their queue machinery still exist, so withholding the names
+// costs one `contains` and removes a way for this list to be wrong if either
+// is ever wired back up.
 
 pub(crate) fn build_roster(
     runtime: &openhuman_embed::Runtime,

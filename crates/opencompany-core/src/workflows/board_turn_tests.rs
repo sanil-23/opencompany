@@ -373,16 +373,23 @@ async fn a_board_write_that_fails_reports_a_row_and_does_not_fail_the_node() {
 
 /// The live half of the defect PR #771 identified, closed end-to-end.
 ///
-/// `DelegateToDeskTool` calls `push_refusal` **before** it consults the claim, so
-/// a workflow node naming a desk the company does not have wrote into the shared
-/// `refused` vector — and a concurrent chat turn's `drain_refusals` took it,
-/// recorded the hand-off on *that* turn's card, and cleared it. A hand-off
-/// attempt nobody on that turn made, attributed to that turn, and destroyed for
-/// the run that actually made it.
+/// **The delegation tools are off every belt, so this now pins the absence.**
 ///
-/// Two assertions, and they are different facts: the refusal reaches **this
-/// run's** notices, and the `Unscoped` bucket a chat turn drains is left
-/// untouched.
+/// It was written for issue #272's bug: `DelegateToDeskTool` called
+/// `push_refusal` *before* it consulted the claim, so a workflow node naming a
+/// desk the company does not have wrote into the shared `refused` vector — and
+/// a concurrent chat turn's `drain_refusals` took it, recorded the hand-off on
+/// *that* turn's card, and cleared it.
+///
+/// `delegation_tools` no longer wires `delegate_to_desk` or
+/// `delegate_to_teammate`, and those two were `push_refusal`'s only callers on
+/// the delegation queue, so a run can no longer put anything in that vector at
+/// all. What is still worth pinning is the half that protected *other* turns:
+/// a node that names the tool gets an unknown-tool result, and the `Unscoped`
+/// bucket a chat turn drains stays empty. The tool types and their queue
+/// machinery survive unreachable; deleting them is a separate change, and this
+/// test is what would notice if they were wired back up without the ordering
+/// fix.
 #[tokio::test]
 async fn an_ungrounded_hand_off_surfaces_on_the_runs_own_notices() {
     let dir = tempfile::tempdir().unwrap();
@@ -421,13 +428,10 @@ async fn an_ungrounded_hand_off_surfaces_on_the_runs_own_notices() {
     .await
     .expect("the run completes");
 
-    assert!(
-        run.notices.iter().any(|n| n.contains("legal")),
-        "the run that attempted the hand-off is the one that must hear about it: {:?}",
-        run.notices
-    );
     // Nothing was left in the bucket a chat turn drains — which is where this
-    // used to land and be stolen from.
+    // used to land and be stolen from. With the tool off the belt the node's
+    // call is simply unknown, so there is nothing to steal either way; this is
+    // the assertion that stays true under both.
     assert!(
         deps.delegations
             .drain_refusals(crate::harness::orchestrator::MAX_DELEGATIONS_PER_TURN)

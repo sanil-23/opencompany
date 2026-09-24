@@ -521,9 +521,11 @@ fn a_narrowed_member_gets_the_same_belt() {
 /// (b3) An empty allowlist and an absent one build the same belt, and the
 /// orchestrator's own belt is untouched by `delegates_to`.
 ///
-/// The orchestrator half is what proves the `else` really is exclusive,
-/// since a second scoped `delegate_to_desk` beside the orchestrator's
-/// unrestricted one would put two tools of the same name on one belt.
+/// The orchestrator half used to close this by counting `delegate_to_desk`
+/// exactly once — the `else` being exclusive was what stopped a scoped copy
+/// landing beside the orchestrator's unrestricted one. No belt carries either
+/// delegation tool any more, so the pin is the stronger one: neither name
+/// appears at all, whatever `delegates_to` says.
 #[test]
 fn an_empty_allowlist_and_the_orchestrator_belt_are_unchanged() {
     assert_eq!(
@@ -538,14 +540,12 @@ fn an_empty_allowlist_and_the_orchestrator_belt_are_unchanged() {
         orchestrator,
         "an orchestrator's belt must not change when it also names `delegates_to`"
     );
-    assert_eq!(
-        orchestrator
-            .iter()
-            .filter(|t| *t == "delegate_to_desk")
-            .count(),
-        1,
-        "exactly one `delegate_to_desk` may be wired: {orchestrator:?}"
-    );
+    for gone in ["delegate_to_desk", "delegate_to_teammate"] {
+        assert!(
+            !orchestrator.iter().any(|t| t == gone),
+            "no belt wires `{gone}` any more: {orchestrator:?}"
+        );
+    }
 }
 
 /// (c) No deferred family leaks into a dispatched belt: raw browser

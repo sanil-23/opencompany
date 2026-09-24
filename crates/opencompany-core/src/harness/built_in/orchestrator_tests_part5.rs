@@ -26,7 +26,7 @@ fn workflow_runner_handle_holds_only_a_weak_reference() {
 }
 
 #[test]
-fn orchestrator_tools_includes_all_sixteen() {
+fn orchestrator_tools_includes_all_fourteen() {
     use crate::harness::workflow_admin::{
         DELETE_WORKFLOW_TOOL, READ_WORKFLOW_TOOL, UPDATE_WORKFLOW_TOOL,
     };
@@ -54,10 +54,20 @@ fn orchestrator_tools_includes_all_sixteen() {
     let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
     // Six before #186; `assign_task` + `review_task` made eight; #418's
     // `read_run_output` makes nine; #661's read/update/delete_workflow
-    // trio makes twelve; #884's `delegate_to_teammate` makes thirteen;
-    // #1859's `list_tasks` / `read_task` / `read_run` trio makes sixteen.
-    assert_eq!(names.len(), 16, "got {names:?}");
-    assert!(names.contains(&DELEGATE_TO_TEAMMATE_TOOL), "got {names:?}");
+    // trio makes twelve; #884's `delegate_to_teammate` made thirteen and
+    // #1859's `list_tasks` / `read_task` / `read_run` trio sixteen — then
+    // `delegate_to_desk` and `delegate_to_teammate` came off the belt
+    // entirely, leaving fourteen. See
+    // `delegation_tools_are_the_board_lifecycle_and_nothing_that_delegates`
+    // for why: the orchestrator is the teammate answering the operator, so
+    // leaving its copies standing left the removal half-done.
+    assert_eq!(names.len(), 14, "got {names:?}");
+    for gone in [DELEGATE_TO_DESK_TOOL, DELEGATE_TO_TEAMMATE_TOOL] {
+        assert!(
+            !names.contains(&gone),
+            "`{gone}` is off the belt: {names:?}"
+        );
+    }
     assert!(names.contains(&RUN_WORKFLOW_TOOL), "got {names:?}");
     assert!(names.contains(&READ_RUN_OUTPUT_TOOL), "got {names:?}");
     assert!(names.contains(&CREATE_WORKFLOW_TOOL), "got {names:?}");
@@ -67,7 +77,6 @@ fn orchestrator_tools_includes_all_sixteen() {
     assert!(names.contains(&ADD_AGENT_TOOL), "got {names:?}");
     assert!(names.contains(&QUERY_COMPANY_TOOL), "got {names:?}");
     assert!(names.contains(&SPAWN_TASK_TOOL), "got {names:?}");
-    assert!(names.contains(&DELEGATE_TO_DESK_TOOL), "got {names:?}");
     assert!(names.contains(&ASSIGN_TASK_TOOL), "got {names:?}");
     assert!(names.contains(&REVIEW_TASK_TOOL), "got {names:?}");
     assert!(names.contains(&LIST_TASKS_TOOL), "got {names:?}");
