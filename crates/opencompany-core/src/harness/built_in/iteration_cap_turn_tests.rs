@@ -296,7 +296,7 @@ async fn company_agent(
         &company,
         "Acme",
         &manifest_agent,
-        policy,
+        std::sync::Arc::new(policy),
         &deps,
         &["docs".to_string()],
         &[],
