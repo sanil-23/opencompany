@@ -19,10 +19,21 @@
 /// One completion episode on `tinyhivemind`'s own loop.
 #[cfg(feature = "openhuman")]
 pub mod conducted;
+/// Putting a question to your desk from inside your own turn: the tool that
+/// opens an episode and waits for it.
+#[cfg(feature = "openhuman")]
+pub mod consult;
 /// The chat body of the brain's cycle: which surface a message is on, and
 /// the episode it opens on a desk with a room (Phase 5).
 #[cfg(feature = "openhuman")]
 pub mod dispatch;
+/// A seat telling the operator something, without waiting.
+///
+/// Gated like [`consult`]: it is a `tinytools::Tool`, and that crate only
+/// exists under this feature. Built without it, the default lane failed to
+/// compile on the import alone.
+#[cfg(feature = "openhuman")]
+pub mod dm_operator;
 /// The journal as the episode store: the `GET {scope}/episodes` fold, the
 /// driver checkpoint a resume reads, and the open-episode lookup (Phase 4).
 pub mod episode_store;
