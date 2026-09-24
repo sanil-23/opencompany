@@ -65,6 +65,15 @@ pub struct Episode<'a> {
     pub parking: Option<Arc<dyn SeatParking>>,
     /// How a desk reply's mentions are resolved and notified (#2441).
     pub mentions: Option<crate::runtime::mention_seam::MentionSeam>,
+    /// The routing answer that decided who opens, as the console reads it
+    /// off the `EpisodeOpened` row.
+    pub plan: RoutingPlanDto,
+    /// The seat whose own turn opened this episode, when one did.
+    ///
+    /// `None` for an episode an operator message opened. A consult sets it
+    /// to the teammate whose turn is running the consult, and must await
+    /// this episode: see [`DeskHost::originator`](crate::hive::host::DeskHost).
+    pub originator: Option<String>,
 }
 
 /// Run one completion episode to quiescence.
@@ -88,6 +97,28 @@ pub async fn run(episode: Episode<'_>) -> Result<Report> {
         episode.starters.clone()
     };
 
+    // The episode's opening frame, written here rather than by whoever
+    // opened it. An episode *is* its frames plus the rows they bracket --
+    // `episode_store` folds exactly that, and `measure` counts it -- so a
+    // caller that forgot one would leave the console an episode that never
+    // closed, or one that never opened. There are two callers now: a desk
+    // message, and a teammate consulting its own desk from inside a turn.
+    episode
+        .events
+        .append(
+            &episode.record.id,
+            CompanyEvent::EpisodeOpened {
+                chat_id: episode.desk.desk_id.clone(),
+                episode_id: episode.episode_id.clone(),
+                opened_by_seq: episode.opened_at.value(),
+                parent: episode.thread_root,
+                participants: starters.clone(),
+                plan: episode.plan.clone(),
+                hop: 0,
+            },
+        )
+        .await?;
+
     let host = Arc::new({
         let mut host = DeskHost::new(
             episode.record.id.clone(),
@@ -105,6 +136,9 @@ pub async fn run(episode: Episode<'_>) -> Result<Report> {
         }
         if let Some(mentions) = episode.mentions.clone() {
             host = host.resolving_mentions(mentions);
+        }
+        if let Some(originator) = episode.originator.clone() {
+            host = host.opened_by(originator);
         }
         host
     });
@@ -131,7 +165,7 @@ pub async fn run(episode: Episode<'_>) -> Result<Report> {
         .map_err(|error| OpenCompanyError::Harness(error.to_string()))?;
     let route_policy = episode.routing.policy();
 
-    run_episode(
+    let report = run_episode(
         host.as_ref(),
         &runner,
         &driver,
@@ -145,7 +179,29 @@ pub async fn run(episode: Episode<'_>) -> Result<Report> {
             roster_version: episode.desk.roster_version,
             thread_context: &[],
         },
-        ConductPolicy::default(),
+        // **The wall the episode is actually held to, from its own routing.**
+        //
+        // This was `ConductPolicy::default()`, so `routing.max_rounds` was
+        // resolved, carried the whole way here, and dropped — every episode
+        // ran to the library's own default however the desk was configured,
+        // and an operator who set `max_rounds` got no error and no effect.
+        //
+        // That the default is exactly `DEFAULT_MAX_ROUNDS * DEFAULT_ROUND_WIDTH`
+        // (12 × 5 = 60) is the giveaway: the wall was always meant to be this
+        // product, and a desk that configures nothing is unchanged by saying
+        // so. A round is up to `round_width` seats, so rounds × width is the
+        // turns those rounds can spend.
+        //
+        // What it cost while unwired: a two-seat hand-over room, which has
+        // nothing to converge on and so never folds itself, inherited a wall
+        // of 60 turns. Observed live at roughly two minutes a turn — an
+        // afternoon of model calls for a conversation that was over after
+        // two.
+        ConductPolicy {
+            turn_wall: u64::from(episode.routing.max_rounds)
+                .saturating_mul(episode.routing.round_width as u64),
+            ..ConductPolicy::default()
+        },
         Door {
             chat: episode.desk.desk_id.clone(),
             desk_name: episode.desk.desk_name.clone(),
@@ -154,8 +210,75 @@ pub async fn run(episode: Episode<'_>) -> Result<Report> {
             opened_at: tinyhivemind::Sequence(episode.opened_at.value()),
         },
     )
-    .await
-    .map_err(|error| OpenCompanyError::Harness(error.to_string()))
+    .await;
+
+    // **An episode that hits its wall is still closed.**
+    //
+    // Only the clean fold used to write a closing frame; every other ending
+    // returned early and left the episode open in the journal for good. So a
+    // room that ran out of turns looked, to anything reading the frames back,
+    // exactly like a room still going — `measure` counted it live, the console
+    // showed it running, and nothing ever contradicted that.
+    //
+    // `EpisodeReason::RoundCap` has been in the vocabulary all along, meaning
+    // "the desk's `max_rounds` was reached", with nothing writing it. This is
+    // what writes it. The turn wall *is* that cap expressed in turns, so a
+    // wall is a round cap and says so.
+    //
+    // A wall is not a failure: the seats did their work, the room simply ran
+    // as long as it was allowed to. The error still propagates — the caller
+    // decides what it means, and for a hand-over it means "finished" — but
+    // the journal is closed either way.
+    let report = match report {
+        Ok(report) => report,
+        Err(error) => {
+            let reason = match &error {
+                tinyhivemind_openhuman::Error::Conduct(tinyhivemind_driver::Error::TurnWall {
+                    ..
+                }) => crate::ports::types::EpisodeReason::RoundCap,
+                _ => crate::ports::types::EpisodeReason::Failed,
+            };
+            episode
+                .events
+                .append(
+                    &episode.record.id,
+                    CompanyEvent::EpisodeCompleted {
+                        chat_id: episode.desk.desk_id.clone(),
+                        episode_id: episode.episode_id.clone(),
+                        revision: 0,
+                        completed_by: None,
+                        rounds: 0,
+                        reason,
+                        summary_seq: None,
+                    },
+                )
+                .await?;
+            return Err(OpenCompanyError::Harness(error.to_string()));
+        }
+    };
+
+    // And the closing frame. `run_episode` returns only once every seat has
+    // recorded its part -- a wall, a stall or a fold it could not explain
+    // comes back as an error instead, and is journaled by whoever handles it
+    // -- so a return here *is* `complete_episode`.
+    episode
+        .events
+        .append(
+            &episode.record.id,
+            CompanyEvent::EpisodeCompleted {
+                chat_id: episode.desk.desk_id.clone(),
+                episode_id: episode.episode_id.clone(),
+                revision: report.waves,
+                // The library reports what happened, not who spoke last:
+                // every seat completed, so no one seat closed it.
+                completed_by: None,
+                rounds: u32::try_from(report.waves).unwrap_or(u32::MAX),
+                reason: crate::ports::types::EpisodeReason::CompleteEpisode,
+                summary_seq: None,
+            },
+        )
+        .await?;
+    Ok(report)
 }
 
 /// What opened an episode: the operator's row and what it said.
@@ -243,20 +366,6 @@ impl HiveDispatcher {
         let routing = desk_routing(&self.record, desk_id);
         let (starters, plan_dto) = self.opening(&desk, &routing, &trigger, thread_root).await?;
         let episode_id = uuid::Uuid::new_v4().simple().to_string();
-        self.events
-            .append(
-                &self.record.id,
-                CompanyEvent::EpisodeOpened {
-                    chat_id: desk.desk_id.clone(),
-                    episode_id: episode_id.clone(),
-                    opened_by_seq: trigger.seq.value(),
-                    parent: Some(thread_root),
-                    participants: starters.clone(),
-                    plan: plan_dto.clone(),
-                    hop: 0,
-                },
-            )
-            .await?;
         let report = run(Episode {
             record: Arc::clone(&self.record),
             deps: Arc::clone(&self.deps),
@@ -271,32 +380,11 @@ impl HiveDispatcher {
             starters,
             parking: None,
             mentions: self.mentions.clone(),
+            plan: plan_dto,
+            // An operator opened this one, so no seat is inside its own turn.
+            originator: None,
         })
         .await?;
-        // The episode's closing row. `run_episode` returns only once every
-        // seat has recorded its part -- a wall, a stall or a fold it could
-        // not explain comes back as an error instead, and is journaled by
-        // whoever handles it -- so a return here *is* `complete_episode`.
-        //
-        // Without this the console sees an episode that opened and never
-        // closed: `EpisodeOpened` was written above, `episode_store` folds
-        // the pair, and the operator's list would hold it open forever.
-        self.events
-            .append(
-                &self.record.id,
-                CompanyEvent::EpisodeCompleted {
-                    chat_id: desk.desk_id.clone(),
-                    episode_id: episode_id.clone(),
-                    revision: report.waves,
-                    // The library reports what happened, not who spoke last:
-                    // every seat completed, so no one seat closed it.
-                    completed_by: None,
-                    rounds: u32::try_from(report.waves).unwrap_or(u32::MAX),
-                    reason: crate::ports::types::EpisodeReason::CompleteEpisode,
-                    summary_seq: None,
-                },
-            )
-            .await?;
         tracing::info!(
             desk = %desk_id,
             episode = %episode_id,
