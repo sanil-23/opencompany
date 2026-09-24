@@ -1331,8 +1331,25 @@ fn model_response_from_payload_offering(
     // for. Silence is not a failure signal — every named failure still is.
     let finished_or_unstated = matches!(finish_reason.as_deref(), None | Some("stop"));
     let mut tool_calls = tool_calls;
-    if tool_calls.is_empty()
-        && !raw_tool_call_requested
+    // **Not `tool_calls.is_empty()`.** The gate used to be, on the assumption
+    // that a model either honours the native channel for a message or does
+    // not. Observed live against `deepseek/deepseek-v4-flash`: it does both in
+    // ONE message — a native `workspace_search`, then a second call written
+    // out as text. Because the native list was non-empty, salvage never ran,
+    // the text call was dropped in silence, and its stray `</tool_call>` was
+    // left in the narrative for the operator to read. The turn then ended
+    // looking like the model had simply decided not to act.
+    //
+    // A parsed call is evidence the provider's channel works; it is not
+    // evidence that everything the model wanted is in that list. So the
+    // content is salvaged either way, and what comes back is appended rather
+    // than substituted. `already_called` is what keeps a provider that emits
+    // a call natively *and* echoes it in prose from running it twice.
+    let already_called: std::collections::BTreeSet<(String, String)> = tool_calls
+        .iter()
+        .map(|call| (call.name.clone(), call.arguments.to_string()))
+        .collect();
+    if !raw_tool_call_requested
         && !content_substituted
         && finished_or_unstated
         && !offered.is_empty()
@@ -1345,23 +1362,26 @@ fn model_response_from_payload_offering(
         // it cannot cross there (Codex review on #2011).
         refuse_approval_siblings(&recovered)?;
         content = cleaned;
+        let recovered: Vec<_> = recovered
+            .into_iter()
+            .filter(|call| {
+                !already_called.contains(&(call.name.clone(), call.arguments.to_string()))
+            })
+            .collect();
         // A recovered call to a tool the turn offers only through the
         // `opencompany` MCP server (plan hive-desks Phase 3) is dispatched the
         // way a native-channel call to it would be: as `mcp_call_tool`. The
         // name is only in `offered` because `mcp_served_tools` put it there.
-        tool_calls = recovered
-            .into_iter()
-            .map(|call| {
-                let (name, arguments) =
-                    crate::hive::tools::via_opencompany_mcp(&call.name, call.arguments);
-                ToolCall {
-                    id: call.id,
-                    name,
-                    arguments,
-                    invalid: None,
-                }
-            })
-            .collect();
+        tool_calls.extend(recovered.into_iter().map(|call| {
+            let (name, arguments) =
+                crate::hive::tools::via_opencompany_mcp(&call.name, call.arguments);
+            ToolCall {
+                id: call.id,
+                name,
+                arguments,
+                invalid: None,
+            }
+        }));
     }
 
     // Only a genuinely empty turn (no text anywhere, no tool call) is an error.

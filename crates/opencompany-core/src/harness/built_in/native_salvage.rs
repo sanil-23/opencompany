@@ -200,6 +200,15 @@ const PARAMETER_TAG: &str = "parameter";
 /// the calls they wrapped.
 const TOOL_CALLS_TAG: &str = "tool_calls";
 
+/// The singular spelling of the same envelope.
+///
+/// Needed as its own constant rather than folded into [`TOOL_CALLS_TAG`]
+/// because [`tag_at`] requires the keyword to end where the tag name does —
+/// `<tool_calls>` is not a `<tool_call>` tag with a stray `s`, and the check
+/// that makes `<invoker>` safe rejects each spelling for the other. DeepSeek
+/// writes the singular.
+const TOOL_CALL_TAG: &str = "tool_call";
+
 /// How long a decoration between `<` and a tag keyword may be, in bytes.
 ///
 /// `｜｜DSML｜｜` is 16 bytes — the marker glyph is three bytes each. The cap is
@@ -336,6 +345,7 @@ fn salvage(
     }
 
     found.extend(tag_call_candidates(text, known, schemas));
+    found.extend(tool_element_candidates(text, known));
 
     // Left to right, and never twice over the same bytes: a JSON object written
     // as a `<parameter>` body is that call's argument, not a second call
@@ -396,6 +406,194 @@ struct Tag<'a> {
     start: usize,
     after: usize,
     attrs: &'a str,
+}
+
+/// Every `<tool_name …/>` call in `text`, in the dialect where the **element
+/// itself is the tool** and its arguments are attributes.
+///
+/// Observed live from `deepseek/deepseek-v4-flash`, inside a `<tool_call>`
+/// envelope, on a turn whose native `tool_calls` came back empty:
+///
+/// ```text
+/// <mcp_call_tool server="opencompany" tool="workspace_search" arguments='{"query": "checkout"}' />
+/// ```
+///
+/// Nothing recovered it. [`tag_call_candidates`] scans for the keyword
+/// `invoke` and this text contains none; the only JSON object in it is
+/// `{"query": "checkout"}`, which names no tool and is correctly refused by
+/// [`as_known_call`]. So both routes came back empty, the content was returned
+/// untouched, and the markup was what the operator read.
+///
+/// The call was otherwise perfect — right server, right tool, right arguments.
+/// Only the shape was unfamiliar, which is the cheapest kind of failure to fix
+/// and the most expensive to leave: the model did everything asked of it and
+/// the turn still did nothing.
+///
+/// Belt membership does the same work it does for `<invoke>`: the tag says *a*
+/// call, the belt says *this* call. A prose mention of `<workspace_search>` in
+/// a reply about tools is not a call unless the belt carries that name, and if
+/// it does, recovering it is the same bet `<invoke>` already takes.
+fn tool_element_candidates(text: &str, known: &BTreeSet<String>) -> Vec<Candidate> {
+    let mut found = Vec::new();
+    for name in known {
+        let mut from = 0usize;
+        while let Some(open) = find_tag(text, from, name, false) {
+            from = open.after;
+            // Self-closing (`<tool … />`) is the shape observed; a paired
+            // `<tool …></tool>` is accepted too, and its close is consumed so
+            // the leftover tag does not survive the recovery. Anything else —
+            // an open tag with a body — is left alone: a body would be
+            // arguments in some third spelling, and guessing at it would run a
+            // tool against inputs nobody wrote.
+            // The arguments are written either as attributes on the tag or
+            // as its body, and the same model does both — one message used
+            // `<mcp_call_tool server="…" …/>` and the next
+            // `<mcp_call_tool> server="…", … </mcp_call_tool>`. Reading the
+            // two the same way is what keeps this from being a special case
+            // per spelling.
+            let (end, body) = match open.attrs.trim_end().ends_with('/') {
+                true => (open.after, ""),
+                false => match find_tag(text, open.after, name, true) {
+                    Some(close) => (close.after, &text[open.after..close.start]),
+                    // Unclosed: the model was cut off, and inventing the end
+                    // would run a tool against arguments nobody finished.
+                    None => continue,
+                },
+            };
+            // Three spellings, one reading. The same model wrote all of
+            // them: arguments as attributes on the tag, as `key=value` in the
+            // body, and as a child element each. Merging in that order lets
+            // the nearest-to-the-tag spelling win a collision without any of
+            // them needing its own branch.
+            let mut arguments = attrs_as_arguments(open.attrs);
+            if let Some(map) = arguments.as_object_mut() {
+                for source in [attrs_as_arguments(body), children_as_arguments(body)] {
+                    if let Value::Object(from_body) = source {
+                        for (key, value) in from_body {
+                            map.entry(key).or_insert(value);
+                        }
+                    }
+                }
+            }
+            found.push(Candidate {
+                start: open.start,
+                end,
+                name: name.clone(),
+                arguments,
+            });
+        }
+    }
+    found
+}
+
+/// An attribute run as a call's arguments.
+///
+/// Each value is JSON-parsed when it parses and kept as a string when it does
+/// not, which is what turns `arguments='{"query": "checkout"}'` into a real
+/// object rather than a string that every downstream schema check would then
+/// reject. A bare word stays a string, so `server="opencompany"` is the string
+/// the tool expects.
+fn attrs_as_arguments(attrs: &str) -> Value {
+    let mut map = serde_json::Map::new();
+    for key in attribute_names(attrs) {
+        // Quoted first ([`attr`]'s shape), then a bare value — `arguments={…}`
+        // carries the object with no quotes around it, which is the spelling
+        // the body form uses and `attr` refuses.
+        let value = match attr(attrs, &key) {
+            Some(raw) => serde_json::from_str::<Value>(&raw).unwrap_or(Value::String(raw)),
+            None => match bare_value(attrs, &key) {
+                Some(value) => value,
+                None => continue,
+            },
+        };
+        map.insert(key, value);
+    }
+    Value::Object(map)
+}
+
+/// An unquoted `key=<json>` value, for the dialect that writes
+/// `arguments={"to": "qa_engineer"}` with no quotes around the object.
+///
+/// Only a JSON object or array is read this way. A bare word after `=` is left
+/// to [`attr`]'s quoted path and otherwise skipped: an unquoted, unbracketed
+/// run has no end this can be sure of, and guessing one would put half a
+/// sentence in a tool's arguments.
+fn bare_value(attrs: &str, key: &str) -> Option<Value> {
+    let at = attrs.find(key)?;
+    let rest = attrs[at + key.len()..].trim_start();
+    let rest = rest.strip_prefix('=')?.trim_start();
+    if !rest.starts_with('{') && !rest.starts_with('[') {
+        return None;
+    }
+    let (start, end) = json_object_spans(rest)
+        .into_iter()
+        .find(|&(start, _)| start == 0)?;
+    serde_json::from_str::<Value>(&rest[start..end]).ok()
+}
+
+/// A tag body's child elements as a call's arguments: `<server>x</server>`.
+///
+/// The third spelling observed from one model in one session, after attributes
+/// and a `key=value` body. Each child's name is the argument and its text is
+/// the value, JSON-parsed when it parses — which is what turns
+/// `<arguments>{"query": "…"}</arguments>` into an object rather than a string
+/// every downstream schema check would reject.
+///
+/// Only a simple identifier counts as a name, and only a child that closes.
+/// Prose containing `<not a tag>` reads as nothing, and a body cut off
+/// mid-child contributes nothing rather than a half-read value.
+fn children_as_arguments(body: &str) -> Value {
+    let mut map = serde_json::Map::new();
+    let mut from = 0usize;
+    while let Some(offset) = body.get(from..).and_then(|rest| rest.find('<')) {
+        let open = from + offset;
+        from = open + 1;
+        let Some(rest) = body.get(open + 1..) else {
+            break;
+        };
+        let Some(stop) = rest.find('>') else {
+            break;
+        };
+        let name = &rest[..stop];
+        if name.is_empty()
+            || !name
+                .chars()
+                .all(|ch| ch.is_alphanumeric() || ch == '_' || ch == '-')
+        {
+            continue;
+        }
+        let after = open + 1 + stop + 1;
+        let close = format!("</{name}>");
+        let Some(end) = body.get(after..).and_then(|rest| rest.find(&close)) else {
+            continue;
+        };
+        let raw = body[after..after + end].trim();
+        from = after + end + close.len();
+        let value =
+            serde_json::from_str::<Value>(raw).unwrap_or_else(|_| Value::String(raw.to_owned()));
+        map.entry(name.to_owned()).or_insert(value);
+    }
+    Value::Object(map)
+}
+
+/// The attribute names in an attribute run, left to right.
+///
+/// A scan rather than a parse: [`attr`] already knows how to read one value
+/// given its name, so this only has to find the names, and a name is the
+/// identifier immediately before an `=`.
+fn attribute_names(attrs: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    for (index, _) in attrs.match_indices('=') {
+        let head = attrs[..index].trim_end();
+        let start = head
+            .rfind(|ch: char| !ch.is_alphanumeric() && ch != '_' && ch != '-')
+            .map_or(0, |at| at + 1);
+        let name = &head[start..];
+        if !name.is_empty() && !names.iter().any(|held| held == name) {
+            names.push(name.to_string());
+        }
+    }
+    names
 }
 
 /// Every `<invoke name="…">…</invoke>` call to a **known** tool in `text`,
@@ -527,12 +725,21 @@ fn parameter_value(raw: &str, attrs: &str, declared_type: Option<&str>) -> Value
 /// syntax in unrelated prose, is left untouched (Codex review on #2093).
 fn envelope_tag_spans(text: &str, cuts: &[(usize, usize)]) -> Vec<(usize, usize)> {
     let mut spans = Vec::new();
+    for keyword in [TOOL_CALLS_TAG, TOOL_CALL_TAG] {
+        spans.extend(envelope_spans_of(text, cuts, keyword));
+    }
+    spans
+}
+
+/// [`envelope_tag_spans`] for one spelling of the envelope keyword.
+fn envelope_spans_of(text: &str, cuts: &[(usize, usize)], keyword: &str) -> Vec<(usize, usize)> {
+    let mut spans = Vec::new();
     let mut from = 0usize;
-    while let Some(open) = find_tag(text, from, TOOL_CALLS_TAG, false) {
+    while let Some(open) = find_tag(text, from, keyword, false) {
         // An envelope open with no matching close is left as-is, the same as
         // an invoke or parameter cut short: nothing after it can be told
         // apart from the next envelope's own close.
-        let Some(close) = find_tag(text, open.after, TOOL_CALLS_TAG, true) else {
+        let Some(close) = find_tag(text, open.after, keyword, true) else {
             break;
         };
         from = close.after;

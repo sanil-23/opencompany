@@ -599,3 +599,83 @@ fn a_multi_byte_character_before_the_object_does_not_panic() {
     assert_eq!(calls.len(), 1);
     assert_eq!(text, "Checking the ledger…");
 }
+
+/// The exact reply `deepseek/deepseek-v4-flash` produced on a live DM turn
+/// whose native `tool_calls` came back empty. Every route in the module missed
+/// it, so the markup reached the operator and the turn did nothing.
+#[test]
+fn a_tool_named_by_its_own_element_is_recovered() {
+    let offered: BTreeSet<String> = ["mcp_call_tool".to_string()].into_iter().collect();
+    let text = "<tool_call> <mcp_call_tool server=\"opencompany\" tool=\"workspace_search\" \
+                arguments='{\"query\": \"checkout\"}' /> </tool_call>";
+
+    let (cleaned, calls) =
+        recover_text_tool_calls(text, &offered, &BTreeMap::new()).expect("the call is recoverable");
+
+    assert_eq!(calls.len(), 1, "{calls:?}");
+    assert_eq!(calls[0].name, "mcp_call_tool");
+    assert_eq!(calls[0].arguments["server"], "opencompany");
+    assert_eq!(calls[0].arguments["tool"], "workspace_search");
+    // The JSON attribute becomes a real object, not the string it was written
+    // as — a string would fail every schema check downstream.
+    assert_eq!(calls[0].arguments["arguments"]["query"], "checkout");
+    // The envelope goes with the call it wrapped, singular spelling included.
+    assert!(
+        !cleaned.contains("tool_call") && !cleaned.contains("mcp_call_tool"),
+        "{cleaned:?}"
+    );
+}
+
+/// The belt still decides. An element named after nothing on it is prose —
+/// a reply that mentions `<workspace_search>` while that tool is not offered
+/// must come back untouched.
+#[test]
+fn an_element_naming_an_unoffered_tool_is_left_alone() {
+    let offered: BTreeSet<String> = ["mcp_call_tool".to_string()].into_iter().collect();
+    let text = "<workspace_search query=\"checkout\" />";
+
+    assert!(recover_text_tool_calls(text, &offered, &BTreeMap::new()).is_none());
+}
+
+/// The body form, verbatim from a live turn: the same model that wrote the
+/// attribute form in one message wrote this in the next. No attributes on the
+/// tag, arguments in the body, and the JSON object unquoted.
+#[test]
+fn a_tool_element_with_its_arguments_in_the_body_is_recovered() {
+    let offered: BTreeSet<String> = ["mcp_call_tool".to_string()].into_iter().collect();
+    let text = "<tool_call> <mcp_call_tool> server=\"opencompany\", tool=\"hand_off\", \
+                arguments={\"to\": \"qa_engineer\", \"brief\": \"You own this.\"} \
+                </mcp_call_tool> </tool_call>";
+
+    let (cleaned, calls) =
+        recover_text_tool_calls(text, &offered, &BTreeMap::new()).expect("recoverable");
+
+    assert_eq!(calls.len(), 1, "{calls:?}");
+    assert_eq!(calls[0].name, "mcp_call_tool");
+    assert_eq!(calls[0].arguments["server"], "opencompany");
+    assert_eq!(calls[0].arguments["tool"], "hand_off");
+    assert_eq!(calls[0].arguments["arguments"]["to"], "qa_engineer");
+    assert!(!cleaned.contains("mcp_call_tool"), "{cleaned:?}");
+}
+
+/// The child-element dialect, verbatim from a live turn: the tool is the
+/// element, and each argument is its own child rather than an attribute or a
+/// `key=value` body. Note the envelope opens `<tool_call>` and closes
+/// `</tool_calls>` — the model does not match its own tags.
+#[test]
+fn a_tool_element_with_child_arguments_is_recovered() {
+    let offered: BTreeSet<String> = ["mcp_call_tool".to_string()].into_iter().collect();
+    let text = "Own it. Let me pull the relevant standards first.\n\n\
+                <tool_call>\n<mcp_call_tool>\n<server>opencompany</server>\n\
+                <tool>workspace_search</tool>\n<arguments>{\"query\": \"test plan\"}</arguments>\n\
+                </mcp_call_tool>\n</tool_calls>";
+
+    let (cleaned, calls) =
+        recover_text_tool_calls(text, &offered, &BTreeMap::new()).expect("recoverable");
+
+    assert_eq!(calls.len(), 1, "{calls:?}");
+    assert_eq!(calls[0].arguments["server"], "opencompany");
+    assert_eq!(calls[0].arguments["tool"], "workspace_search");
+    assert_eq!(calls[0].arguments["arguments"]["query"], "test plan");
+    assert!(cleaned.starts_with("Own it."), "{cleaned:?}");
+}
