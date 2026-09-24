@@ -169,7 +169,7 @@ async fn spec_for(
 ) -> Result<LedgerSpec, String> {
     let slug = text(arguments, "ledger");
     if slug.is_empty() {
-        return Err("Name the `ledger` to use. `list_ledgers` names them all.".to_string());
+        return Err(missing_ledger(arguments));
     }
     require_access(grants, &slug, need)?;
     let registry = ledgers::registry(ctx)
@@ -179,6 +179,41 @@ async fn spec_for(
         .require(&slug)
         .cloned()
         .map_err(|error| format!("{error}"))
+}
+
+/// The refusal for a call that named no `ledger`, naming the key it *did*
+/// send.
+///
+/// "Name the `ledger` to use" reads as satisfied to a model that passed
+/// `name: "tasks"` — it believes it has named the ledger, so it retries the
+/// same call. Observed live: eight consecutive `read_ledger` calls, every one
+/// `name=<slug>`, every one refused identically, and the teammate finally told
+/// the operator "the tooling here isn't letting me pull the records I need".
+/// The model had inferred `name` from `list_ledgers`' own output and nothing
+/// in the refusal contradicted the inference.
+///
+/// So the refusal quotes the argument actually received. A wrong key the
+/// caller can see is a one-turn correction; a restatement of the right one is
+/// a loop, and the loop costs a turn each time round.
+fn missing_ledger(arguments: &Value) -> String {
+    let sent: Vec<&str> = arguments
+        .as_object()
+        .map(|map| map.keys().map(String::as_str).collect())
+        .unwrap_or_default();
+    // Only the keys that plausibly meant the ledger are worth quoting. A
+    // `status` or `limit` alongside a missing `ledger` is not the mistake.
+    let alias = sent
+        .iter()
+        .find(|key| matches!(**key, "name" | "ledger_name" | "slug" | "id" | "ledger_id"));
+    match alias {
+        Some(key) => format!(
+            "This call has no `ledger` argument — you sent `{key}`. Pass the slug as `ledger` \
+             instead, for example `ledger: \"tasks\"`. `list_ledgers` names them all."
+        ),
+        None => "Name the `ledger` to use — the slug goes in an argument called `ledger`, for \
+                 example `ledger: \"tasks\"`. `list_ledgers` names them all."
+            .to_string(),
+    }
 }
 
 /// Refuses `slug` when `grants` does not give at least `need`.
