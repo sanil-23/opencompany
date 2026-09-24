@@ -30,9 +30,7 @@
 //! dump is what the agent is briefed with.
 
 use crate::ports::types::CompanyRecord;
-use crate::runtime::delegation_tools::{
-    desk_lead, desks_of_member, reach_is_unrestricted, roster_agent_ids, teammate_targets,
-};
+use crate::runtime::delegation_tools::{desk_lead, desks_of_member};
 
 /// The heading the section opens with. Named so the tool descriptions and the
 /// orchestrator brief can point at it ("as listed under Your team").
@@ -86,21 +84,22 @@ pub fn team_section(record: &CompanyRecord, agent_id: &str) -> String {
     }
     let orchestrator = crate::company::orchestrator_id(&manifest_roster).map(str::to_string);
     let company = record.manifest.company.name.trim();
-    let delegates_to: &[String] = manifest_roster
-        .iter()
-        .find(|agent| agent.id == agent_id)
-        .map(|agent| agent.delegates_to.as_slice())
-        .unwrap_or(&[]);
-
-    // Whether the reach line at the bottom will narrow the roster. Decided up
-    // front so the opening sentence and that line cannot contradict each other.
-    let unrestricted = reach_is_unrestricted(delegates_to);
-    let reachable = match unrestricted {
-        true => Vec::new(),
-        false => teammate_targets(record, agent_id, delegates_to),
-    };
-    let narrowed =
-        !unrestricted && reachable.len() < roster_agent_ids(record).len().saturating_sub(1);
+    // **No reach narrowing.** This section used to compute a `delegates_to`
+    // reach and, when it was narrower than the roster, end by naming the
+    // subset a teammate "may bring in".
+    //
+    // `delegates_to` bounds DELEGATION — who may be handed a slice of this
+    // teammate's own work, capped at depth 2 (issue #884). The two tools this
+    // section is actually about do not delegate. `consult_teammates` convenes
+    // a room that talks, and `hand_off` gives the conversation away; both now
+    // reach the whole roster, so a reach line drawn from `delegates_to` states
+    // a bound neither tool enforces. Run live, that mismatch cost a product
+    // manager its turn: told it could bring in only its desk-mate, it went
+    // looking for another way round.
+    //
+    // The cost bound is not here and never was. `MAX_ROOM` caps a room's
+    // seats, and `dm_reach_brief` tells the model a room is the most expensive
+    // thing it can do.
 
     let mut out = String::new();
     out.push_str("\n\n");
@@ -119,17 +118,11 @@ pub fn team_section(record: &CompanyRecord, agent_id: &str) -> String {
     //
     // What this section is for stays exactly what it was: knowing who is here
     // and what they do, so a teammate never says somebody is out of reach.
-    out.push_str(match narrowed {
-        false => {
-            "Every teammate below is a real agent you can bring in, and they answer in this same \
-             turn. Never tell anyone a teammate is out of reach or that you cannot contact \
-             them — you can."
-        }
-        true => {
-            "Every teammate below is a real agent; the ones you may bring in are named at the \
-             end of this section, and they answer in this same turn."
-        }
-    });
+    out.push_str(
+        "Every teammate below is a real agent you can bring in, and they answer in this same \
+         turn. Never tell anyone a teammate is out of reach or that you cannot contact \
+         them — you can.",
+    );
     out.push_str("\n\nTeammates (roster id — role: mandate), named exactly as written:\n");
     for agent in &others {
         out.push_str("- `");
@@ -199,26 +192,6 @@ pub fn team_section(record: &CompanyRecord, agent_id: &str) -> String {
             out.push_str(&members.join(", "));
             out.push('\n');
         }
-    }
-
-    // The reach, rendered from the rule the tool enforces. Only worth a line
-    // when it is narrower than "everyone above", which the opening already says.
-    if narrowed {
-        out.push_str(&match reachable.is_empty() {
-            true => "\nYour manifest entry does not let you bring in anyone listed above. They \
-                     are listed so you know who does what: answer what you can yourself, and \
-                     say plainly who should be brought in.\n"
-                .to_string(),
-            false => format!(
-                "\nYou may bring in: {}. The rest are listed so you know who does what — say who \
-                 should be brought in rather than bringing them in yourself.\n",
-                reachable
-                    .iter()
-                    .map(|id| format!("`{id}`"))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-        });
     }
     out
 }

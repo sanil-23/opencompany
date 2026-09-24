@@ -112,9 +112,12 @@ fn desks_list_their_members_and_lead_and_the_agents_own_seat() {
     );
 }
 
+/// Every teammate is reachable, and the section says so once at the top.
+///
+/// `designer` declares no `delegates_to` and so was always unrestricted; this
+/// pins the wording the opening sentence has to keep.
 #[test]
 fn an_unrestricted_reach_is_stated_once_at_the_top_and_not_as_a_list() {
-    // `designer` declares no `delegates_to`, so it may reach everyone.
     let section = team_section(&record(TEAM), "designer");
     assert!(
         section.contains("Every teammate below is a real agent you can bring in"),
@@ -124,17 +127,33 @@ fn an_unrestricted_reach_is_stated_once_at_the_top_and_not_as_a_list() {
     assert!(!section.contains("does not let you bring in"), "{section}");
 }
 
+/// **A narrow `delegates_to` no longer narrows this section**, because the two
+/// tools it describes do not consult it.
+///
+/// `backend` declares `delegates_to = ["engineering"]`, which once cut this
+/// section down to "You may bring in: `designer`" — its desk-mate, and nobody
+/// on the content desk. That bound belonged to delegation: who may be handed a
+/// slice of this teammate's work, capped at depth 2 (issue #884). It never
+/// bounded `consult_teammates` or `hand_off`, which convene a room and give a
+/// conversation away, and which now both reach the whole roster.
+///
+/// Run live, the old line cost a turn outright: a product manager told it
+/// could bring in only its desk-mate went hunting for another way to reach two
+/// engineers, found `delegate_to_teammate`, and got nothing back from it. The
+/// prompt has to state the reach the tools actually enforce.
 #[test]
-fn a_narrowed_reach_names_exactly_who_the_tool_would_accept() {
-    // `backend` may reach the engineering desk only: its desk-mate `designer`,
-    // and nobody on the content desk or the orchestrator.
+fn a_narrow_delegates_to_no_longer_narrows_the_section() {
     let section = team_section(&record(TEAM), "backend");
+    assert!(!section.contains("You may bring in:"), "{section}");
+    assert!(!section.contains("does not let you bring in"), "{section}");
     assert!(
-        section.contains("\nYou may bring in: `designer`."),
-        "{section}"
+        section.contains("Every teammate below is a real agent you can bring in"),
+        "a narrowed `delegates_to` must not change the opening sentence: {section}"
     );
-    let reach = teammate_targets(&record(TEAM), "backend", &["engineering".to_string()]);
-    assert_eq!(reach, vec!["designer".to_string()]);
+    assert!(
+        section.contains("- `writer` —"),
+        "and everyone off `backend`'s desk stays listed as reachable: {section}"
+    );
 }
 
 /// **The section names no tool at all.**
