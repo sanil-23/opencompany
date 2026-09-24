@@ -268,24 +268,34 @@ impl Tool for ConsultTeammatesTool {
             Err(error) => return refuse(&format!("this company could not be read: {error}")),
         };
 
-        // Checked against the live roster, so a teammate added this morning
-        // can be brought into a room this afternoon.
-        // The reach the prompt states, not the whole roster. `team_brief`
-        // renders "You may hand work to: ..." from this same rule, and its
-        // invariant is that the two never disagree -- it guards the direction
-        // where the prompt names somebody the tool refuses, and this is the
-        // mirror: a room that seats somebody the prompt just said was out of
-        // reach. A narrowed `delegates_to` is a statement about who this
-        // teammate may pull into its work, and convening a room is pulling
-        // several of them in at once.
-        let delegates_to: Vec<String> = record
+        // The whole roster, on exactly the terms `hand_off` uses -- and
+        // deliberately NOT the `delegates_to` reach this once read.
+        //
+        // `delegates_to` bounds delegation: who this teammate may hand a slice
+        // of its own work to, capped at depth 2 (issue #884). Bounding a
+        // consult by it confused two different questions. Delegation transfers
+        // work and costs a depth level, so keeping it on your own desk is
+        // sound; a consult transfers nothing and costs no depth. It is a
+        // conversation, and `dm_reach_brief` describes it as being for exactly
+        // the case that crosses desks -- "a call that crosses their work, a
+        // trade-off with more than one right answer".
+        //
+        // Run live, the old bound made the tool useless for its own stated
+        // purpose. A product manager whose `delegates_to` names its own desk
+        // was asked to get the backend and security engineers into a room, and
+        // was refused with "the ones you can bring in are: `designer`" --
+        // while `hand_off`, the far more drastic move, would have handed those
+        // same two engineers the entire conversation without complaint. The
+        // cheaper move must not have the narrower reach.
+        //
+        // Read at call time, so a teammate added this morning can be brought
+        // into a room this afternoon. `choose_room` filters the caller and
+        // refuses a retired id; `MAX_ROOM` is what bounds the cost.
+        let roster: Vec<String> = record
             .effective_agents()
             .iter()
-            .find(|agent| agent.id == self.agent)
-            .map(|agent| agent.delegates_to.clone())
-            .unwrap_or_default();
-        let roster =
-            crate::runtime::delegation_tools::teammate_targets(&record, &self.agent, &delegates_to);
+            .map(|agent| agent.id.clone())
+            .collect();
         let asked_for: Vec<String> = args
             .get("with")
             .and_then(Value::as_array)
