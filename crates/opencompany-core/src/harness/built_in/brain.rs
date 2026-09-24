@@ -3816,9 +3816,33 @@ impl HarnessBrain {
                     // One thread, one card: a follow-up joins the work its
                     // thread already opened instead of opening another.
                     let thread_card = self.thread_card(chat.as_deref(), *parent).await;
-                    let responder = self
-                        .mentioned_responder(mentions)
-                        .unwrap_or_else(|| self.responder_for(chat.as_deref()));
+                    //
+                    // **Except in a direct message**, where the channel
+                    // already names exactly one teammate and a mention is
+                    // almost always a reference rather than an address. Sent
+                    // to the backend engineer, "that's @qa_engineer's job, not
+                    // yours — give it to them" is something said *about* qa;
+                    // routing it *to* qa answered the wrong teammate in
+                    // somebody else's conversation, and the answer showed it —
+                    // qa said it would pass the work "to the right person",
+                    // not recognising that it was the right person.
+                    //
+                    // The named teammates still reach the turn through
+                    // `also_mentioned` below, so the one actually being
+                    // addressed knows who was named and can hand the work on.
+                    let mentioned = match chat.as_deref() {
+                        Some(chat)
+                            if crate::runtime::delegation_tools::is_direct_message(
+                                &self.record(),
+                                chat,
+                            ) =>
+                        {
+                            None
+                        }
+                        _ => self.mentioned_responder(mentions),
+                    };
+                    let responder =
+                        mentioned.unwrap_or_else(|| self.responder_for(chat.as_deref()));
                     // Everyone else the message named, for the answering turn's
                     // context. A list, not a fan-out: one operator message still
                     // spawns exactly one turn, and this teammate spreads the

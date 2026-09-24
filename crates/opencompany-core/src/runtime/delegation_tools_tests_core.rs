@@ -114,3 +114,30 @@ members = ["analyst"]
         ..record()
     }
 }
+
+/// A desk is not a direct message however it is addressed, and a teammate is
+/// one whether addressed bare or through the console's `dm:` key.
+///
+/// The distinction decides whether a mention may redirect the conversation:
+/// on a desk it picks which member answers, in a DM it is a reference to
+/// somebody who is not in the room.
+#[test]
+fn a_direct_message_is_a_teammate_and_a_desk_is_not() {
+    let record = record();
+
+    for chat in ["writer", "dm:writer", "ceo", "dm:ceo"] {
+        assert!(
+            is_direct_message(&record, chat),
+            "`{chat}` addresses one teammate"
+        );
+    }
+    for chat in ["engineering", "main", "general"] {
+        assert!(
+            !is_direct_message(&record, chat),
+            "`{chat}` is a desk or the company's own line, not a direct message"
+        );
+    }
+    // A key naming nobody is not a DM either: it resolves to no teammate, so
+    // there is no single counterpart for a mention to be redundant with.
+    assert!(!is_direct_message(&record, "marketing"));
+}

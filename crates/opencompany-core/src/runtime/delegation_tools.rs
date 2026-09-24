@@ -339,6 +339,37 @@ pub fn desk_default_responder(record: &CompanyRecord, desk: &str) -> Option<Stri
 ///
 /// Only the manifest is searched. An overlay desk on a General key is refused
 /// by `resolve_desk_id` and unaddressable, so letting one claim the line here
+/// Whether `chat` is a **direct message** — a conversation with exactly one
+/// teammate — rather than a desk or the company's own line.
+///
+/// The arms mirror [`chat_responder`]'s, minus the desk ones: a key a desk
+/// answers is a desk however it is spelled, the General line belongs to the
+/// company, and what is left is a teammate addressed by id or through the
+/// console's `dm:<teammate-id>` key.
+///
+/// It exists because a mention means different things in the two places. On a
+/// desk, naming somebody is how you pick which member answers, so a mention
+/// rightly outranks the channel default. In a direct message the channel
+/// *already* names one teammate, and a mention is almost always a reference to
+/// a third party -- "that's @qa_engineer's job, not yours" is something said
+/// **about** qa to the teammate you are talking to. Routing it **to** qa
+/// answers the wrong person in the wrong conversation, and the answer shows
+/// it: asked to hand work over, qa replied that it would pass the work "to the
+/// right person", not recognising it was the right person.
+#[must_use]
+pub fn is_direct_message(record: &CompanyRecord, chat: &str) -> bool {
+    if desk_default_responder(record, chat).is_some()
+        || crate::server::chat_history::is_general_chat(Some(chat))
+    {
+        return false;
+    }
+    if record.resolve_roster_agent_id(chat).is_some() {
+        return true;
+    }
+    crate::runtime::assignee::dm_key(chat)
+        .is_some_and(|key| record.resolve_roster_agent_id(key).is_some())
+}
+
 /// would hand `#general` to a desk nothing else routes to.
 pub(crate) fn general_claimant(record: &CompanyRecord) -> Option<String> {
     let general = |s: &str| crate::server::chat_history::is_general_chat(Some(s));
