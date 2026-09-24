@@ -433,6 +433,7 @@ description = "Runs Acme."
 
 pub(super) fn deps(dir: &std::path::Path) -> HarnessDeps {
     HarnessDeps {
+        pool: Default::default(),
         emergency_gate: None,
         notifications: None,
         ledgers: None,

@@ -24,6 +24,7 @@ pub(super) fn brain_that_steers_itself(
         calls: std::sync::atomic::AtomicUsize::new(0),
     });
     let deps = HarnessDeps {
+        pool: Default::default(),
         emergency_gate: None,
         notifications: None,
         ledgers: None,
@@ -174,6 +175,7 @@ pub(super) fn brain_that_selects_with(
         selector_calls: std::sync::atomic::AtomicUsize::new(0),
     });
     let deps = HarnessDeps {
+        pool: Default::default(),
         emergency_gate: None,
         notifications: None,
         ledgers: None,
@@ -437,6 +439,7 @@ pub(super) fn brain_that_delegates_with(
         steer: steer.clone(),
     });
     let deps = HarnessDeps {
+        pool: Default::default(),
         emergency_gate: None,
         notifications: None,
         ledgers: None,

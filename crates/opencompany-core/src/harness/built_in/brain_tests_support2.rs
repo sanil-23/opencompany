@@ -254,6 +254,7 @@ pub(super) fn brain_over(
 ) -> (HarnessBrain, Arc<FsOps>) {
     let tasks = Arc::new(FsOps::new(dir));
     let deps = HarnessDeps {
+        pool: Default::default(),
         emergency_gate: None,
         notifications: None,
         ledgers: None,
@@ -390,6 +391,7 @@ pub(super) fn brain_with_approval_queue(
     requests: crate::harness::policy::ApprovalRequestQueue,
 ) -> HarnessBrain {
     let deps = HarnessDeps {
+        pool: Default::default(),
         emergency_gate: None,
         notifications: None,
         ledgers: None,

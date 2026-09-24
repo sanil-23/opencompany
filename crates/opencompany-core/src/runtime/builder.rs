@@ -3341,6 +3341,7 @@ impl RuntimeBuilder {
                                 }),
                             );
                             let mut deps = HarnessDeps {
+                                pool: Default::default(),
                                 emergency_gate: Some(gate.clone()),
                                 // Issue #1861: the same store the console's and
                                 // the scheduler's runs badge through, so a run
@@ -3779,6 +3780,13 @@ impl RuntimeBuilder {
                             // strong ref lives on the runtime via
                             // `set_workflow_runner`, so this is not a strong cycle.
                             deps.workflow_runner.set(&runner);
+                            // And the pool a teammate's `consult_desk` opens
+                            // its episode on. Same shape and same reason as
+                            // the line above: the tool is built by the roster,
+                            // the roster by the pool, so the pool can only
+                            // reach a tool after the fact. The handle keeps a
+                            // `Weak`, so this is not a cycle either.
+                            deps.pool.set(&pool);
                             wf_runner = Some(runner);
                             // Issue #337: built from these same deps, so it
                             // shares the tenant provider and the model override

@@ -48,6 +48,17 @@ name = "auth_matrix"
 path = "tests/auth_matrix.rs"
 
 [[test]]
+name = "dm_consult_handoff"
+path = "tests/dm_consult_handoff.rs"
+
+# Ignored by default: it spends real model calls. `assert-integration-targets-run.sh`
+# counts what a lane ran, and an all-ignored target reports zero — so this one
+# is named in that script's allowance rather than expected to run in CI.
+[[test]]
+name = "dm_live"
+path = "tests/dm_live.rs"
+
+[[test]]
 name = "desktop_e2e"
 path = "tests/desktop_e2e.rs"
 
