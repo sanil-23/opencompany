@@ -397,9 +397,35 @@ fn harness_sections(
                      non-orchestrator teammate carries the hand-off tools; the reach is stated \
                      under Your team"
                 .to_string(),
-            body: crate::harness::built_in::orchestrator::member_delegation_brief(),
+            // `true`: this dump has a manifest and no harness deps, so it
+            // cannot observe the pool the belt gate reads. Every served
+            // company has one, so `true` is what an operator will actually be
+            // briefed with; `false` would show a `delegate_to_desk` sentence
+            // no running agent sees.
+            body: crate::harness::built_in::orchestrator::member_tracking_brief(),
+        });
+        sections.push(Section {
+            title: "When the answer is not yours alone".to_string(),
+            origin: "`harness::built_in::dm_reach::dm_reach_brief` — the two moves a teammate \
+                     answering an operator directly has beyond answering: convening named \
+                     teammates, and handing the conversation on"
+                .to_string(),
+            body: crate::harness::built_in::dm_reach::dm_reach_brief(),
         });
     }
+
+    // **Where every tool above actually is.** The section the runtime appends
+    // last, and the one the dump omitted entirely: an operator reading this
+    // could see `workspace_search` and `consult_teammates` named all through
+    // the prompt with nothing saying they are served by an MCP server and
+    // reached as `mcp_call_tool`. The exact tool list is the running belt's,
+    // so it is deferred rather than guessed -- but the fact of the server, and
+    // how a call is shaped, is knowable from the manifest and belongs here.
+    deferred.push(Deferred {
+        title: "Company tools (MCP server `opencompany`)".to_string(),
+        reason: "the served list is this agent's built belt, which needs a running harness;                  the section explains that every company tool is reached with `mcp_call_tool`                  against the `opencompany` server, and names them"
+            .to_string(),
+    });
 
     deferred.push(Deferred {
         title: "MCP capability brief".to_string(),

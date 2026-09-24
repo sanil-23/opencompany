@@ -42,6 +42,13 @@
 //! [`HarnessPool::run`] records them through [`cost::record_turn_cost`].
 
 pub mod approval_tool;
+/// The persona brief for the two tools a teammate uses in a direct message.
+pub mod dm_reach;
+/// Handing a conversation to the teammate who should be having it.
+pub mod handoff_tool;
+/// The pool a teammate's own tools reach back into, filled after the fact.
+pub mod pool_handle;
+pub use pool_handle::PoolHandle;
 /// Issue #775: the fail-closed shell audit wrapper — one intent line appended
 /// (and fsynced) *before* a command runs, refusing the command outright when
 /// that append fails. Pairs with the host-owned, per-agent sink
@@ -421,6 +428,14 @@ pub struct HarnessDeps {
     /// Default (and any build with no runner) leaves it empty and the tool
     /// reports workflow execution is not wired.
     pub workflow_runner: crate::harness::orchestrator::WorkflowRunnerHandle,
+    /// The pool a teammate's own tools reach back into.
+    ///
+    /// `consult_desk` opens an episode on it; `hand_off` runs the teammate
+    /// it names. Empty on every deps built without one, which leaves both
+    /// tools off the belt rather than on it and refusing: a teammate that
+    /// cannot do a thing should not be told it can. Filled by the runtime
+    /// builder, which has the pool in hand where it assembles these deps.
+    pub pool: PoolHandle,
     /// The shared MCP failure queue the `OcMcpCallTool` decorator pushes onto and
     /// the [`HarnessBrain`] drains after a turn (the error-hardening cell). Same
     /// cheap-shared-handle pattern as [`Self::delegations`]; every string it
@@ -1236,10 +1251,21 @@ impl CompanyAgent {
             .map(|tool| tool.name().to_string())
             .filter(|name| !build::OPENHUMAN_NATIVE_TOOLS.contains(&name.as_str()))
             .collect();
-        let mut allow_tools: Vec<String> = crate::hive::tools::speech_tool_names()
-            .iter()
-            .map(|name| (*name).to_string())
-            .collect();
+        // No speech tools. A pooled agent is the one that answers an operator
+        // in a chat or a direct message, and it never takes an episode turn:
+        // both ways into a room -- `run_desk_message` and a teammate's own
+        // consult -- go through `hive::conducted::run`, which throws these
+        // bindings away and re-seats every member through `HostedRunner`. The
+        // seats that speak are those session hosts, and they get the room's
+        // vocabulary from `EpisodeTools`, not from here.
+        //
+        // So `post`, `broadcast`, `dm`, `ask`, `complete_episode` and `read`
+        // used to ride on every DM turn with no episode to act on. Only `dm`
+        // refused itself; the rest were live tools bound to nothing. The cost
+        // was not the wasted slots -- it was `ask`, which reads exactly like
+        // what a teammate wants when it needs a colleague, sitting ahead of
+        // the tools that actually reach one.
+        let mut allow_tools: Vec<String> = Vec::with_capacity(served_names.len());
         allow_tools.extend(served_names.iter().cloned());
         let served_catalogue = allow_tools.clone();
         let base_id = crate::session_key::runtime_agent_id(company, agent_id);
@@ -1306,6 +1332,7 @@ impl CompanyAgent {
             runtime_id.clone(),
             mcp_bearer.clone(),
         )
+        .speech_tools(Vec::<String>::new())
         .tools(served.clone())
         .policy(Arc::new(policy))
         .workspace(workspace.clone());
@@ -5803,6 +5830,7 @@ pub(crate) fn build_episode_seat(
         instructions.as_deref(),
         orchestrator::orchestrator_id(&live_roster).as_deref() == Some(manifest_agent.id.as_str()),
         &crate::company::team_brief::team_section(company, &manifest_agent.id),
+        /* for_episode_seat */ true,
     )?;
     // **The hand-off tools come off an episode seat's belt.**
     //
@@ -5853,7 +5881,7 @@ pub(crate) fn build_episode_seat(
     // half-cut.
     for brief in [
         orchestrator::orchestrator_brief(),
-        orchestrator::member_delegation_brief(),
+        orchestrator::member_tracking_brief(),
     ] {
         if let Some(at) = blueprint.system_prompt.find(&brief) {
             blueprint
@@ -5885,6 +5913,13 @@ pub(crate) fn build_episode_seat(
 /// withheld rather than left to refuse.
 const EPISODE_WITHHELD_TOOLS: [&str; 3] =
     ["spawn_task", "delegate_to_desk", "delegate_to_teammate"];
+
+// The two delegation names are kept here although a teammate's belt no longer
+// carries them (`member_tracking_tools`): the orchestrator's belt still does,
+// and an orchestrator can be seated. Withholding a name nothing offers costs
+// one `contains` and removes a way for this list to be wrong later; dropping
+// them would make the set right only for as long as no seat is an
+// orchestrator.
 
 pub(crate) fn build_roster(
     runtime: &openhuman_embed::Runtime,
@@ -6009,6 +6044,7 @@ pub(crate) fn build_roster(
             effective_instructions.as_deref(),
             is_orchestrator,
             &crate::company::team_brief::team_section(company, &manifest_agent.id),
+            /* for_episode_seat */ false,
         )?;
         roster.push(Arc::new(CompanyAgent::register(
             runtime,
@@ -6098,6 +6134,7 @@ pub(crate) fn build_roster(
             effective_instructions.as_deref(),
             /* is_orchestrator */ false,
             &crate::company::team_brief::team_section(company, &manifest_agent.id),
+            /* for_episode_seat */ false,
         )?;
         roster.push(Arc::new(CompanyAgent::register(
             runtime,
@@ -6199,6 +6236,7 @@ pub(crate) fn workflow_wiring_deps(
     plan: Option<capability_budget::CapabilityPlan>,
 ) -> HarnessDeps {
     HarnessDeps {
+        pool: Default::default(),
         emergency_gate: None,
         provider: Arc::new(provider::MockProvider::default()),
         provider_slug: "mock".to_string(),

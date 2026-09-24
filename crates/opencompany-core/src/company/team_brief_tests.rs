@@ -117,11 +117,11 @@ fn an_unrestricted_reach_is_stated_once_at_the_top_and_not_as_a_list() {
     // `designer` declares no `delegates_to`, so it may reach everyone.
     let section = team_section(&record(TEAM), "designer");
     assert!(
-        section.contains("Every teammate below is a real agent you can hand work to"),
+        section.contains("Every teammate below is a real agent you can bring in"),
         "{section}"
     );
-    assert!(!section.contains("You may hand work to:"), "{section}");
-    assert!(!section.contains("does not let you hand work"), "{section}");
+    assert!(!section.contains("You may bring in:"), "{section}");
+    assert!(!section.contains("does not let you bring in"), "{section}");
 }
 
 #[test]
@@ -130,20 +130,35 @@ fn a_narrowed_reach_names_exactly_who_the_tool_would_accept() {
     // and nobody on the content desk or the orchestrator.
     let section = team_section(&record(TEAM), "backend");
     assert!(
-        section.contains("\nYou may hand work to: `designer`."),
+        section.contains("\nYou may bring in: `designer`."),
         "{section}"
     );
     let reach = teammate_targets(&record(TEAM), "backend", &["engineering".to_string()]);
     assert_eq!(reach, vec!["designer".to_string()]);
 }
 
+/// **The section names no tool at all.**
+///
+/// It used to end by pointing at `delegate_to_teammate`, which a teammate no
+/// longer carries. Bringing colleagues in is `consult_teammates` and giving a
+/// conversation away is `hand_off`, both described where the choice between
+/// them is — naming one here would split that explanation across two places
+/// that then drift, and naming the removed one taught a call that refuses.
+///
+/// What the section is for is unchanged: who is here and what they do.
 #[test]
-fn the_section_names_the_tools_by_their_real_names() {
+fn the_section_names_no_tool() {
     let section = team_section(&record(TEAM), "writer");
-    assert!(
-        section.contains(&format!("`{DELEGATE_TO_TEAMMATE_TOOL}`")),
-        "{section}"
-    );
+    for tool in [
+        "delegate_to_teammate",
+        "delegate_to_desk",
+        "consult_teammates",
+        "hand_off",
+    ] {
+        assert!(!section.contains(tool), "{tool} is named here: {section}");
+    }
+    // And it still does its own job.
+    assert!(section.contains("- `backend`"), "{section}");
 }
 
 /// The brief no longer advertises `delegate_to_desk`.
@@ -226,8 +241,11 @@ fn a_manifest_teammates_operator_rename_is_the_name_other_agents_are_given() {
         section.contains("- `backend` — Johnny, Backend Engineer: Build the services."),
         "the live overlay name and canonical id must both reach the teammate prompt: {section}"
     );
+    // No tool is named here any more — see `the_section_names_no_tool`. What
+    // this prompt still owes the teammate is knowing Johnny exists and how to
+    // address them, which is the roster line above.
     assert!(
-        section.contains("`delegate_to_teammate`"),
-        "the same prompt must say how to contact Johnny: {section}"
+        section.contains("you can bring in"),
+        "the same prompt must say Johnny is reachable: {section}"
     );
 }

@@ -536,32 +536,24 @@ async fn the_depth_bound_is_read_from_the_manifest_at_call_time() {
     assert_eq!(queue.queued(), 0);
 }
 
-/// The member's belt is exactly `spawn_task` + the two hand-off tools —
-/// never the orchestrator's authority tools.
+/// A teammate's belt is `spawn_task` and nothing else.
+///
+/// It carried the two delegation tools until `consult_teammates` and
+/// `hand_off` replaced what they were for: convening the people a question
+/// needs, and giving a conversation to whoever should own it. `spawn_task` is
+/// on a different axis and stays — a card, not a turn.
+///
+/// Asserted as an exact set, because the failure worth catching is a tool
+/// quietly coming back: one the persona no longer describes is one the model
+/// meets with no idea what it is for.
 #[test]
-fn a_members_delegation_belt_is_the_two_hand_off_tools() {
+fn a_members_belt_is_the_board_tool_alone() {
     let company = CompanyId::new("acme");
     let queue = DelegationQueue::default();
     let store: Arc<dyn CompanyStore> = Arc::new(MemStore::seeded(nested_desks_record(&company)));
-    let tools = member_delegation_tools(
-        &queue,
-        company,
-        store,
-        MemberScope {
-            member: "writer".to_string(),
-            delegates_to: vec!["research".to_string()],
-        },
-    );
-    let mut names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
-    names.sort();
-    assert_eq!(
-        names,
-        [
-            DELEGATE_TO_DESK_TOOL,
-            DELEGATE_TO_TEAMMATE_TOOL,
-            SPAWN_TASK_TOOL
-        ]
-    );
+    let tools = member_tracking_tools(&queue, company, store);
+    let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
+    assert_eq!(names, [SPAWN_TASK_TOOL]);
 }
 
 /// D1 at the boundary: the lead's hand-off to the peer beside it is

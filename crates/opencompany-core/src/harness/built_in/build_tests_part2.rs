@@ -243,13 +243,16 @@ fn dispatched_desk_agent_tool_belt_is_pinned() {
         // to hit something only the operator can answer, and its
         // alternatives are guessing or going quiet.
         "escalate_to_human",
-        // The hand-off tools, on every roster agent's belt whatever its
-        // `delegates_to` says (an empty list is unrestricted, not unwired):
-        // a teammate that cannot reach the colleague beside it, and cannot
-        // open a card, is one the runtime had to card *for* — which is how
-        // every desk message became a task nobody asked for.
-        "delegate_to_desk",
-        "delegate_to_teammate",
+        // The board tool, on every roster agent's belt. A teammate that
+        // cannot open a card is one the runtime had to card *for* — which is
+        // how every desk message became a task nobody asked for.
+        //
+        // The two delegation tools were here beside it and are gone:
+        // `consult_teammates` convenes the people a question needs and
+        // `hand_off` gives a conversation to whoever should own it, which is
+        // what they were being used for and both do better. Neither appears
+        // in this list because neither is wired on a dispatched agent — they
+        // need a pool, which this fixture has none of.
         "spawn_task",
     ];
     // The global baseline installs skills in every company (issue: global
@@ -457,12 +460,14 @@ fn every_built_agent_states_a_raised_tool_iteration_cap() {
 /// registration check that a desk lead can reach a colleague without
 /// becoming a second CEO.
 ///
-/// Issue #176 wired the hand-off tools only onto a member that opted in
-/// with `delegates_to`; they are now on every belt, and the list only
-/// narrows where they reach — see [`a_narrowed_member_gets_the_same_belt`].
+/// Issue #176 wired the hand-off tools only onto a member that opted in with
+/// `delegates_to`; they went onto every belt, and are now gone altogether —
+/// `consult_teammates` and `hand_off` replaced what they were for. What a
+/// member still carries, and the orchestrator's authority tools it must not,
+/// is what this pins.
 #[test]
-fn dispatched_agent_has_the_hand_off_tools_but_not_the_orchestrators_authority() {
-    let hand_off = ["spawn_task", "delegate_to_desk", "delegate_to_teammate"];
+fn a_dispatched_agent_gets_the_board_tool_but_not_the_orchestrators_authority() {
+    let hand_off = ["spawn_task"];
     let authority = [
         "query_company",
         "assign_task",

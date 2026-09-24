@@ -31,8 +31,7 @@
 
 use crate::ports::types::CompanyRecord;
 use crate::runtime::delegation_tools::{
-    DELEGATE_TO_TEAMMATE_TOOL, desk_lead, desks_of_member, reach_is_unrestricted, roster_agent_ids,
-    teammate_targets,
+    desk_lead, desks_of_member, reach_is_unrestricted, roster_agent_ids, teammate_targets,
 };
 
 /// The heading the section opens with. Named so the tool descriptions and the
@@ -110,22 +109,28 @@ pub fn team_section(record: &CompanyRecord, agent_id: &str) -> String {
         "\n\nYou are one of {} teammates at {company}, and you are not working alone. ",
         roster.len(),
     ));
+    // **No tool named here any more.** This section used to end by pointing at
+    // `delegate_to_teammate`, which a teammate no longer carries: bringing
+    // colleagues in is `consult_teammates`, giving the conversation away is
+    // `hand_off`, and both are described where the choice between them is —
+    // `dm_reach`. Naming a third, removed tool here would teach a call that
+    // refuses, and naming one of those two would split their explanation
+    // across two places that then drift.
+    //
+    // What this section is for stays exactly what it was: knowing who is here
+    // and what they do, so a teammate never says somebody is out of reach.
     out.push_str(match narrowed {
         false => {
-            "Every teammate below is a real agent you can hand work to: they run it and hand \
-             their answer back to you in this same turn. Never tell anyone a teammate is out of \
-             reach or that you cannot contact them — you can, with "
+            "Every teammate below is a real agent you can bring in, and they answer in this same \
+             turn. Never tell anyone a teammate is out of reach or that you cannot contact \
+             them — you can."
         }
         true => {
-            "Every teammate below is a real agent; the ones you may hand work to are named at \
-             the end of this section, and they hand their answer back to you in this same turn. \
-             The tool for that is "
+            "Every teammate below is a real agent; the ones you may bring in are named at the \
+             end of this section, and they answer in this same turn."
         }
     });
-    out.push_str(&format!(
-        "`{DELEGATE_TO_TEAMMATE_TOOL}`.\n\nTeammates (roster id — role: mandate). Hand work to \
-         one with `{DELEGATE_TO_TEAMMATE_TOOL}`, naming the id exactly as written:\n"
-    ));
+    out.push_str("\n\nTeammates (roster id — role: mandate), named exactly as written:\n");
     for agent in &others {
         out.push_str("- `");
         out.push_str(agent.id);
@@ -200,13 +205,13 @@ pub fn team_section(record: &CompanyRecord, agent_id: &str) -> String {
     // when it is narrower than "everyone above", which the opening already says.
     if narrowed {
         out.push_str(&match reachable.is_empty() {
-            true => "\nYour manifest entry does not let you hand work to anyone listed above. \
-                     They are listed so you know who does what: answer what you can yourself, \
-                     and say plainly who should be brought in.\n"
+            true => "\nYour manifest entry does not let you bring in anyone listed above. They \
+                     are listed so you know who does what: answer what you can yourself, and \
+                     say plainly who should be brought in.\n"
                 .to_string(),
             false => format!(
-                "\nYou may hand work to: {}. The rest are listed so you know who does what — \
-                 say who should be brought in rather than handing to them.\n",
+                "\nYou may bring in: {}. The rest are listed so you know who does what — say who \
+                 should be brought in rather than bringing them in yourself.\n",
                 reachable
                     .iter()
                     .map(|id| format!("`{id}`"))

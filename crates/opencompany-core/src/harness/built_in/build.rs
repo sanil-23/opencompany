@@ -111,6 +111,8 @@ use tinytools::Tool;
 use crate::company::Agent as ManifestAgent;
 use crate::company::inference::store as inference_store;
 use crate::harness::HarnessDeps;
+use crate::harness::built_in::dm_reach;
+use crate::harness::built_in::handoff_tool;
 use crate::harness::built_in::provider::HarnessModel;
 use crate::harness::file_tool_outputs::WritePromotion;
 #[cfg(feature = "mcp")]
@@ -329,6 +331,11 @@ pub fn build_agent_with_model(
     // `is_orchestrator` precedent: this function builds one agent from parts
     // the caller decided, and the roster is one of them.
     team_section: &str,
+    // Whether this is a seat of a running episode rather than a pooled
+    // teammate. A seat already carries the room's own vocabulary, so it is
+    // not offered `consult_desk`: consulting from inside a consult is a room
+    // within a room, with nothing to end it.
+    for_episode_seat: bool,
 ) -> crate::Result<AgentBlueprint> {
     // Create the sandbox now, before any tool — or any `SecurityPolicy` — is
     // bound to it. See [`ensure_agent_workspace`] for why an absent directory
@@ -942,6 +949,11 @@ pub fn build_agent_with_model(
     // write, and what it does is not guessable from the fact that it renders.
     persona.push_str(MENTION_BRIEF);
 
+    // WHERE the tools every brief below names actually are. First, because
+    // each of those briefs tells the model to call something it cannot reach
+    // natively, and a teammate told what to do before it is told how ends its
+    // turn narrating. Only for the pooled shape: an episode seat carries the
+    // same tools directly and would be told to bridge to itself.
     // How this company talks, when it talks by calling a tool.
     //
     // A short, STATIC brief — never a tree snapshot. A snapshot baked into the
@@ -1145,6 +1157,13 @@ pub fn build_agent_with_model(
         persona.push_str(&capability_brief());
     }
 
+    // Whether this belt will carry `consult_teammates` and `hand_off`, decided
+    // here rather than at the registration below because the delegation brief
+    // above it has to agree: a brief that offers `delegate_to_desk` for "this
+    // needs several of them" while a room tool is also on the belt sends the
+    // model to the weaker of the two, which is what it did live.
+    let rooms_on_belt = deps.events.is_some() && !for_episode_seat && deps.pool.get().is_some();
+
     // Orchestrator seam (issues #53 + #67 + #71): the company's orchestrator agent
     // additionally gets the delegating-orchestrator persona + tools. `query_company`
     // reads the company's facts + recent events; `spawn_task` / `delegate_to_desk`
@@ -1214,16 +1233,74 @@ pub fn build_agent_with_model(
     // `orchestrator_tools` above, and wiring a second, scoped copy beside its
     // unrestricted one would put two tools with the same name on one belt.
     else {
-        persona.push_str(&orchestrator::member_delegation_brief());
-        tools.extend(orchestrator::member_delegation_tools(
+        persona.push_str(&orchestrator::member_tracking_brief());
+        tools.extend(orchestrator::member_tracking_tools(
             &deps.delegations,
             company.clone(),
             deps.store.clone(),
-            orchestrator::MemberScope {
-                member: manifest_agent.id.clone(),
-                delegates_to: manifest_agent.delegates_to.clone(),
-            },
         ));
+    }
+
+    // Putting a question to the room the teammate sits in, and waiting for
+    // the answer. Beside the hand-off tools because it is the third thing a
+    // teammate can do with its colleagues and the one they do not cover:
+    // `delegate_to_teammate` asks one person, `delegate_to_desk` opens a card
+    // nobody waits on, and this convenes the room and comes back with what it
+    // said.
+    //
+    // Only when the pool is wired. A deps with no pool cannot open an episode,
+    // and a teammate offered a tool that always refuses spends turns learning
+    // that; better to not have it and delegate instead. Seats of an episode
+    // are built through this same function, and they are excluded too: a seat
+    // already has the room's own vocabulary on its belt, and consulting from
+    // inside a consult is a room within a room with nothing to end it.
+    // A seat's counterpart to the pair below. Inside a room a teammate can
+    // reach the other seats and it can stop and wait for a human; it has had
+    // no way to simply tell the operator something and carry on. Observed the
+    // first time a hand-off landed: the teammate picking the work up asked the
+    // operator three questions, two of which the teammate that handed it over
+    // could have answered.
+    //
+    // Only a seat. A pooled teammate is already *in* the operator's
+    // conversation — its reply is the message — so the tool would be a second,
+    // stranger way to do what answering does.
+    if let Some(events) = deps.events.clone()
+        && for_episode_seat
+    {
+        persona.push_str(&crate::hive::dm_operator::dm_operator_brief());
+        tools.push(Box::new(crate::hive::dm_operator::DmOperatorTool::new(
+            company.clone(),
+            manifest_agent.id.clone(),
+            events,
+        )));
+    }
+
+    if let Some(events) = deps.events.clone()
+        && rooms_on_belt
+    {
+        // The brief goes in from here, under the same condition, so the
+        // persona can never name a tool this belt does not carry. Its module
+        // header says why the tool descriptions alone were not enough.
+        persona.push_str(&dm_reach::dm_reach_brief());
+        tools.push(Box::new(crate::hive::consult::ConsultTeammatesTool::new(
+            company.clone(),
+            manifest_agent.id.clone(),
+            deps.store.clone(),
+            events.clone(),
+            deps.clone(),
+            deps.pool.clone(),
+        )));
+        // And giving the conversation away, which is the other half of the
+        // same problem: `consult_desk` is for when this teammate is still the
+        // one answering, `hand_off` for when it is not.
+        tools.push(Box::new(handoff_tool::HandOffTool::new(
+            company.clone(),
+            manifest_agent.id.clone(),
+            deps.store.clone(),
+            events,
+            deps.clone(),
+            deps.pool.clone(),
+        )));
     }
 
     // The routed workspace documents go LAST, after every tool brief. They are
@@ -1577,12 +1654,24 @@ pub fn agent_spec_for(
 fn opencompany_mcp_brief(tools: &[String]) -> String {
     let mut brief = String::from(MCP_BRIEF_HEADING);
     brief.push_str(
-        "\n\nEvery tool named below is served \
-         by the MCP server `opencompany`. Call one with `mcp_call_tool` and the arguments \
-         object the tool's schema describes — `{\"server\": \"opencompany\", \"tool\": \"<name>\", \
-         \"arguments\": {...}}` — never by its bare name; `mcp_list_tools` on that server shows \
-         each schema. A result whose text begins `refused:` or `awaiting approval:` is final \
-         for this turn: do not retry it.\n\n",
+        "\n\nThe tools you can call directly are OpenHuman's own: a shell, file tools, and the \
+         two bridge tools below. They act on **your own private scratch directory** and nobody \
+         else can see what you do with them.\n\n\
+         Everything that acts on the COMPANY — the shared workspace, the ledgers, the board, \
+         your teammates and the rooms you can convene — is served by the MCP server \
+         `opencompany`, and every tool named below is one of those. Call one with \
+         `mcp_call_tool` and the arguments object the tool's schema describes — \
+         `{\"server\": \"opencompany\", \"tool\": \"<name>\", \"arguments\": {...}}` — never by its \
+         bare name; `mcp_list_tools` on that server shows each schema, and is what to call when \
+         you are unsure what a tool takes rather than guessing an argument name and spending the \
+         turn on the refusal.\n\n\
+         So when a task is about the company, the answer is almost always an `opencompany` call, \
+         not a shell command and not a local file: a deliverable written with `file_write` is \
+         left where only you can read it, and putting it in the workspace is what makes it exist \
+         for everybody else. If you find yourself about to say what you are going to do, call \
+         the tool instead — saying it ends your turn without doing it.\n\n\
+         A result whose text begins `refused:` or `awaiting approval:` is final for this turn: \
+         do not retry it.\n\n",
     );
     brief.push_str(MCP_BRIEF_TOOLS_PREFIX);
     brief.push_str(&tools.join(", "));
@@ -1667,6 +1756,7 @@ pub fn build_agent(
         // Test-only wrapper; the roster section is the caller's to render, and
         // every caller of this wrapper is exercising something else.
         "",
+        /* for_episode_seat */ false,
     )
 }
 

@@ -12,7 +12,7 @@
 //! It reaches sixteen tools, wired onto the orchestrator agent (three of them —
 //! the hand-off tools `spawn_task`, `delegate_to_desk` and
 //! `delegate_to_teammate` — also onto every other roster agent, scoped; see
-//! [`member_delegation_tools`]):
+//! [`member_tracking_tools`]):
 //!
 //! * [`QueryCompanyTool`] — a read surface over the company's [`FactStore`],
 //!   recent [`EventLog`] history, and (issue #1859) a `## Board` summary of
@@ -3666,109 +3666,61 @@ pub fn delegation_tools(
     ]
 }
 
-/// The delegation tools every **non-orchestrator** roster agent gets:
-/// `spawn_task`, a `delegate_to_desk` and a `delegate_to_teammate`, both
-/// scoped by its manifest `delegates_to` — unrestricted when that list is
-/// empty (the ordinary case), narrowed to the named desks (and, for the
-/// teammate tool, its own desk-mates plus those desks' members) when it is not.
-/// Issue #176 wired these only onto a member that opted in with a list; a
-/// specialist with none had no way to reach the colleague beside it.
+/// The board tool every **non-orchestrator** teammate carries: `spawn_task`.
 ///
-/// Deliberately a subset of [`delegation_tools`] rather than the same list.
-/// `assign_task`, `review_task`, `query_company`, `run_workflow`,
-/// `create_workflow` and `add_agent` are the orchestrator's *authority* over the
-/// company — who owns a card, whether work passes review, who is on the roster —
-/// and #176 is about a lead pulling in a specialist, not about every desk lead
-/// becoming a second CEO. A member gets exactly what it needs to pass a slice
-/// on and to leave the rest tracked.
+/// It used to carry the two delegation tools beside it, and no longer does.
+/// `delegate_to_desk` took one turn from whoever led a desk and skipped the
+/// deliberation that desk exists for -- the objection
+/// `team_brief::the_section_does_not_advertise_the_desk_hand_off` already
+/// recorded, made without an alternative to offer. `delegate_to_teammate` ran
+/// one named teammate and handed its answer back.
 ///
-/// All three names are already covered by
-/// [`is_delegation_tool`], so
-/// [`ApprovalPolicy`](crate::harness::policy::ApprovalPolicy) classifies them as
-/// internal here exactly as it does on the orchestrator — no policy change comes
-/// with this wiring.
-pub fn member_delegation_tools(
+/// Both cases now have a better shape. `consult_teammates` convenes the people
+/// it names -- one of them or five -- as a room that actually talks, and hands
+/// the whole exchange back; `hand_off` gives the conversation to whoever should
+/// own it. A single name in `with` is the old one-teammate ask, run as a room
+/// rather than a nested turn, so nothing is lost by the removal.
+///
+/// What stays is tracking. A teammate still needs to say "this is real work,
+/// and here is who will do it" without doing it now, and that is `spawn_task`
+/// -- a card, not a turn, on a different axis from every tool above.
+///
+/// The delegation machinery itself is untouched: the queue, the card
+/// lifecycle, the policy classification and the orchestrator's own copies all
+/// remain. This is about what a teammate answering an operator is handed.
+pub fn member_tracking_tools(
     queue: &DelegationQueue,
     company: CompanyId,
     store: Arc<dyn CompanyStore>,
-    scope: MemberScope,
 ) -> Vec<Box<dyn Tool>> {
-    vec![
-        Box::new(SpawnTaskTool::new(
-            queue.clone(),
-            company.clone(),
-            store.clone(),
-        )),
-        Box::new(DelegateToDeskTool::for_member(
-            queue.clone(),
-            company.clone(),
-            store.clone(),
-            scope.clone(),
-        )),
-        // Issue #884, D1: without this a desk lead can reach every desk its
-        // allowlist names and nobody at all on its own — the one hand-off it is
-        // best placed to make.
-        Box::new(DelegateToTeammateTool::for_member(
-            queue.clone(),
-            company,
-            store,
-            scope,
-        )),
-    ]
+    vec![Box::new(SpawnTaskTool::new(queue.clone(), company, store))]
 }
 
-/// The hand-off and tracking brief appended to every **non-orchestrator**
-/// teammate's persona, after the team section
-/// ([`team_brief::team_section`](crate::company::team_brief::team_section))
-/// that lists who it may hand work to.
+/// The board brief appended to every **non-orchestrator** teammate's persona.
 ///
-/// It exists because a refusal costs a whole turn. A model handed
-/// `delegate_to_desk` with no idea that the chain it is running inside is
-/// nearly at its bound spends turns discovering that one refusal at a time —
-/// and the depth refusal in particular is not retryable, so a model that has
-/// not been told will burn every remaining call on it. Naming the shape of the
-/// bound up front is cheaper than the refusals it avoids.
+/// It used to be the hand-off brief too, and the hand-off half is gone with
+/// the tools it described. What a teammate does with its colleagues is now
+/// `dm_reach`'s subject -- convene the people a question needs, or give the
+/// conversation to whoever should own it -- and a brief that still offered
+/// `delegate_to_teammate` beside those would be offering a tool the belt no
+/// longer carries.
 ///
-/// The bound is stated qualitatively rather than as a number. The number lives
-/// on the live company record and is read at call time; baking a snapshot of it
-/// into a persona that is cached with the belt would be a claim that goes stale
-/// the moment an operator edits the manifest — and a *confidently wrong* bound
-/// is worse guidance than an honest "there is one".
-///
-/// # The board is a tool call
-///
-/// The second paragraph is the tracking rule, and it is here because the
-/// runtime no longer decides it. A message typed into a desk or a DM used to
-/// become a board card by construction — the REST handler carded anything that
-/// led with an action verb, and the runtime carded anything "substantial" said
-/// to a desk lead — so the agent answering was never asked whether the ask was
+/// What remains is the tracking rule, and it is here because the runtime no
+/// longer decides it. A message typed into a desk or a DM used to become a
+/// board card by construction -- the REST handler carded anything that led
+/// with an action verb, and the runtime carded anything "substantial" said to
+/// a desk lead -- so the agent answering was never asked whether the ask was
 /// work at all, and the board filled with cards nobody had commissioned. Now
-/// nothing said in chat is tracked unless an agent tracks it, and this is where
-/// the agent is told so, and told what `spawn_task` is for.
-///
-/// Reach — who this agent may hand work to — is deliberately **not** stated
-/// here: the team section renders it from the same rule the tools enforce, so
-/// there is one place for it to be right.
-pub fn member_delegation_brief() -> String {
-    "\n\n## Handing work on, and tracking it\n\nDo what is yours yourself. When a slice of the ask \
-belongs to a teammate's specialism — a design question to the designer, a security check to the \
-security engineer, a question only the orchestrator can settle — hand that slice to them with \
-`delegate_to_teammate` (naming their roster id from Your team above), or to a whole desk with \
-`delegate_to_desk`, and fold their answer into yours. They run in this turn and their reply comes \
-back to you; the operator hears from you, so relay what they said rather than saying you asked. \
-Every hand-off costs another turn: hand on the part somebody else is genuinely better placed to \
-do, not the whole ask, and never decline something as \"not mine\" when a teammate who owns it is \
-one call away. The chain is bounded: if you are told the work has already been handed on as far \
-as this company allows, that is final, so do what you can and say plainly what is left rather \
-than calling the tool again. You cannot hand work back to where it came from, to yourself, or to \
-somebody it already passed through.\n\nNothing said to you in chat is on the board unless \
-somebody puts it there — a card exists because an agent or the operator opened one, never \
-because a message was sent. Answer questions, discussion and quick asks directly, with no card. \
-When an ask is real work that should be visible and followed up — something you are taking on \
-that outlasts this reply, something for later, or something for somebody else — open a card for \
-it with `spawn_task` (a title, a note with the brief, and the roster id of whoever will do it) \
-and say that you did. A hand-off you make with `delegate_to_teammate` or `delegate_to_desk` \
-opens its own card automatically, so never open a second one for the same work.\n"
+/// nothing said in chat is tracked unless an agent tracks it, and this is
+/// where the agent is told so, and told what `spawn_task` is for.
+pub fn member_tracking_brief() -> String {
+    "\n\n## Tracking work\n\nNothing said to you in chat is on the board unless somebody puts \
+it there — a card exists because an agent or the operator opened one, never because a message was \
+sent. Answer questions, discussion and quick asks directly, with no card. When an ask is real \
+work that should be visible and followed up — something you are taking on that outlasts this \
+reply, something for later, or something for somebody else — open a card for it with \
+`spawn_task` (a title, a note with the brief, and the roster id of whoever will do it) and say \
+that you did.\n"
         .to_string()
 }
 
