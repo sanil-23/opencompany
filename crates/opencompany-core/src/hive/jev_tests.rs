@@ -300,3 +300,176 @@ async fn jev_router_reaches_a_loopback_http_proxy_with_the_env_key() {
     let response = router.transport().evaluate(&request()).await.unwrap();
     assert_eq!(response.usage.output_tokens, 3);
 }
+
+// ---------------------------------------------------------------------------
+// Whose key goes to which host (`jev_credential`)
+// ---------------------------------------------------------------------------
+
+/// The regression this whole seam exists for. `OPENCOMPANY_INFERENCE_URL` is
+/// the documented way to point inference at a third party, and the hosted
+/// runner and local-development paths both use it. Before `jev_credential`,
+/// that third party's key was then presented to `api.tinyhumans.ai` on every
+/// desk round.
+#[tokio::test]
+async fn an_inference_key_for_another_provider_is_never_sent_to_the_proxy() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(header("authorization", "Bearer th_account"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(answer_body()))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let env = MapEnv::new([
+        ("OPENCOMPANY_INFERENCE_URL", "https://openrouter.ai/api/v1"),
+        ("OPENCOMPANY_INFERENCE_KEY", "sk_or_someone_elses"),
+        ("TINYHUMANS_API_KEY", "th_account"),
+        (JEV_URL_ENV, server.uri().as_str()),
+    ]);
+    let router = jev_router(&env, None).unwrap().expect("a router");
+    router.transport().evaluate(&request()).await.unwrap();
+    // `expect(1)` above is the assertion: the request that arrived carried the
+    // TinyHumans key. A request bearing the OpenRouter one matches no mock.
+}
+
+/// With no other source, a foreign inference key leaves Jev unconfigured
+/// rather than wrong. `None` is the state the caller already handles — route
+/// by lead and mention — and the module header's "no key, no router" rule
+/// says why that is better than a router which 401s every round.
+#[test]
+fn a_foreign_inference_key_alone_yields_no_router() {
+    let env = MapEnv::new([
+        ("OPENCOMPANY_INFERENCE_URL", "https://openrouter.ai/api/v1"),
+        ("OPENCOMPANY_INFERENCE_KEY", "sk_or_someone_elses"),
+    ]);
+    assert!(jev_router(&env, None).unwrap().is_none());
+}
+
+/// The property the module header promises — "a company needs no second
+/// credential to route" — for the managed default, where inference and the
+/// proxy really are the same host. Narrowing the rule must not cost this.
+#[tokio::test]
+async fn the_inference_key_is_still_used_when_inference_is_that_same_host() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(header("authorization", "Bearer th_inference"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(answer_body()))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let env = MapEnv::new([
+        ("OPENCOMPANY_INFERENCE_URL", server.uri().as_str()),
+        ("OPENCOMPANY_INFERENCE_KEY", "th_inference"),
+        (JEV_URL_ENV, server.uri().as_str()),
+    ]);
+    let router = jev_router(&env, None).unwrap().expect("a router");
+    router.transport().evaluate(&request()).await.unwrap();
+}
+
+/// An operator who has split the two endpoints says so with one variable, and
+/// it outranks every heuristic — including a same-host inference key.
+#[tokio::test]
+async fn the_jev_key_outranks_every_other_source() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(header("authorization", "Bearer th_jev"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(answer_body()))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let env = MapEnv::new([
+        ("OPENCOMPANY_INFERENCE_URL", server.uri().as_str()),
+        ("OPENCOMPANY_INFERENCE_KEY", "th_inference"),
+        ("TINYHUMANS_API_KEY", "th_account"),
+        (JEV_KEY_ENV, "th_jev"),
+        (JEV_URL_ENV, server.uri().as_str()),
+    ]);
+    let router = jev_router(&env, None).unwrap().expect("a router");
+    router.transport().evaluate(&request()).await.unwrap();
+}
+
+/// Host equality ignores scheme and path, because the two endpoints are
+/// different paths on one API in the case it must answer "yes" for; and an
+/// unparseable URL answers "no", because withholding is the safe direction
+/// for a question guarding a credential.
+#[test]
+fn same_host_compares_host_and_port_only() {
+    assert!(same_host(
+        "https://api.tinyhumans.ai/v1/chat",
+        "https://api.tinyhumans.ai/agent-integrations/openrouter/systemone"
+    ));
+    assert!(!same_host(
+        "https://openrouter.ai/api/v1",
+        "https://api.tinyhumans.ai/agent-integrations/openrouter/systemone"
+    ));
+    assert!(!same_host(
+        "https://api.tinyhumans.ai",
+        "https://staging.tinyhumans.ai"
+    ));
+    assert!(!same_host("not a url", "https://api.tinyhumans.ai"));
+    // Default ports are resolved, so these are the same host stated two ways.
+    assert!(same_host(
+        "https://api.tinyhumans.ai:443/a",
+        "https://api.tinyhumans.ai/b"
+    ));
+}
+
+/// A TypeSafe key routes to TypeSafe, not to the TinyHumans proxy. The two
+/// were resolved separately, so a TypeSafe key was posted to an API where it
+/// is not an account — a 401 every round, and silent, because only an
+/// *absent* credential turns the router off.
+#[test]
+fn a_typesafe_key_routes_to_typesafes_own_api() {
+    for name in [JEV_KEY_ENV, TYPESAFE_KEY_ENV] {
+        let env = MapEnv::new([(name, "ts_live")]);
+        let router = jev_router(&env, None).unwrap().expect("a router");
+        assert_eq!(
+            router.transport().url(),
+            DEFAULT_TYPESAFE_URL,
+            "{name} must pick TypeSafe's own endpoint"
+        );
+    }
+}
+
+/// `OPENCOMPANY_JEV_KEY` is the operator saying "this one", so it outranks a
+/// `TYPESAFE_API_KEY` the environment happens to carry for the library.
+#[tokio::test]
+async fn the_jev_key_outranks_a_bare_typesafe_key() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(header("authorization", "Bearer ts_explicit"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(answer_body()))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let env = MapEnv::new([
+        (JEV_KEY_ENV, "ts_explicit"),
+        (TYPESAFE_KEY_ENV, "ts_ambient"),
+        (JEV_URL_ENV, server.uri().as_str()),
+    ]);
+    let router = jev_router(&env, None).unwrap().expect("a router");
+    router.transport().evaluate(&request()).await.unwrap();
+}
+
+/// With no TypeSafe key the address is unchanged — the TinyHumans proxy, on a
+/// TinyHumans credential. Narrowing the rule must not move the default.
+#[test]
+fn without_a_typesafe_key_the_proxy_is_still_the_default() {
+    let env = MapEnv::new([("TINYHUMANS_API_KEY", "th_account")]);
+    let router = jev_router(&env, None).unwrap().expect("a router");
+    assert_eq!(router.transport().url(), DEFAULT_JEV_URL);
+}
+
+/// An explicit address still wins, whichever key resolved it — that is how a
+/// staging box points at its own endpoint without restating the credential.
+#[test]
+fn an_explicit_url_overrides_the_typesafe_default() {
+    let env = MapEnv::new([
+        (TYPESAFE_KEY_ENV, "ts_live"),
+        (JEV_URL_ENV, "https://staging.typesafe.ai/v1/systemone"),
+    ]);
+    let router = jev_router(&env, None).unwrap().expect("a router");
+    assert_eq!(
+        router.transport().url(),
+        "https://staging.typesafe.ai/v1/systemone"
+    );
+}

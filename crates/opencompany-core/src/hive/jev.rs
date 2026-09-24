@@ -24,11 +24,13 @@
 //!   mention instead (`docs/spec/runtime/hive.md`). A router that would fail
 //!   every call is worse than none: every episode would pay a timeout before
 //!   falling back.
-//! * **The key resolves the way every other managed call's key does** —
-//!   `OPENCOMPANY_INFERENCE_KEY`, then the TinyHumans token tiers (projected
-//!   file over static `TINYHUMANS_API_KEY`) — through the same
-//!   [`Credential`] seam the harness provider uses, so a rotated token file is
-//!   picked up per request and a 401 invalidates the cached read.
+//! * **The key is the one that belongs to the host it is sent to.**
+//!   [`JEV_KEY_ENV`] first, then `OPENCOMPANY_INFERENCE_KEY` **only when
+//!   inference resolves to the same host as the proxy**, then the TinyHumans
+//!   token tiers (projected file over static `TINYHUMANS_API_KEY`) — through
+//!   the same [`Credential`] seam the harness provider uses, so a rotated
+//!   token file is picked up per request and a 401 invalidates the cached
+//!   read. See [`jev_credential`] for why the middle step is conditional.
 //! * **The URL is the operator's to move, not to downgrade.**
 //!   `OPENCOMPANY_JEV_URL` points a staging box at its own proxy; it must be
 //!   `https`, or `http` to a loopback host, for the same reason the analytics
@@ -63,6 +65,31 @@ pub const DEFAULT_JEV_URL: &str =
 /// The environment variable that moves the proxy: `https`, or `http` to a
 /// loopback host. Anything else is refused at construction, not at first use.
 pub const JEV_URL_ENV: &str = "OPENCOMPANY_JEV_URL";
+
+/// The environment variable that gives Jev its own credential, outranking
+/// every other source.
+///
+/// It exists because the proxy and the inference endpoint stopped being the
+/// same host. A deployment that points `OPENCOMPANY_INFERENCE_URL` at
+/// OpenRouter, Together or its own gateway still routes desks through
+/// TinyHumans, and before this variable there was no way to say so: the only
+/// key Jev could reach was the inference one. See [`jev_credential`].
+pub const JEV_KEY_ENV: &str = "OPENCOMPANY_JEV_KEY";
+
+/// TypeSafe's own key, read when [`JEV_KEY_ENV`] says nothing.
+///
+/// The name `tinyjevclient` reads (`Client::from_env`), so a deployment that
+/// already holds a TypeSafe key for the library does not have to restate it
+/// under a second name for this host.
+pub const TYPESAFE_KEY_ENV: &str = "TYPESAFE_API_KEY";
+
+/// Jev's System One route on TypeSafe's own API, used when the credential is
+/// TypeSafe's rather than TinyHumans'.
+///
+/// Same request and response body as the proxy — `tinyjevclient` posts the
+/// identical `{state, model, questions}` to `v1/systemone` and reads back
+/// `{model, answers, usage}` — so only the address and the bearer differ.
+pub const DEFAULT_TYPESAFE_URL: &str = "https://api.typesafe.ai/v1/systemone";
 
 /// One routing call's ceiling, connect included. A round waits on this before
 /// it can start its seats, so it is short: a routing model that has not
@@ -182,10 +209,11 @@ impl SystemOneTransport for TinyHumansSystemOne {
 /// to the proxy.
 ///
 /// `key` is a credential the caller already holds — a company's own key from
-/// its secret store — and outranks the environment. With `None`, the key
-/// resolves the way the harness resolves the managed-inference credential:
-/// `OPENCOMPANY_INFERENCE_KEY`, then the TinyHumans token file, then
-/// `TINYHUMANS_API_KEY`. The URL is [`JEV_URL_ENV`] or [`DEFAULT_JEV_URL`].
+/// its secret store — and outranks the environment. With `None`, the key and
+/// the address are [`jev_endpoint`]'s, which resolves them **together**: a
+/// key is only valid at the host it was issued for, so choosing one without
+/// the other is how a TypeSafe key ends up at TinyHumans and 401s every
+/// round. [`JEV_URL_ENV`] still overrides the address whatever the key.
 ///
 /// `Ok(None)` is the ordinary offline answer and the caller logs it once and
 /// routes by lead and mention. `Err` is a configuration the operator has to
@@ -196,22 +224,136 @@ pub fn jev_router(
     env: &dyn EnvSource,
     key: Option<&str>,
 ) -> Result<Option<JevRouter<TinyHumansSystemOne>>> {
-    let url = env
-        .get(JEV_URL_ENV)
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| DEFAULT_JEV_URL.to_string());
+    let (url, resolved) = jev_endpoint(env);
     let credential = match key.map(str::trim).filter(|key| !key.is_empty()) {
         Some(key) => Credential::from_value(key),
-        None => crate::harness::built_in::provider::hosted_endpoint_from_env_at(env, None)
-            .map(|(credential, _url)| credential)
-            .unwrap_or_default(),
+        None => resolved,
     };
     if !credential.configured() {
         return Ok(None);
     }
     let transport = TinyHumansSystemOne::new(url, credential)?;
     Ok(Some(JevRouter::new(transport)))
+}
+
+/// The address to route through and the credential to present there, resolved
+/// as one decision.
+///
+/// The two were separate, and that was the bug. [`DEFAULT_JEV_URL`] is the
+/// **TinyHumans** proxy, which authenticates with a TinyHumans key; a
+/// deployment holding a **TypeSafe** key got that key posted to the proxy,
+/// where it is not an account, and every round 401'd and fell back. Nothing
+/// reported it, because a wrong key is not an absent one and only an absent
+/// one turns the router off.
+///
+/// So the credential picks the address:
+///
+/// - An explicit Jev key ([`JEV_KEY_ENV`], then [`TYPESAFE_KEY_ENV`]) is
+///   TypeSafe's, so it goes to [`DEFAULT_TYPESAFE_URL`] — TypeSafe's own
+///   System One route, same wire body as the proxy.
+/// - Otherwise the address is the TinyHumans proxy and the credential is a
+///   TinyHumans one ([`jev_credential`]).
+///
+/// [`JEV_URL_ENV`] overrides the address in both cases, which is what points
+/// a staging box at its own endpoint without restating the key.
+fn jev_endpoint(env: &dyn EnvSource) -> (String, Credential) {
+    let override_url = env
+        .get(JEV_URL_ENV)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let typesafe = [JEV_KEY_ENV, TYPESAFE_KEY_ENV]
+        .into_iter()
+        .find_map(|name| {
+            env.get(name)
+                .map(|key| key.trim().to_string())
+                .filter(|key| !key.is_empty())
+        });
+    match typesafe {
+        Some(key) => (
+            override_url.unwrap_or_else(|| DEFAULT_TYPESAFE_URL.to_string()),
+            Credential::from_value(key),
+        ),
+        None => {
+            let url = override_url.unwrap_or_else(|| DEFAULT_JEV_URL.to_string());
+            let credential = jev_credential(env, &url);
+            (url, credential)
+        }
+    }
+}
+
+/// The credential to present at `jev_url`, in the order the sources are
+/// allowed to answer.
+///
+/// Reached only when no explicit Jev key was set — [`jev_endpoint`] takes
+/// that case, because it also decides the address. So the sources here are
+/// the TinyHumans ones:
+///
+/// 1. `OPENCOMPANY_INFERENCE_KEY` — **only** when managed inference resolves
+///    to the same host as `jev_url`.
+/// 2. The TinyHumans token tiers: the projected token file, then the static
+///    `TINYHUMANS_API_KEY`.
+///
+/// # Why step 2 is conditional
+///
+/// It did not use to be. This function's job was done inline by
+/// [`hosted_endpoint_from_env_at`](crate::harness::built_in::provider), which
+/// reads `OPENCOMPANY_INFERENCE_KEY` unconditionally and whose URL half was
+/// thrown away here. That was correct exactly as long as the two were the same
+/// endpoint — the module header's "a company needs no second credential to
+/// route" — and `OPENCOMPANY_INFERENCE_URL` is the documented seam for making
+/// them different. Point inference at OpenRouter, as the hosted-runner and
+/// local-development paths both do, and every desk round took that OpenRouter
+/// key and put it in an `Authorization` header to `api.tinyhumans.ai`.
+///
+/// Two things went wrong, and the quieter one is the worse one. The visible
+/// failure is that the call 401s, so the router is built, fails every request,
+/// pays a retry, and routes by the fallback anyway — the "no key, no router"
+/// rule inverted, since a wrong key is not an absent one and nothing reports
+/// the difference. The failure that matters is that one provider's secret was
+/// sent to a different provider's host, on every round, forever. A credential
+/// is scoped to the host it was issued for; sending it anywhere else is a
+/// disclosure whether or not the recipient wanted it.
+///
+/// So the inference key is reused only when it is going back to the host it
+/// belongs to. Host equality is the whole test: same host, same account, same
+/// key; different host, a key that was never issued for this call. That keeps
+/// the managed default — where inference *is* the TinyHumans proxy — needing
+/// no second credential, which is the property the header promises, while a
+/// deployment that has pointed inference elsewhere resolves Jev from its own
+/// sources or routes without it.
+fn jev_credential(env: &dyn EnvSource, jev_url: &str) -> Credential {
+    let inference_url = crate::harness::built_in::provider::platform_inference_url_at(env, None);
+    if same_host(&inference_url, jev_url)
+        && let Some(key) = env
+            .get("OPENCOMPANY_INFERENCE_KEY")
+            .map(|key| key.trim().to_string())
+            .filter(|key| !key.is_empty())
+    {
+        return Credential::from_value(key);
+    }
+    crate::company::credentials::TinyhumansTokenSource::from_env(env)
+        .map(|source| Credential::from_source(std::sync::Arc::new(source)))
+        .unwrap_or_default()
+}
+
+/// Whether two URLs address the same host, comparing host and port only.
+///
+/// Scheme and path are deliberately not compared: the proxy route and the
+/// inference route are different paths on the same API, which is the case this
+/// has to answer "yes" for. A URL that will not parse answers `false` — an
+/// unparseable endpoint is not demonstrably the same host, and the safe
+/// direction for a question guarding a credential is to withhold it.
+fn same_host(left: &str, right: &str) -> bool {
+    let host_of = |url: &str| {
+        url::Url::parse(url).ok().and_then(|url| {
+            url.host_str()
+                .map(|host| (host.to_ascii_lowercase(), url.port_or_known_default()))
+        })
+    };
+    match (host_of(left), host_of(right)) {
+        (Some(left), Some(right)) => left == right,
+        _ => false,
+    }
 }
 
 /// Whether a failed status earns the one retry: TypeSafe's documented
