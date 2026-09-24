@@ -663,3 +663,85 @@ async fn a_party_reads_every_reply_of_its_own_conversation() {
     assert_eq!(readable, vec![1], "the researcher reads only the desk");
     assert!(!elided.is_empty(), "the aside is a stub, not absent");
 }
+
+/// A seat carries its own operator line into the room; nobody else does.
+///
+/// The teammate the operator told something privately should not be amnesiac
+/// about it the moment it sits at a desk. But a DM is *bound* as a hive of
+/// the whole roster — `resolve_dm` refuses a non-member, so `ask` needs
+/// everyone present — which makes membership useless as an admission rule:
+/// every teammate is a member of every DM. Ownership is the only reading that
+/// admits one line to one seat, and the aside is what enforces it.
+#[tokio::test]
+async fn a_seat_reads_its_own_operator_dm_and_no_one_elses() {
+    let log = Arc::new(MemoryLog::default());
+    let company = MemoryLog::company();
+    log.append(&company, operator_message("eng", "Desk business.", None))
+        .await
+        .unwrap();
+    log.append(
+        &company,
+        operator_message("dm:planner", "Privately: deprioritise passkeys.", None),
+    )
+    .await
+    .unwrap();
+    // A DM neither seat owns stays out entirely, membership notwithstanding.
+    log.append(
+        &company,
+        operator_message("dm:outsider", "Not for this desk.", None),
+    )
+    .await
+    .unwrap();
+
+    let adapter = seated(&log, vec!["planner".into(), "reviewer".into()]);
+    let read = |seat: &'static str| {
+        let adapter = &adapter;
+        async move {
+            project_session(
+                adapter,
+                &SessionQuery {
+                    conversation: adapter.conversation(None),
+                    viewer: tinyhivemind::aside::Viewer::Agent { id: seat.into() },
+                    before: None,
+                    window: SESSION_WINDOW,
+                },
+            )
+            .await
+            .expect("projects")
+            .iter()
+            .map(|message| message.content.clone())
+            .collect::<Vec<_>>()
+        }
+    };
+
+    let owner = read("planner").await;
+    assert!(
+        owner
+            .iter()
+            .any(|row| row.contains("deprioritise passkeys")),
+        "the teammate remembers what the operator told it privately: {owner:?}"
+    );
+    assert!(
+        owner.iter().any(|row| row.contains("Desk business")),
+        "and still reads the room: {owner:?}"
+    );
+
+    let other = read("reviewer").await;
+    assert!(
+        !other
+            .iter()
+            .any(|row| row.contains("deprioritise passkeys")),
+        "a teammate at the same desk does not read someone else's private line: {other:?}"
+    );
+    assert!(
+        other.iter().any(|row| row.contains("Desk business")),
+        "the room itself is unchanged for them: {other:?}"
+    );
+
+    for seat in [owner, read("reviewer").await] {
+        assert!(
+            !seat.iter().any(|row| row.contains("Not for this desk")),
+            "a DM belonging to nobody here is not admitted at all: {seat:?}"
+        );
+    }
+}
