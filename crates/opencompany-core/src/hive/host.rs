@@ -116,6 +116,26 @@ pub struct DeskHost {
     /// commits fall back to the live counter -- the behaviour such a host had
     /// before this existed.
     turn_waves: Mutex<BTreeMap<String, u64>>,
+    /// The seat whose own turn opened this episode, when one did.
+    ///
+    /// A consult runs an episode from *inside* a teammate's turn: that turn
+    /// already holds this teammate's lock and has already bracketed its
+    /// work, so the seat this episode runs for that same teammate must take
+    /// neither. Taking the lock again waits on a mutex this very call stack
+    /// holds, which is a deadlock rather than a contention; writing a second
+    /// bracket puts two turns for one agent on the journal, which is the
+    /// same-agent overlap `opencompany measure` exists to catch.
+    ///
+    /// Sound only because a consult **blocks**. The outer turn is suspended
+    /// in a tool call for the whole episode, so the spend cap, workspace and
+    /// memory that lock protects still have one writer at a time: the two
+    /// turns are nested, not concurrent. A consult that returned before its
+    /// episode finished would make this a bug, so the tool that sets this
+    /// must be the one that awaits the episode.
+    ///
+    /// `None` for an episode an operator message opened, which is every
+    /// episode today and behaves exactly as before.
+    originator: Option<String>,
     /// Each seat's standing prompt, kept from when it was built.
     ///
     /// Read back on every turn after a seat's first: those turns are seeded
@@ -180,6 +200,7 @@ impl DeskHost {
             mentions: None,
             conversations: Mutex::new(BTreeMap::new()),
             turn_waves: Mutex::new(BTreeMap::new()),
+            originator: None,
             personas: Mutex::new(BTreeMap::new()),
         }
     }
@@ -244,6 +265,32 @@ impl DeskHost {
     pub fn locking(mut self, pool: Arc<HarnessPool>) -> Self {
         self.pool = Some(pool);
         self
+    }
+
+    /// The seat whose own turn opened this episode.
+    ///
+    /// Set by a consult, which runs an episode from inside that teammate's
+    /// turn and awaits it. See [`DeskHost::originator`] for why that one
+    /// seat takes neither the lock nor a bracket, and for the condition that
+    /// makes it sound.
+    #[must_use]
+    pub fn opened_by(mut self, seat: impl Into<String>) -> Self {
+        self.originator = Some(seat.into());
+        self
+    }
+
+    /// Whether `seat`'s turn is serialised and bracketed at all.
+    ///
+    /// False for exactly one seat: the one whose own turn opened this
+    /// episode. That turn is already holding this teammate's lock, has
+    /// already written its bracket, and is suspended until the episode
+    /// returns, so taking the lock would wait on this very call stack and a
+    /// second bracket would read as one agent in two places at once.
+    ///
+    /// Everything else about that seat's turn is unchanged: it is composed,
+    /// run and committed exactly as its teammates' are.
+    fn wraps(&self, seat: &str) -> bool {
+        self.originator.as_deref() != Some(seat)
     }
 
     /// Thread every row this episode commits under `root`.
@@ -872,6 +919,9 @@ impl EpisodeHost for DeskHost {
     /// is what a test over the journal alone wants.
     fn wrap_turn<'a>(&'a self, seat: &'a str, turn: HostedTurn<'a>) -> HostedTurn<'a> {
         Box::pin(async move {
+            if !self.wraps(seat) {
+                return turn.await;
+            }
             let Some(pool) = self.pool.as_ref() else {
                 return turn.await;
             };

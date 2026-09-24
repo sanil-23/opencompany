@@ -342,3 +342,38 @@ async fn a_committed_row_names_the_wave_its_turn_opened_in() {
     // still gets a number rather than nothing: the live counter, as before.
     assert_eq!(host.wave_of("grace"), 2);
 }
+
+// ---------------------------------------------------------------------------
+// The seat that opened the episode
+// ---------------------------------------------------------------------------
+
+/// Nobody is exempt on an episode an operator opened, which is every episode
+/// until a consult opens one from inside a turn.
+#[test]
+fn an_operator_opened_episode_wraps_every_seat() {
+    let host = host(Arc::new(MemoryLog::default()));
+
+    assert!(host.wraps("engineer"));
+    assert!(host.wraps("ceo"));
+}
+
+/// The seat whose own turn opened the episode is already inside that turn:
+/// it holds the teammate's lock and wrote the bracket. Wrapping it again
+/// would wait on this call stack and journal one agent in two places.
+#[test]
+fn the_seat_that_opened_the_episode_is_not_wrapped_again() {
+    let host = host(Arc::new(MemoryLog::default())).opened_by("engineer");
+
+    assert!(!host.wraps("engineer"));
+}
+
+/// Only that one seat. Its teammates are ordinary seats of an ordinary
+/// episode and are serialised against whatever else wants them, which is the
+/// whole reason the lock exists.
+#[test]
+fn its_teammates_are_wrapped_as_usual() {
+    let host = host(Arc::new(MemoryLog::default())).opened_by("engineer");
+
+    assert!(host.wraps("ceo"));
+    assert!(host.wraps("writer"));
+}
