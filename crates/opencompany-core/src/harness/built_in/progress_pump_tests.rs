@@ -130,3 +130,24 @@ async fn the_pump_returns_every_event_in_order_after_finish() {
     assert_eq!(events.len(), 2);
     assert!(matches!(events[0], AgentProgress::TurnStarted));
 }
+
+/// #988's invariant, pinned where it can be checked without running a turn.
+///
+/// The end-to-end pair in `spend_halt_turn_tests` covers the same ground but
+/// drives a live scripted turn, so it only catches a regression when timing
+/// lines up — it passed locally five runs in a row while failing in CI. This
+/// is the same rule with the timing removed.
+#[test]
+fn a_spend_halt_is_never_also_reported_as_a_step_pause() {
+    assert!(
+        reportable_iteration_cap(true, false),
+        "a turn that only hit the cap reports it"
+    );
+    assert!(
+        !reportable_iteration_cap(true, true),
+        "a turn that hit the cap AND ran out of money reports the halt, not a \
+         resumable pause — \"continue\" would invite spending a spent budget"
+    );
+    assert!(!reportable_iteration_cap(false, true));
+    assert!(!reportable_iteration_cap(false, false));
+}

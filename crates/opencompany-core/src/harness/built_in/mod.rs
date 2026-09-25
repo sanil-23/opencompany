@@ -1853,13 +1853,7 @@ impl CompanyAgent {
                 }
             }
         }
-        let hit_iteration_cap = progress_pump::hit_iteration_cap(&events);
-        if hit_iteration_cap {
-            tracing::info!(
-                agent = %self.agent_id,
-                "[turn] paused at the tool-iteration cap; the reply is a resumable checkpoint, not a finished answer"
-            );
-        }
+        let raw_iteration_cap = progress_pump::hit_iteration_cap(&events);
         let halted_for_spend = spend_brake.and_then(|(cap_usd, halted)| {
             halted
                 .load(std::sync::atomic::Ordering::SeqCst)
@@ -1869,6 +1863,37 @@ impl CompanyAgent {
                     cap_usd,
                 })
         });
+        // #988: a spend halt reads `hit_iteration_cap == false`.
+        //
+        // `brain.rs` emits the step-pause notice and the spend notice from
+        // separate `if`s, on the stated grounds that one operator message can
+        // run several turns and both facts may be owed — but that the two
+        // "cannot both come from ONE turn" *because* this invariant holds.
+        // The predicate itself cannot see the halt: it reads only the progress
+        // stream, and a hook-driven halt is not in it. While the stream never
+        // reported a cap at all the invariant held for free; now that it does,
+        // it has to be stated here, where both facts are in hand, rather than
+        // re-checked at each notice site.
+        //
+        // The halt wins because it is the more specific account of why the
+        // turn stopped, and the two notices are not interchangeable: a step
+        // pause invites "continue", which on a spent budget would invite the
+        // operator to burn a cap that has already run out.
+        let hit_iteration_cap =
+            progress_pump::reportable_iteration_cap(raw_iteration_cap, halted_for_spend.is_some());
+        if hit_iteration_cap {
+            tracing::info!(
+                agent = %self.agent_id,
+                "[turn] paused at the tool-iteration cap; the reply is a resumable checkpoint, not a finished answer"
+            );
+        }
+        if raw_iteration_cap && !hit_iteration_cap {
+            tracing::info!(
+                agent = %self.agent_id,
+                "[turn] the iteration cap was reached on a turn already halted for spend; \
+                 reporting the halt, which is why it stopped"
+            );
+        }
         if let Some(halt) = &halted_for_spend {
             tracing::info!(
                 agent = %self.agent_id,
