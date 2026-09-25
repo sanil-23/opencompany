@@ -74,6 +74,47 @@ fn a_turn_whose_last_iteration_is_the_cap_paused_at_it() {
     let mut retried = capped.clone();
     retried.extend(finished.clone());
     assert!(!hit_iteration_cap(&retried));
+
+    // The same two turns as `retried`, in the shape a *real* stream has: no
+    // `TurnStarted` anywhere. The boundary must still be found, or the first
+    // turn's cap leaks into the second and a finished turn reports a pause it
+    // never took — which is exactly what reached CI.
+    let real_capped = vec![
+        AgentProgress::IterationStarted {
+            iteration: 25,
+            max_iterations: 25,
+        },
+        AgentProgress::TurnCompleted { iterations: 25 },
+    ];
+    let real_finished = vec![
+        AgentProgress::IterationStarted {
+            iteration: 1,
+            max_iterations: 25,
+        },
+        AgentProgress::TurnCompleted { iterations: 1 },
+    ];
+    assert!(
+        hit_iteration_cap(&real_capped),
+        "a real capped turn must still be detected without a TurnStarted"
+    );
+    let mut real_retried = real_capped.clone();
+    real_retried.extend(real_finished);
+    assert!(
+        !hit_iteration_cap(&real_retried),
+        "the previous turn's TurnCompleted bounds the scan: this turn ran one \
+         iteration of twenty-five and finished"
+    );
+
+    // Mid-turn, nothing completed yet: the cap belongs to the turn in flight.
+    let mut real_inflight = real_capped.clone();
+    real_inflight.extend(vec![AgentProgress::IterationStarted {
+        iteration: 25,
+        max_iterations: 25,
+    }]);
+    assert!(
+        hit_iteration_cap(&real_inflight),
+        "a turn still running at the ceiling has hit the cap"
+    );
 }
 
 #[tokio::test]
