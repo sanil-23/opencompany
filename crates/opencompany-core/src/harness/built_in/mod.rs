@@ -745,10 +745,9 @@ pub struct CompanyAgent {
     /// telemetry cells. Held here so `meter_turn_costs` reads the SAME
     /// instance the turn ran through.
     chat_model: Arc<dyn HarnessModel>,
-    /// The catalogue the `opencompany` MCP brief in this agent's system prompt
-    /// names (`build::agent_spec_for`'s `allow_tools`): the speech tools plus
-    /// every served tool. Kept so a roster rebuild can tell whether the
-    /// catalogue moved — see [`Self::catalogue_brief_stale`].
+    /// The tools this agent's belt wired when it was built. Kept so a roster
+    /// rebuild can tell whether the catalogue moved — see
+    /// [`Self::catalogue_brief_stale`].
     served_catalogue: Vec<String>,
     /// Whether the session this agent resumes may still carry an OLDER brief
     /// than [`Self::served_catalogue`].
@@ -1241,7 +1240,6 @@ impl CompanyAgent {
             .iter()
             .map(|name| (*name).to_string())
             .collect();
-        let served_catalogue = allow_tools.clone();
         // Shared once, here, and handed to the spec as a factory that mints
         // owned handles per turn. OpenHuman's own tools are filtered out: it
         // runs those itself, and handing them back would register each twice.
@@ -1252,6 +1250,19 @@ impl CompanyAgent {
             .iter()
             .map(|tool| tool.name().to_string())
             .collect();
+        // **The catalogue a rebuild compares is the belt, not the MCP list.**
+        //
+        // It used to be `allow_tools`, which was every served tool back when
+        // this crate's tools reached the model over the `opencompany` server.
+        // They are native now, so `allow_tools` is a constant — the four
+        // speech verbs — and a catalogue that cannot move can never be found
+        // stale. A console grant that wires `workspace.write` changed the
+        // agent's tools and owed the live session a brief, and nothing said
+        // so.
+        //
+        // The belt is what actually changed, and it is what the pinned
+        // definition scopes, so it is what a rebuild has to compare.
+        let served_catalogue = belt_names.clone();
         let gate = Arc::clone(&blueprint.policy);
         let native_belt: Arc<Vec<Arc<dyn tinytools::Tool>>> =
             Arc::new(crate::hive::tools::share_belt(
