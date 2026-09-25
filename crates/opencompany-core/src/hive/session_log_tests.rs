@@ -663,3 +663,90 @@ async fn a_party_reads_every_reply_of_its_own_conversation() {
     assert_eq!(readable, vec![1], "the researcher reads only the desk");
     assert!(!elided.is_empty(), "the aside is a stub, not absent");
 }
+
+/// A running episode's rows stay out of a rival episode on the same desk.
+///
+/// Episodes are keyed `(desk, thread_root)`, so a threaded one and a channel
+/// one coexist — `open_episode_for` only joins a second message to the first
+/// when the thread matches. The fold narrowed by desk alone, so a second
+/// question read the first episode's in-flight rows, including a request it
+/// had parked and never made itself.
+///
+/// A **completed** episode is different and must still be read: a desk is a
+/// room, not a series of meetings, and scoping by episode identity would make
+/// every episode start amnesiac.
+#[tokio::test]
+async fn an_unfinished_rival_episode_is_withheld_but_a_settled_one_is_not() {
+    let log = Arc::new(MemoryLog::default());
+    let company = MemoryLog::company();
+    log.append(&company, operator_message("eng", "The question.", None))
+        .await
+        .unwrap();
+    let in_episode = |text: &str, id: &str| {
+        agent_reply_in(
+            "eng",
+            "planner",
+            text,
+            Vec::new(),
+            Some(crate::ports::types::ReplyEpisode {
+                id: id.to_owned(),
+                revision: 0,
+                kind: UtteranceKind::Post,
+                to: Vec::new(),
+                routed_by: None,
+            }),
+        )
+    };
+    log.append(&company, in_episode("settled work", "done-ep"))
+        .await
+        .unwrap();
+    log.append(
+        &company,
+        CompanyEvent::EpisodeCompleted {
+            chat_id: "eng".into(),
+            episode_id: "done-ep".into(),
+            revision: 1,
+            completed_by: None,
+            rounds: 1,
+            reason: crate::ports::types::EpisodeReason::CompleteEpisode,
+            summary_seq: None,
+        },
+    )
+    .await
+    .unwrap();
+    log.append(&company, in_episode("mid-flight request", "live-ep"))
+        .await
+        .unwrap();
+
+    let mut adapter = seated(&log, vec!["planner".into()]);
+    adapter.set_episode("mine-ep");
+    let rows: Vec<String> = project_session(
+        &adapter,
+        &SessionQuery {
+            conversation: adapter.conversation(None),
+            viewer: tinyhivemind::aside::Viewer::Agent {
+                id: "planner".into(),
+            },
+            before: None,
+            window: SESSION_WINDOW,
+        },
+    )
+    .await
+    .expect("projects")
+    .iter()
+    .map(|message| message.content.clone())
+    .collect();
+
+    assert!(
+        !rows.iter().any(|row| row.contains("mid-flight request")),
+        "a rival episode still running does not bleed into this one: {rows:?}"
+    );
+    assert!(
+        rows.iter().any(|row| row.contains("settled work")),
+        "a completed episode is desk history and still reads: {rows:?}"
+    );
+    assert!(
+        rows.iter().any(|row| row.contains("The question")),
+        "and the operator's own words are never withheld: {rows:?}"
+    );
+}
