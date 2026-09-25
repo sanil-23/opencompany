@@ -161,13 +161,20 @@ pub fn attempt_event_segments(events: &[AgentProgress], attempts: usize) -> Vec<
 /// finishing (issue #926). The `TurnCompleted` iteration count is preferred
 /// when present, since it is what the loop itself reports.
 pub fn hit_iteration_cap(events: &[AgentProgress]) -> bool {
-    let last_start = events.iter().rev().find_map(|event| match event {
-        AgentProgress::TurnStarted => Some(()),
-        _ => None,
-    });
-    if last_start.is_none() {
-        return false;
-    }
+    // **No `TurnStarted` precondition.**
+    //
+    // This required one and returned `false` without it — and a real turn's
+    // progress stream does not carry one: it opens on `IterationStarted`.
+    // So the cap was never reported, however many iterations a turn burned.
+    // A turn would pause at the ceiling, say so in its own reply, and still
+    // come back with `hit_iteration_cap == false`. The same trap is already
+    // written up one seam over, where `attempt_event_segments` splits on the
+    // same never-emitted event.
+    //
+    // Nothing is lost by dropping it: an empty stream finds no
+    // `IterationStarted`, leaves `cap` at `None`, and answers `false` on the
+    // last line anyway. The `break` below is kept for a stream that does
+    // carry the event, where it correctly bounds the scan to the last turn.
     let mut cap: Option<u32> = None;
     let mut iterations: u32 = 0;
     for event in events.iter().rev() {
