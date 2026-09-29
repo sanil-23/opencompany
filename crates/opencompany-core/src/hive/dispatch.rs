@@ -135,16 +135,56 @@ pub fn hives_for(
 }
 
 /// The Jev router this host routes with, if a TinyHumans key resolves.
-#[must_use]
-pub fn host_router() -> Option<Arc<dyn Router>> {
-    // `OPENCOMPANY_JEV_KEY` first, because routing and inference are not
-    // always the same vendor -- see `jev::JEV_KEY_ENV`. `None` keeps the
-    // inherited ladder, which is the right answer when they are.
-    let key = crate::app::config::EnvSource::get(
-        &crate::app::config::ProcessEnv,
-        crate::hive::jev::JEV_KEY_ENV,
-    );
-    match crate::hive::jev::jev_router(&crate::app::config::ProcessEnv, key.as_deref()) {
+///
+/// # Which key, in what order
+///
+/// 1. `OPENCOMPANY_JEV_KEY`, because routing and inference are not always the
+///    same vendor (see [`jev::JEV_KEY_ENV`]) and an operator who names a
+///    routing vendor explicitly means it.
+/// 2. The company's own account key -- `tinyhumans/key`, what a console sign-in
+///    stores and [`company_key::load`](crate::company::company_key::load)
+///    reads. This tier is why the function takes a company at all. Without it a
+///    host whose only credential arrived through the console routed by lead and
+///    mention while inference, reading that same key by that same seam, worked:
+///    the key material was present and routing was the one resolver not looking
+///    at it.
+/// 3. The inherited environment ladder inside [`jev::jev_router`]
+///    (`OPENCOMPANY_INFERENCE_KEY`, the TinyHumans token file,
+///    `TINYHUMANS_API_KEY`), which is the right answer when routing and
+///    inference *are* the same vendor.
+///
+/// Read live on every dispatch rather than cached at boot, for the reason
+/// `resolve_effective` re-reads the secret store on every call: a company that
+/// signs in while the host is up should route through Jev on its next message,
+/// not its next restart.
+///
+/// `secrets` is `None` wherever no store is wired -- tests, stub runtimes --
+/// which skips tier 2 and leaves the resolution exactly as it was.
+pub async fn host_router(
+    company: &crate::ports::types::CompanyId,
+    secrets: Option<&Arc<dyn crate::ports::SecretStore>>,
+) -> Option<Arc<dyn Router>> {
+    let env = &crate::app::config::ProcessEnv;
+    let mut credential = crate::app::config::EnvSource::get(env, crate::hive::jev::JEV_KEY_ENV)
+        .map(crate::company::Credential::from_value)
+        .unwrap_or_default();
+    if !credential.configured() && let Some(secrets) = secrets {
+        match crate::company::company_key::load(company, secrets.as_ref()).await {
+            Ok(company_key) => credential = company_key,
+            Err(error) => tracing::warn!(
+                %error,
+                "[hive] the company's account key could not be read for routing"
+            ),
+        }
+    }
+    // Unconfigured here is not "no key anywhere": tier 3 lives inside
+    // `jev_router`, which is what `None` asks it to walk.
+    let resolved = if credential.configured() {
+        crate::hive::jev::jev_router_from(env, credential)
+    } else {
+        crate::hive::jev::jev_router(env, None)
+    };
+    match resolved {
         Ok(Some(router)) => Some(Arc::new(router)),
         Ok(None) => {
             tracing::info!("[hive] no TinyHumans key: desks route by lead and mention");
@@ -222,8 +262,13 @@ pub fn tinyhivemind_mention(
 }
 
 /// Assembles a dispatcher for one company.
-#[must_use]
-pub fn dispatcher(
+///
+/// `async` because the routing credential is resolved here and the
+/// [`SecretStore`](crate::ports::SecretStore) is async. Every caller is already
+/// in an async context. The alternative -- a credential pre-resolved onto
+/// [`HarnessDeps`](crate::harness::built_in::HarnessDeps) -- would go stale the
+/// way the inference copy of the account key did before issue #2266 removed it.
+pub async fn dispatcher(
     record: Arc<CompanyRecord>,
     events: Arc<dyn EventLog>,
     hives: HashMap<String, Arc<crate::hive::graph::DeskHive>>,
@@ -231,11 +276,14 @@ pub fn dispatcher(
     pool: Arc<crate::harness::built_in::HarnessPool>,
     mentions: Option<crate::runtime::mention_seam::MentionSeam>,
 ) -> Arc<HiveDispatcher> {
+    // Before the record is moved into the dispatcher, and before the struct, so
+    // the await is not held across a partially-built value.
+    let router = host_router(&record.id, deps.secrets.as_ref()).await;
     Arc::new(HiveDispatcher {
         record,
         events,
         hives,
-        router: host_router(),
+        router,
         oracle: host_oracle(),
         deps,
         pool,
