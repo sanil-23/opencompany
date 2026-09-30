@@ -393,6 +393,37 @@ impl DeskHost {
         // work ran, and a seat that is told nothing would report a delivery
         // that did not happen.
         let mut task_id = None;
+        // **A path this episode already filed is not filed again.**
+        //
+        // A publish-only turn records nothing, so the room nudges the seat to
+        // say its part -- and a seat asked again redoes the work. Observed
+        // live: the same calendar published twice, onto two cards, because
+        // nothing told the seat the first had landed. Narrowing the nudged
+        // turn takes the tool away, but that is one path to a repeat and this
+        // is the class: any re-run of a seat does it, the closing round
+        // included. The earlier card is reused so the row still links to the
+        // deliverable.
+        let publishes: Vec<_> = {
+            let filed = self.filed.lock().unwrap_or_else(PoisonError::into_inner);
+            publishes
+                .into_iter()
+                .filter(|staged| {
+                    let Some(card) = filed.get(&staged.source) else {
+                        return true;
+                    };
+                    task_id = Some(card.clone());
+                    tracing::info!(
+                        company = %self.company,
+                        episode = %self.episode_id,
+                        %seat,
+                        source = %staged.source,
+                        task_id = %card,
+                        "[hive] a seat published a path it had already filed; kept the first"
+                    );
+                    false
+                })
+                .collect()
+        };
         if !publishes.is_empty() {
             // **Named, not counted.**
             //
@@ -416,7 +447,13 @@ impl DeskHost {
                 .scoped(self.file_seat_publishes(seat, publishes))
                 .await
             {
-                Ok(card) => task_id = Some(card),
+                Ok(card) => {
+                    let mut filed = self.filed.lock().unwrap_or_else(PoisonError::into_inner);
+                    for source in &sources {
+                        filed.insert(source.clone(), card.clone());
+                    }
+                    task_id = Some(card);
+                }
                 Err(error) => {
                     tracing::error!(
                         company = %self.company,

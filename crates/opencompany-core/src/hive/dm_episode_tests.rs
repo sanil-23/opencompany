@@ -579,3 +579,136 @@ async fn a_completion_refused_while_owed_an_answer_is_journaled_as_refused() {
         "and it is the row stamped as ending the episode: {episode:?}",
     );
 }
+
+/// **A nudged seat is offered the verbs that speak, not the tools that would
+/// do the work again.**
+///
+/// `begin_wave` nudges a seat that still owes a turn, and its note names the
+/// three things that record. Until this, the belt disagreed with the note: the
+/// seat kept everything it had, and a live run showed the cost -- a turn that
+/// only published recorded nothing, so the seat was nudged, redid the work,
+/// and filed the same deliverable on a second card. Publishing never reaches
+/// the driver, so the room cannot know it happened and the nudge cannot
+/// mention it; the belt is the only place that can stop the repeat.
+///
+/// Read off the wire, like the retry's own narrowing test, because every part
+/// of this can hold while the belt the model is handed is untouched.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_nudged_seat_is_not_offered_the_tools_it_already_worked_with() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    // A turn that reads and says nothing records nothing, which is what earns
+    // the nudge -- the same shape as a turn that only published.
+    let (base_url, script) = spawn_script_recording(vec![
+        Turn::Call {
+            tool: "desk_read",
+            args: serde_json::json!({"limit": 5, "chat": "engineering", "parent": null}),
+        },
+        Turn::Say("Looked at the desk."),
+        Turn::Call {
+            tool: "desk_complete_episode",
+            args: serde_json::json!({
+                "message": "two sprints is fine",
+                "chat": "engineering",
+                "parent": null
+            }),
+        },
+        Turn::Say("done"),
+    ])
+    .await;
+    let (deps, _journal) = deps(base_url, dir.path());
+    let record = record(TWO_DESKS);
+    let pool = HarnessPool::new();
+    pool.ensure(&record, &deps).await.expect("roster");
+    let log = Arc::new(MemoryLog::default());
+    let events: Arc<dyn EventLog> = log.clone();
+    let (hives, errors) = crate::hive::graph::desk_hives(&record, 3, &|id| {
+        futures::executor::block_on(pool.agent(&record.id, id))
+            .map(|agent| agent.runtime_agent().clone())
+    });
+    assert!(errors.is_empty(), "{errors:?}");
+    let dispatcher = crate::hive::dispatch::dispatcher(
+        Arc::new(record.clone()),
+        Arc::clone(&events),
+        hives,
+        Arc::new(deps),
+        Arc::new(pool),
+        None,
+    )
+    .await;
+    let trigger_seq = events
+        .append(
+            &record.id,
+            crate::hive::test_support::operator_message("engineering", "two sprints?", None),
+        )
+        .await
+        .expect("the trigger is a real row");
+    let _ = dispatcher
+        .run_desk_message(
+            "engineering",
+            crate::hive::conducted::Trigger {
+                seq: trigger_seq,
+                text: "two sprints?".to_owned(),
+                parent: None,
+                mentions: Vec::new(),
+            },
+        )
+        .await;
+
+    let seen = script.seen.lock().unwrap().clone();
+    // The nudge names itself: `begin_wave` tells the seat it still owes a turn.
+    const NUDGED: &str = "you still have open work and nothing new has come in";
+    let nudged = seen.iter().position(|body| {
+        serde_json::to_string(body)
+            .unwrap_or_default()
+            .contains(NUDGED)
+    });
+    let Some(nudged) = nudged else {
+        // The nudge is the driver's, on its own schedule. If this run never
+        // earned one there is nothing to assert -- but say so rather than
+        // passing silently, or this test rots into one that proves nothing.
+        panic!(
+            "no nudge in {} requests; the shape of this run changed",
+            seen.len()
+        );
+    };
+
+    let offered = advertised(&seen[nudged]);
+    assert!(
+        !offered.is_empty(),
+        "the nudged turn was offered something: {offered:?}"
+    );
+    // The point, and the limit of it.
+    //
+    // The narrowing reaches the belt this host composes -- the room's verbs and
+    // OpenCompany's own tools. `escalate_to_human` and `request_approval` are
+    // `impl Tool` on that belt exactly as `publish_artifact` is, so a company
+    // that serves publishing has it removed here too. This one does not serve
+    // it, so they stand in for it.
+    for absent in [
+        "desk_read",
+        "escalate_to_human",
+        "request_approval",
+        "memory_store",
+    ] {
+        assert!(
+            !offered.contains(&absent.to_owned()),
+            "a nudged seat keeps no `{absent}`: {offered:?}"
+        );
+    }
+    // What it does NOT reach: OpenHuman's own registry, scoped on the agent
+    // definition by `ToolScopeSpec::Named` rather than composed per turn. A
+    // nudged seat still holds `shell` and `file_write`, so it can write the
+    // file again -- it just cannot publish it. Asserted rather than left
+    // implied, because a change that closes that gap should have to come here
+    // and say so.
+    for present in ["shell", "file_write"] {
+        assert!(
+            offered.contains(&present.to_owned()),
+            "the narrowing does not reach OpenHuman's own `{present}`: {offered:?}"
+        );
+    }
+    assert!(
+        offered.contains(&"desk_complete_episode".to_owned()),
+        "and it can still say its part: {offered:?}"
+    );
+}

@@ -145,6 +145,15 @@ pub struct DeskHost {
     seated: Mutex<BTreeMap<String, Arc<crate::harness::built_in::CompanyAgent>>>,
     /// What each seat's last turn handed over, until a row carries it.
     deliveries: Mutex<BTreeMap<String, seat_park::Delivery>>,
+    /// **Every path this episode has already filed, and the card it went on.**
+    ///
+    /// Publishing is not a speech act, so a turn that only published records
+    /// nothing and the room nudges the seat to say its part. A seat asked
+    /// again tends to redo the work: observed live, one seat published the
+    /// same calendar twice, onto two cards, because nothing told it the first
+    /// had landed. Keyed by the path, because that is the artifact's identity
+    /// alongside its task id.
+    filed: Mutex<BTreeMap<String, String>>,
     /// Whether a row was committed since the last checkpoint.
     committed: AtomicBool,
 }
@@ -214,6 +223,7 @@ impl DeskHost {
             personas: Mutex::new(BTreeMap::new()),
             queues: None,
             releases: None,
+            filed: Mutex::new(BTreeMap::new()),
             seat_claims: Mutex::new(BTreeMap::new()),
             parked_ids: Mutex::new(BTreeMap::new()),
             parked_lanes: Mutex::new(BTreeMap::new()),
@@ -882,6 +892,23 @@ impl Journal for DeskHost {
         // stays the room's, and the console -- already subscribed to this
         // desk -- can raise the "two seats are talking" indicator without
         // watching every pair channel for one to start.
+        // **A nudged seat is asked to speak, so it is handed the verbs that
+        // speak and nothing else.**
+        //
+        // `begin_wave` nudges a seat that still owes a turn, and the note it
+        // sends names the three things that record. Left alone the seat keeps
+        // its whole belt, and a live run showed the cost: a seat whose
+        // publish-only turn recorded nothing was nudged, redid the work, and
+        // filed the same calendar a second time onto a second card. The first
+        // publish had landed; the room just could not hear about it.
+        //
+        // Publishing never reaches this driver, so the room cannot know the
+        // work is done and the nudge cannot say so. What it can do is stop
+        // offering the tools that would do it again. Lifted when the turn
+        // settles (`Bracket::settled`), so later turns are ordinary.
+        if let Event::Nudged { seat, thread: None } = event {
+            self.narrow_seat_to(seat, &RECORDING_VERBS);
+        }
         if let Event::Asked { seat, askees, root } = event {
             let conversation_id = crate::hive::referral::conversation_channel(seat, askees);
             let row = CompanyEvent::ConversationOpened {
@@ -1199,6 +1226,10 @@ impl EpisodeHost for DeskHost {
     /// belt factory finds the narrowing beside the loan it already looks up. The
     /// guard lifts it however the turn ends.
     fn narrow_turn(&self, seat: &str, only: &[String]) -> tinyhivemind_openhuman::Narrowing {
+        let verbs: Vec<&str> = only.iter().map(String::as_str).collect();
+        let Some(key) = self.narrow_seat_to(seat, &verbs) else {
+            return tinyhivemind_openhuman::Narrowing::none();
+        };
         let held = self
             .seated
             .lock()
@@ -1209,12 +1240,6 @@ impl EpisodeHost for DeskHost {
             return tinyhivemind_openhuman::Narrowing::none();
         };
         let seating = agent.seating().clone();
-        let key = self.seat_session(seat);
-        let prefixed: Vec<String> = only
-            .iter()
-            .map(|verb| format!("{}{verb}", crate::hive::host::TOOL_PREFIX))
-            .collect();
-        seating.narrow(key.clone(), prefixed);
         tinyhivemind_openhuman::Narrowing::until(move || seating.widen(&key))
     }
 
@@ -1297,7 +1322,50 @@ impl EpisodeHost for DeskHost {
     }
 }
 
+/// What a seat may call on a turn the room narrowed: the three the wave nudge
+/// itself names -- "finish your part with what you have, or hand the part that
+/// belongs to a teammate over to them, or ask one of them a question". The
+/// belt then says what the note says.
+const RECORDING_VERBS: [&str; 3] = ["complete_episode", "broadcast", "ask"];
+
 impl DeskHost {
+    /// **The belt a seat gets when the room has asked it to speak.**
+    ///
+    /// Shared by `narrow_turn`, which the driver calls when a turn recorded
+    /// nothing, and by the wave nudge. Both are the room saying the same thing
+    /// -- say your part -- and a seat told that should hold the verbs that say
+    /// it and nothing else.
+    ///
+    /// Returns the key the narrowing is filed under, so a caller can lift it.
+    fn narrow_seat_to(&self, seat: &str, verbs: &[&str]) -> Option<String> {
+        let held = self
+            .seated
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(seat)
+            .cloned()?;
+        let key = self.seat_session(seat);
+        let prefixed: Vec<String> = verbs
+            .iter()
+            .map(|verb| format!("{TOOL_PREFIX}{verb}"))
+            .collect();
+        held.seating().narrow(key.clone(), prefixed);
+        Some(key)
+    }
+
+    /// Lifts whatever [`Self::narrow_seat_to`] put on `seat`.
+    fn widen_seat(&self, seat: &str) {
+        let held = self
+            .seated
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(seat)
+            .cloned();
+        if let Some(agent) = held {
+            agent.seating().widen(&self.seat_session(seat));
+        }
+    }
+
     /// The turn under the teammate's lock, bracketed on the journal. A host
     /// with no pool runs it unserialised and unbracketed.
     fn locked_turn<'a>(&'a self, seat: &'a str, turn: HostedTurn<'a>) -> HostedTurn<'a> {
@@ -1412,6 +1480,12 @@ impl Bracket<'_> {
     }
 
     async fn settled(&self, outcome: &tinyhivemind_openhuman::Result<String>) {
+        // A narrowing the room put on this seat lasts exactly this turn. The
+        // retry seam lifts its own with a guard; a nudge has no guard to hold,
+        // so the bracket that closes the turn lifts it. Unconditional because
+        // widening a seat that was never narrowed is a no-op, and a narrowing
+        // left on by a failed turn would follow the seat into the next one.
+        self.host.widen_seat(&self.seat);
         let event = match outcome {
             Ok(_) => CompanyEvent::TurnSettled {
                 turn_id: self.turn_id.clone(),
