@@ -7,9 +7,18 @@ running, on `upstream/main` at `45ca38a2a` (2026-10-01).
 `observed` (seen live, not isolated) or `unverified` (reasoned, not checked) —
 the same convention as
 [`2026-09-24-hive-mind-unification-findings.md`](2026-09-24-hive-mind-unification-findings.md),
-which this file extends. That file's "Unverified — start here" list asks *"can
-the driver bind a conversation with no chat surface (a card)?"*; §5 here is the
-answer.
+which this file extends.
+
+**Everything here is `verified` but one item.** A second pass closed every open
+question except the cost comparison, which needs a live run rather than more
+reading — see *Resolved* in §6. Three rows of the Sept doc turn out to be stale
+and are marked there: its `SeatMemory` row, its frozen-prompt question, and its
+covert-channel objection to `dm:<a>+<b>`. Its suspicion about an uncounted fifth
+queue was correct.
+
+Submodules are read at the revisions `upstream/main` **pins** — `tinyhivemind`
+`d6d9430`, `openhuman` `99781ea` — not at the locally checked-out ones, which
+are older and would have given different answers.
 
 ## The one-line finding
 
@@ -341,37 +350,221 @@ so this path is already carrying production traffic.
    either a drain inside the episode or an explicit decision that a task episode
    cannot open further cards.
 
-### Unverified — do not build on these
+### Resolved: what was unverified, now checked
 
-- **Whether `tinyhivemind`'s driver accepts a key with no host chat** in
-  practice. The crate is host-neutral and `dm_hives` proves a *synthetic* key
-  works, but `dm:<id>` is still a key the console renders. A key nothing renders
-  has not been run.
-- **Whether `EpisodeBelts` seating keyed by conversation** (`hive/seating.rs`)
-  behaves with a key that never appears in a chat list.
-- **Whether a seat's null `memory`** is right for a card. Open in the Sept doc
-  too.
-- **Cost.** An episode runs rounds; a pooled dispatch runs one turn plus
-  hand-off hops. Nobody has measured a card done both ways. Note the live-run
-  caveat from [`dm-episode-live-findings`]: episode cost has been seen
-  over-reported ~12×, which drives the spend brake — so a naive A/B will
-  mislead until that is fixed.
+A second pass took every item below from reasoning to code. Four were my own
+open questions; three were the Sept doc's. **Six resolved, one reframed.**
+Verified against `tinyhivemind` `d6d9430` and `openhuman` `99781ea` — the
+revisions `upstream/main` actually pins, not the locally checked-out submodules,
+which are older.
+
+#### The driver does not need a host chat (verified — it works)
+
+A `tinyhivemind::desk::Desk` is an id, a name, a description, members and a
+responder mode. Nothing chat-shaped. And the seat's own key is **host-minted and
+already synthetic**: `seat_session(seat) = "episode:{episode_id}:{seat}"`
+(`hive/host.rs:1349`), which the adapter trait documents as
+
+> The conversation id every turn of this seat runs under. […] It must not
+> collide with a conversation the host runs outside the episode.
+
+(`tinyhivemind-openhuman/src/hosted/mod.rs:128`.) Non-collision is the only
+requirement.
+
+Stronger still: **`tinyhivemind-embed` already models a card.**
+`ConversationKind` has a `Workflow` variant whose doc reads *"A workflow, task,
+or card conversation"* (`conversation.rs:19`), and OpenCompany **already builds
+one for every chatless turn** — `surface_for` maps `None` to
+`ConversationKind::Workflow` (`harness/built_in/mod.rs:1396`). A dispatched card
+is therefore already a `Workflow` conversation today.
+
+The one thing in the way is `ConversationRef::may_open_hive()`, which returns
+`true` only for `Desk` (`conversation.rs:37`). It has **no production caller** —
+a doc example and one test (`routing/test.rs:563`) — so it is documented intent,
+not an enforced gate. Whoever migrates should decide whether to widen it or
+leave it as advice, but it will not stop them.
+
+One detail worth fixing in passing: the card's current `ConversationRef.id` is
+the *ephemeral run session* (`{company}:{agent}:run:{uuid}`), not the task id. A
+task episode should key on `task:<task_id>` so the conversation is stable and
+addressable across attempts.
+
+#### `EpisodeBelts` with a non-chat key is a non-issue (verified)
+
+`EpisodeBelts` is a plain `HashMap<String, SeatLoan>` (`hive/seating.rs:123`),
+looked up by `seating.lent_to(turn.session_id())`
+(`harness/built_in/build.rs:1685`) and lent under `seat_session`
+(`hive/host.rs:1247`). **The key was never a chat id**, so a key no console
+renders changes nothing. My concern was unfounded.
+
+Note for readers: `seating.rs`'s module doc calls the key a "conversation id"
+throughout, while the implementation keys on the seat session. Harmless today,
+misleading to the next person.
+
+#### Seat memory: the question is obsolete (verified)
+
+`SeatMemory` and `OpenHumanSessionHost` exist nowhere on upstream. Commit
+`d7a61c9ef` (2026-09-24, *"delete the seat's session builder, now nothing builds
+one"*) removed them once `build_seat` began returning the pool's own `Agent`.
+
+Memory is now **belt tools** — `memory_store` / `memory_recall` /
+`memory_forget`, oc-authored over the company's `ContextStore` and scoped to
+`agent-memory/<id>/` (`build.rs:2071`). They are **not** in
+`EPISODE_WITHHELD_TOOLS`, and a seated belt is the agent's own tools minus the
+withheld set plus the episode's (`build.rs:1704-1733`) — so **a seat keeps its
+memory**. A task episode would inherit it with no work.
+
+The Sept doc's `memory | SeatMemory returns nothing | per shape — unresolved`
+row is stale; it should be struck.
+
+#### `WorkflowRefQueue` is genuinely un-drained on a seat turn (confirmed)
+
+The Sept doc suspected a fifth queue nobody had counted. It is real.
+`WorkflowRefQueue::drain()` has exactly two production call sites:
+
+- `brain.rs:1660` — inside `run_task`, the dispatched-card path;
+- `delegation.rs:1891` — gated on `operator_turn` (`self.task.is_none()`).
+
+A seat turn goes through **neither**: the driver runs `agent.turn(..)` directly
+and never constructs a `DelegationRunner` or enters `HarnessBrain::run_task`.
+`create_workflow` / `run_workflow` are orchestrator-only but are **not** in
+`EPISODE_WITHHELD_TOOLS`, and the orchestrator is routinely a seat — every DM
+hive binds the whole roster (`graph.rs:221`).
+
+Usually the cost is a **lost output link**: `clear()` at the head of the next
+operator turn or dispatch discards the stale ref (`workflow_refs.rs:62`). But
+see the next finding — episodes are detached, so a seat can push *between* a
+concurrent operator turn's `clear()` and its `drain()`, and that turn's card is
+then credited with a workflow a seat authored. The reassurance at
+`delegation.rs:1538` —
+
+> the two paths cannot race over one queue because only one of them ever reads it
+
+— predates seats carrying these tools and covers chat-vs-dispatch only, not
+seat-vs-chat.
+
+#### Episodes already run off the company-wide lock (verified — changes §4's conclusion)
+
+`spawn_episode` is `tokio::spawn` and its `JoinHandle` is **dropped**; the brain
+sets `room_answered = true; continue;` and the cycle finishes without awaiting
+the episode (`hive/dispatch.rs:390`, `brain.rs:3440`). The seat turn then takes
+only `agent.turn_lock()` (`hive/host.rs:1481`) — the per-agent bound — and never
+touches `CycleRunner`, so it never takes `serial`.
+
+**So episode work already has exactly the concurrency task dispatch lacks.**
+Migrating card runs into episodes would lift them off the company-wide lock as a
+*side effect*, which is a far stronger argument for the migration than the one
+§6 originally made.
+
+#### A seat's approval already carries its conversation (verified — this is Gap B's fix shape)
+
+`EpisodeSeatParking::park` builds its site as
+
+```rust
+ParkSite {
+    task: TaskLink::Unlinked,
+    conversation: ApprovalConversation {
+        thread: Some(self.desk_id.clone()),
+        parent: self.thread_root,
+    },
+    turn: Some(turn_key(&self.episode_id, seat)),
+}
+```
+
+(`hive/host/seat_park.rs:177`.) The episode path therefore **already does** what
+Gap B says the dispatch path does not: an approval surfaces in the conversation
+it came from.
+
+The corollary matters for the migration. A task episode keyed `task:<id>` would
+park with `thread: Some("task:<id>")` — a channel nobody reads. **A task host
+must pass the card's `origin_chat_id` as that `thread`**, not the episode key, or
+the migration moves approvals from "only the board" to "a channel that does not
+exist". That is a one-field decision at the `EpisodeSeatParking` construction
+site.
+
+#### The frozen-prompt concern is obsolete (verified)
+
+`leading_system_prefix` exists nowhere in OpenCompany or in the pinned
+`openhuman`. It was removed upstream in `83ee6c063c` (*"remove unused prefix
+recovery helper"*, 2026-09-24), and that commit **is** an ancestor of the pinned
+`99781ea`. A resumed session cannot serve a stale prompt by that route, because
+the route is gone. The Sept doc's question should be struck.
+
+#### `dm:<a>+<b>` is not a covert channel any more (verified)
+
+`pair_conversation` is documented as *"the pair conversation two agents share
+(`dm:<a>+<b>`, ids sorted), **the thread the Session tab lists for each teammate
+pair**"* (`hive/referral.rs:42`). It is rendered, so an operator can see that it
+happened and who was in it — which was the Sept doc's objection.
+
+#### Cost: reframed, not settled
+
+I could not reproduce a reporting defect. On this commit there is **no
+structural double-count**:
+
+- the pooled path pre-drains its tap — `let _ = self.bridge.take_usage()`,
+  commented *"Anything left on the taps belongs to no attempt of ours"*
+  (`mod.rs:1668`), so stale seat usage is discarded rather than added;
+- the seat path meters a per-turn value: `LastTurnUsage` is *"Complete usage for
+  a completed root turn"* (`openhuman-core/.../run_context.rs:78`), and
+  OpenCompany reads only its four scalar fields, ignoring the `subagents`
+  breakdown — so children are not billed twice (`hive/host.rs:1502`);
+- a seat turn and a pooled turn on one agent cannot overlap (`turn_lock`).
+
+So the ~12× I had recorded is most likely **a real multiplier, not a
+misreport**: an episode runs up to `max_rounds = 12` seat turns where a pooled
+dispatch runs roughly one, and the in-turn spend brake measures each turn
+against the teammate's *daily* cap (`harness/spend.rs`). An episode legitimately
+burns an order of magnitude more against a cap sized for single turns.
+
+That changes the shape of the risk — from *"fix the meter before measuring"* to
+*"episodes need a budget sized per episode"* — but it is **the one item still
+genuinely open**, because distinguishing a real multiplier from a misreport
+needs one instrumented live run, not more reading. Do that before migrating
+anything cost-sensitive.
 
 ---
 
 ## Recommended order
 
-Smallest-first, and the first two are worth doing whatever is decided about the
-hive:
+Revised after the verification pass. Two findings moved things: episodes already
+run off the company-wide lock, and the episode path already carries a
+conversation on its approvals — so the migration *delivers* two of the fixes
+rather than needing them done first.
 
-| # | Change | Size | Independent of hive? |
+| # | Change | Size | Needs the hive? |
 | --- | --- | --- | --- |
-| 1 | `TaskDispatched` takes the per-agent lock, not `serial` | small | yes |
-| 2 | `ParkSite.conversation` ← `card.origin()` | small | yes |
-| 3 | Hosted `spawn_task` stamps `TaskOrigin` | small | yes |
-| 4 | A board column-move tool (`start_task`) so a card can be started without a human | small | yes |
-| 5 | `task_hives` + direct dispatcher call | medium | no |
-| 6 | Console story for the `task:<id>` channel | medium/large | no |
+| 1 | A board column-move tool (`start_task`, or `assign_task` gaining `start: true`) | small | no |
+| 2 | Hosted `spawn_task` / `delegate_to_desk` stamp `TaskOrigin` | small | no |
+| 3 | `TaskDispatched` takes the per-agent lock, not `serial` | small | no |
+| 4 | `ParkSite.conversation` ← `card.origin()` on the dispatch path | small | no |
+| 5 | Drain `WorkflowRefQueue` on a seat turn, or withhold the two tools | small | no |
+| 6 | One instrumented live run: episode vs pooled cost for one card | small | no |
+| 7 | `task_hives` keyed `task:<id>` + a direct dispatcher call | medium | yes |
+| 8 | Console story for the `task:<id>` conversation | medium/large | yes |
 
-(4) is the Sept doc's own recommendation and remains unbuilt. Without it,
-"decoupled task runs" still means "a human drags every card".
+**(1) is the thing actually blocking the stated goal.** It is the Sept doc's own
+recommendation, still unbuilt, and without it "decoupled task runs" still means
+"a human drags every card" — no amount of hive work changes that.
+
+**(3) and (4) become optional if (7) lands**, because an episode is spawned
+detached (never takes `serial`) and already parks with its conversation. Do them
+anyway if (7) is more than a few weeks out: they are small, and they fix the
+pooled path for every company that is not migrated.
+
+**(5) is a live defect, not migration work.** A seated orchestrator can stage a
+workflow ref that nothing drains, and because episodes are detached it can land
+in a concurrent chat turn's drain and be credited to the wrong card.
+
+**(6) before (7), not after.** It is the only item reading could not settle, and
+it is the one that decides whether an episode-per-card is economically viable at
+all. An episode runs up to twelve turns against a cap sized for one.
+
+### If (7) is taken, two things must be decided deliberately
+
+- **Approvals must park on the card's origin, not on `task:<id>`** — otherwise
+  the migration moves them from "only the board" to a channel nobody opens.
+- **`spawn_task` is withheld from seats** (`EPISODE_WITHHELD_TOOLS`), so either
+  the drain runs inside an episode or a card worked as an episode cannot open
+  follow-up cards. Pick one explicitly; the current withholding exists only
+  because no brain drains inside an episode.
