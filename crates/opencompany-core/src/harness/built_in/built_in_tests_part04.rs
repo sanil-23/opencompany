@@ -884,3 +884,85 @@ async fn a_ceiling_paused_turn_is_never_written_back_to_memory() {
         "the ceiling diagnosis must never be stored as this teammate\'s answer: {written:?}"
     );
 }
+
+/// Issue #1680, PR #2554 review — **a turn driven into the ceiling by an actual
+/// clock**, which is the only test here that proves the pause fires on the
+/// stop it is for.
+///
+/// Every other test on this path scripts the outcome. Those prove what the
+/// crate does once a ceiling hit is recognised; this one proves it is
+/// recognised. The distinction turned out to matter: the reviewer asked for
+/// this test, and writing it showed that the error-text classifier **never
+/// fires on a real hit**. The harness replaces a failed hosted invocation with
+/// a fixed sentence per `HostedErrorKind`, so the wall-clock leaf is absent and
+/// the bridge tap is empty (the model did not fail — the harness stopped
+/// waiting). Measured chain: `model error: hosted agent invocation failed`.
+///
+/// So the duration arm is what carries this, and this test is its proof.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_real_turn_driven_past_the_ceiling_is_recognised_and_paused() {
+    let env = crate::test_support::EnvVarGuard::capture(&["OPENHUMAN_AGENT_TURN_TIMEOUT_SECS"]);
+    env.set("OPENHUMAN_AGENT_TURN_TIMEOUT_SECS", "4");
+
+    // Answers, but never inside the ceiling. Not `failing_when_exhausted`: the
+    // point is a turn that is *working* when the clock runs out, not one erroring.
+    let (agent, _deps) = scripted_agent_over(
+        ScriptedProvider::new(vec![Ok("a draft the operator never sees".to_string()); 6])
+            .taking(Duration::from_secs(12)),
+    );
+    assert_eq!(
+        agent.turn_ceiling,
+        Some(Duration::from_secs(4)),
+        "fixture precondition: the agent resolved the declared ceiling at registration"
+    );
+
+    let (outcome, usages) = agent.run("summarise yesterday's closed issues").await;
+    let outcome = outcome.expect(
+        "a real ceiling hit is a graceful pause, not an Err -- if this is an Err, the \
+         duration arm in classify_turn stopped matching",
+    );
+
+    let pause = outcome
+        .ceiling_paused
+        .as_ref()
+        .expect("a real ceiling hit must classify as CeilingPaused");
+    assert_eq!(pause.agent, agent.agent_id);
+    assert!(
+        pause.elapsed >= Duration::from_secs(4),
+        "the elapsed is the turn's own measured clock: {:?}",
+        pause.elapsed
+    );
+    assert_eq!(
+        usages.len(),
+        1,
+        "and a failure that already burned the whole ceiling is never retried"
+    );
+}
+
+/// The guard that keeps the duration arm honest: with **no** declared ceiling
+/// there is nothing to measure against, so an ordinary failure must stay a hard
+/// error however long it took. Otherwise the arm would be free to call any slow
+/// failure a timeout, on a duration this crate had invented.
+#[test]
+fn an_undeclared_ceiling_claims_nothing() {
+    use crate::app::config::MapEnv;
+
+    assert_eq!(
+        declared_turn_ceiling(&MapEnv::new([("X", "1")])),
+        None,
+        "unset"
+    );
+    assert_eq!(
+        declared_turn_ceiling(&MapEnv::new([("OPENHUMAN_AGENT_TURN_TIMEOUT_SECS", "0")])),
+        None,
+        "`0` is the vendored opt-out: no ceiling, so nothing to measure against"
+    );
+    assert_eq!(
+        declared_turn_ceiling(&MapEnv::new([(
+            "OPENHUMAN_AGENT_TURN_TIMEOUT_SECS",
+            " 600 "
+        )])),
+        Some(Duration::from_secs(600)),
+        "declared, and read the same way the vendored policy reads it"
+    );
+}

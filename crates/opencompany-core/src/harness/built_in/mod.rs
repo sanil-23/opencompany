@@ -687,6 +687,29 @@ pub struct CompanyAgent {
     /// `None` for an uncapped teammate — and for every overlay teammate, which
     /// carries no per-agent cap in v1.
     pub budget_usd_daily: Option<f64>,
+    /// The per-turn wall-clock ceiling this instance runs under, when it is
+    /// **declared** (issue #1680, PR #2554 review).
+    ///
+    /// `None` means nobody declared one, and this crate therefore does not
+    /// know what the harness will enforce: `DEFAULT_AGENT_TURN_TIMEOUT_SECS`
+    /// is private to the vendored crate, it moved from 600 to 3600 in the
+    /// #2466 bump, and a copy here would go stale the same silent way the
+    /// prose did. So `None` claims nothing rather than guessing.
+    ///
+    /// Why this exists at all: a real ceiling hit **cannot be recognised from
+    /// the error**. The vendored harness replaces a failed hosted invocation
+    /// with a fixed string per `HostedErrorKind` ("never derived from the
+    /// underlying error's own text"), so the wall-clock leaf
+    /// [`is_wall_clock_ceiling`] matches is simply absent, and
+    /// [`unmask`](Self::unmask) -- which exists to see through exactly that
+    /// sanitization -- has nothing to append, because the model never failed.
+    /// The harness stopped waiting for it. Measured on a real turn driven past
+    /// its ceiling: the chain reads `model error: hosted agent invocation
+    /// failed` with an empty bridge tap.
+    ///
+    /// What is left is the clock, and this is the only number that makes it
+    /// readable.
+    pub turn_ceiling: Option<Duration>,
     /// The stable per-`(company, agent)` OpenHuman session — `{company}:{agent_id}`,
     /// minted by [`openhuman_session_key`](crate::harness::session_key::openhuman_session_key)
     /// and passed as [`Turn::session`](openhuman_embed::Turn::session) on
@@ -1422,6 +1445,7 @@ impl CompanyAgent {
             agent_id: agent_id.to_string(),
             role: role.to_string(),
             budget_usd_daily,
+            turn_ceiling: declared_turn_ceiling(&crate::app::config::ProcessEnv),
             session_key: crate::harness::session_key::openhuman_session_key(company, agent_id),
             runtime_id,
             mcp_bearer,
@@ -2167,6 +2191,31 @@ impl CompanyAgent {
                 summary: wall_clock_ceiling_message(&self.agent_id, elapsed, &err),
                 elapsed,
             },
+            // The same stop, recognised by the **clock** rather than the text
+            // (issue #1680, PR #2554 review). The arm above is the fast path
+            // for a pin or a route that still surfaces the leaf; this one is
+            // what catches the shape that actually arrives, where the harness
+            // has replaced its own timeout with a fixed sentence and the bridge
+            // tap is empty because the model never failed.
+            //
+            // **The text is not what promotes it -- the duration is.** Matching
+            // on "hosted agent invocation failed" would classify every internal
+            // failure as a ceiling hit, which is the false positive
+            // `wall_clock_ceiling_message` warns is worse than the bare wrapper
+            // because it reads as a diagnosis. A failure that consumed the
+            // whole declared ceiling is a different claim, and one this crate
+            // measured rather than parsed.
+            //
+            // Requires a **declared** ceiling: with none, `turn_ceiling` is
+            // `None` and this arm cannot fire, so a deployment that declares
+            // nothing keeps today's hard failure rather than being told a
+            // duration this crate had to invent.
+            Err(err) if self.turn_ceiling.is_some_and(|ceiling| elapsed >= ceiling) => {
+                AttemptOutcome::CeilingPaused {
+                    summary: wall_clock_ceiling_message(&self.agent_id, elapsed, &err),
+                    elapsed,
+                }
+            }
             // Issue #1846: the top-level orchestrator's own inference call
             // carries no delegated-tool envelope, so it cannot be recognised by
             // `RepeatedToolFailureMiddleware`'s envelope-gated check — only by
@@ -2445,6 +2494,29 @@ fn is_transient_empty_response(err: &anyhow::Error) -> bool {
     format!("{err:#}")
         .to_ascii_lowercase()
         .contains("empty response")
+}
+
+/// The declared per-turn wall-clock ceiling, or `None` when nobody declared one
+/// (issue #1680, PR #2554 review).
+///
+/// Reads the **same** variable the vendored policy reads
+/// (`agent_turn_wall_clock_ms` in `tinyagents/turn_policy.rs`), so when it is
+/// set the two agree by construction rather than by a copied constant. `0` is
+/// the vendored opt-out ("no ceiling") and yields `None` here for the same
+/// reason: there is no ceiling to measure against.
+///
+/// Through [`EnvSource`](crate::app::config::EnvSource) rather than
+/// `std::env::var` so it is unit-testable with `MapEnv` and needs no
+/// process-environment mutation. `deploy/entrypoint.sh` exports a default
+/// before `exec`, which is safe where `set_var` inside a running process is
+/// not (see `app::boot`'s own hazard note).
+pub(crate) fn declared_turn_ceiling(env: &dyn crate::app::config::EnvSource) -> Option<Duration> {
+    let secs = env
+        .get("OPENHUMAN_AGENT_TURN_TIMEOUT_SECS")?
+        .trim()
+        .parse::<u64>()
+        .ok()?;
+    (secs > 0).then(|| Duration::from_secs(secs))
 }
 
 /// The two phrasings `TinyAgentsError::Timeout` uses when the run's wall-clock

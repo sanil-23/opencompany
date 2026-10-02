@@ -125,6 +125,41 @@ It was also the last of the four to **fail** rather than pause, until issue
 #1680's second half. That was the expensive half of the defect, rather than the
 misleading message #1761 fixed.
 
+### Why this one is recognised by the clock, not by the error
+
+The other three limits announce themselves. This one does not, and that is the
+single most surprising thing on this page.
+
+`is_wall_clock_ceiling` matches the vendored harness's own timeout phrases, and
+on a real ceiling hit **they do not arrive**. The harness replaces a failed
+hosted invocation with a fixed string per `HostedErrorKind`, documented as
+"never derived from the underlying error's own text", so what reaches this crate
+is `model error: hosted agent invocation failed`. `CompanyAgent::unmask` exists
+to see through exactly that sanitization — it appends the provider error the
+loopback bridge recorded — but the bridge tap is **empty** here, because the
+model never failed. The harness stopped waiting for it. Both facts are measured,
+by a test that drives a real turn past a lowered ceiling.
+
+So the error text is a fast path for pins and routes that still surface the
+leaf, and the thing that actually carries this limit is the **duration**: a turn
+that failed after consuming at least its declared ceiling hit that ceiling.
+`classify_turn` already measures each attempt, so no new instrumentation is
+involved.
+
+Two constraints on that, both deliberate:
+
+- **The text never promotes a failure; only the duration does.** Matching
+  `"hosted agent invocation failed"` would classify every internal failure as a
+  ceiling hit — the false positive `wall_clock_ceiling_message` warns is worse
+  than the bare wrapper, "because it reads as a diagnosis".
+- **The ceiling must be declared.** `deploy/entrypoint.sh` exports
+  `OPENHUMAN_AGENT_TURN_TIMEOUT_SECS` before `exec` (safe, where `set_var`
+  inside a running process is undefined behaviour — see `app::boot`). With
+  nothing declared, `CompanyAgent::turn_ceiling` is `None`, this detection
+  cannot fire, and the turn keeps its hard failure. The vendored default is
+  deliberately **not** mirrored: it is private, and it moved from 600 to 3600 in
+  the #2466 bump with nothing failing.
+
 The ceiling's lever is distinct from the three above, which is why it is a fourth
 field rather than a reading of an existing one: credits buy nothing, there is no
 company-declared cap to raise, and — unlike a step pause — **there is no

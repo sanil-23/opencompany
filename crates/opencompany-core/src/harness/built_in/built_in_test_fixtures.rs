@@ -428,6 +428,9 @@ pub(super) struct ScriptedProvider {
     /// turn then succeeds on the fallback reply, which is how this
     /// scripting seam quietly turned a failure case into a passing one.
     pub(super) fail_when_exhausted: bool,
+    /// How long each call takes before it answers (issue #1680) — the only way
+    /// to reach the harness's real wall-clock ceiling from a test.
+    pub(super) delay: Option<std::time::Duration>,
 }
 
 impl ScriptedProvider {
@@ -437,6 +440,7 @@ impl ScriptedProvider {
             calls: std::sync::atomic::AtomicUsize::new(0),
             usage: None,
             fail_when_exhausted: false,
+            delay: None,
         }
     }
 
@@ -451,6 +455,12 @@ impl ScriptedProvider {
         self.fail_when_exhausted = true;
         self
     }
+
+    /// Spend `delay` of real wall clock on every call (issue #1680).
+    pub(super) fn taking(mut self, delay: std::time::Duration) -> Self {
+        self.delay = Some(delay);
+        self
+    }
 }
 
 #[async_trait]
@@ -461,6 +471,9 @@ impl ChatModel<()> for ScriptedProvider {
         _request: ModelRequest,
     ) -> tinyinference::Result<ModelResponse> {
         self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if let Some(delay) = self.delay {
+            tokio::time::sleep(delay).await;
+        }
         let with_usage = |reply: &str| {
             let mut response = ModelResponse::assistant(reply);
             response.usage = self.usage;
